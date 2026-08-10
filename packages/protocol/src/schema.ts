@@ -149,7 +149,7 @@ export const CapabilitySchema = Schema.Literals([
 export type Capability = typeof CapabilitySchema.Type;
 
 export const GrantScopeSchema = Schema.Struct({
-  projectId: optional(ProjectIdSchema),
+  projectId: ProjectIdSchema,
   workId: optional(WorkIdSchema),
   sessionId: optional(SessionIdSchema),
   proposalId: optional(ProposalIdSchema),
@@ -732,6 +732,7 @@ export type ProjectEvent = typeof ProjectEventSchema.Type;
 
 export const EventEnvelopeSchema = Schema.TaggedStruct("EventEnvelope", {
   eventRevision: EventRevisionSchema,
+  eventIndex: Schema.Natural,
   commandId: CommandIdSchema,
   event: ProjectEventSchema,
 });

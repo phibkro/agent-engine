@@ -1,4 +1,8 @@
-import { ContentRevisionSchema, EventRevisionSchema } from "@work-engine/protocol";
+import {
+  compareUtf8PathBytes,
+  ContentRevisionSchema,
+  EventRevisionSchema,
+} from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfileId,
@@ -29,7 +33,12 @@ import type {
   WorkId,
 } from "@work-engine/protocol";
 import { deriveGates } from "./gates.ts";
-import { emptyProjectState, foldEvent, type ProjectState } from "./state.ts";
+import {
+  emptyProjectState,
+  foldEvent,
+  type EffectReceiptKind,
+  type ProjectState,
+} from "./state.ts";
 
 export interface TransitionContext {
   /** Trusted authority-supplied identity for a CreateProject acceptance. */
@@ -76,18 +85,27 @@ const reject = (
   };
 };
 
+interface EffectIdentity {
+  readonly effectId: EffectId;
+  readonly kind: EffectReceiptKind;
+}
+
+const effectReceiptKey = (identity: EffectIdentity): string =>
+  `${identity.kind}:${identity.effectId}`;
+
 const accepted = (
   state: ProjectState,
   commandId: CommandId,
   events: readonly ProjectEvent[] | ProjectEvent,
   effectRequests: readonly EffectRequest[] = [],
-  commandEffect?: EffectId,
+  effectIdentity?: EffectIdentity,
 ): TransitionOutcome => {
   const eventList: readonly ProjectEvent[] = Array.isArray(events) ? events : [events];
   const nextRevision = eventRevision(state.eventRevision + 1);
-  const envelopes: readonly EventEnvelope[] = eventList.map((event) => ({
+  const envelopes: readonly EventEnvelope[] = eventList.map((event, eventIndex) => ({
     _tag: "EventEnvelope",
     eventRevision: nextRevision,
+    eventIndex,
     commandId,
     event,
   }));
@@ -100,11 +118,9 @@ const accepted = (
   let next = state;
   for (const envelope of envelopes) next = foldEvent(next, envelope);
   const effectReceipts = { ...next.effectReceipts };
-  const effectIds = new Set([
-    ...effectRequests.map((effect) => effect.effectId),
-    ...(commandEffect === undefined ? [] : [commandEffect]),
-  ]);
-  for (const effectId of effectIds) effectReceipts[effectId] = { effectId, receipt };
+  if (effectIdentity !== undefined) {
+    effectReceipts[effectReceiptKey(effectIdentity)] = { ...effectIdentity, receipt };
+  }
   next = {
     ...next,
     commandReceipts: { ...next.commandReceipts, [commandId]: receipt },
@@ -121,16 +137,24 @@ const alreadyAppliedWithState = (
   result: { _tag: "AlreadyApplied", originalReceipt: receipt },
 });
 
-const commandEffectId = (command: ProjectCommand): EffectId | undefined => {
+const commandEffectIdentity = (command: ProjectCommand): EffectIdentity | undefined => {
   switch (command._tag) {
     case "OpenManagerSession":
     case "StartWorkerSession":
     case "CancelSession":
-    case "ReportSessionStarted":
-    case "ReportSessionTerminal":
-      return command.effectId;
+      return { effectId: command.effectId, kind: "request" };
     case "AcquireWorkspaceLease":
-      return command.lease.effectId;
+      return command.lease.effectId === undefined
+        ? undefined
+        : { effectId: command.lease.effectId, kind: "request" };
+    case "ReportSessionStarted":
+      return command.effectId === undefined
+        ? undefined
+        : { effectId: command.effectId, kind: "started" };
+    case "ReportSessionTerminal":
+      return command.effectId === undefined
+        ? undefined
+        : { effectId: command.effectId, kind: "terminal" };
   }
 };
 
@@ -141,7 +165,7 @@ const scopeMatches = (
   sessionId?: SessionId,
   proposalId?: string,
 ): boolean =>
-  (scope.projectId === undefined || scope.projectId === projectId) &&
+  scope.projectId === projectId &&
   (scope.workId === undefined || (workId !== undefined && scope.workId === workId)) &&
   (scope.sessionId === undefined || (sessionId !== undefined && scope.sessionId === sessionId)) &&
   (scope.proposalId === undefined || (proposalId !== undefined && scope.proposalId === proposalId));
@@ -174,10 +198,11 @@ const authorized = (
   capability: Grant["capability"],
   context: TransitionContext,
   scope: AuthorizationScope = {},
+  grantId?: Grant["grantId"],
 ): Grant | undefined => {
   const grants = [
-    ...actor.presentedGrants.flatMap((grantId) => {
-      const grant = state.grants[grantId];
+    ...actor.presentedGrants.flatMap((presentedGrantId) => {
+      const grant = state.grants[presentedGrantId];
       return grant === undefined ? [] : [grant];
     }),
     ...(context.grants ?? []),
@@ -185,6 +210,7 @@ const authorized = (
   for (const grant of grants) {
     if (
       grant.subjectActorId === actor.actorId &&
+      (grantId === undefined || grant.grantId === grantId) &&
       grant.capability === capability &&
       scopeMatches(grant.scope, state.projectId, scope.workId, scope.sessionId, scope.proposalId) &&
       grantValidAt(grant, context.now)
@@ -225,15 +251,14 @@ const duplicateCommand = (
   const receipt = state.commandReceipts[commandId];
   return receipt === undefined ? undefined : alreadyAppliedWithState(state, receipt);
 };
-
 const duplicateEffect = (
   state: ProjectState,
   command: ProjectCommand,
 ): TransitionOutcome | undefined => {
-  const effectId = commandEffectId(command);
-  if (effectId === undefined) return undefined;
-  const prior = state.effectReceipts[effectId];
-  return prior === undefined ? undefined : alreadyAppliedWithState(state, prior.receipt);
+  const identity = commandEffectIdentity(command);
+  if (identity === undefined) return undefined;
+  const receipt = state.effectReceipts[effectReceiptKey(identity)]?.receipt;
+  return receipt === undefined ? undefined : alreadyAppliedWithState(state, receipt);
 };
 
 const sessionBase = (
@@ -281,7 +306,7 @@ const validManifest = (manifest: ContentManifest): boolean => {
   for (let index = 1; index < manifest.entries.length; index += 1) {
     const previous = manifest.entries[index - 1]!.path;
     const current = manifest.entries[index]!.path;
-    if (previous >= current) return false;
+    if (compareUtf8PathBytes(previous, current) >= 0) return false;
   }
   return true;
 };
@@ -438,9 +463,13 @@ const dispatchCommand = (
         attempt: command.attempt,
         spec,
       };
-      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [
-        effect,
-      ]);
+      return accepted(
+        state,
+        envelope.commandId,
+        { _tag: "SessionRequested", session, effect },
+        [effect],
+        commandEffectIdentity(command),
+      );
     }
     case "StartWorkerSession": {
       if (
@@ -546,9 +575,13 @@ const dispatchCommand = (
         attempt: command.attempt,
         spec,
       };
-      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [
-        effect,
-      ]);
+      return accepted(
+        state,
+        envelope.commandId,
+        { _tag: "SessionRequested", session, effect },
+        [effect],
+        commandEffectIdentity(command),
+      );
     }
     case "ReportSessionStarted": {
       if (
@@ -583,7 +616,7 @@ const dispatchCommand = (
           startedAt: command.startedAt,
         },
         [],
-        command.effectId,
+        commandEffectIdentity(command),
       );
     }
     case "CancelSession": {
@@ -628,6 +661,7 @@ const dispatchCommand = (
           effect,
         },
         [effect],
+        commandEffectIdentity(command),
       );
     }
     case "ReportSessionTerminal": {
@@ -665,7 +699,13 @@ const dispatchCommand = (
           "only a started session can complete",
         );
       }
-      return accepted(state, envelope.commandId, eventForTerminal(command), [], command.effectId);
+      return accepted(
+        state,
+        envelope.commandId,
+        eventForTerminal(command),
+        [],
+        commandEffectIdentity(command),
+      );
     }
     case "RecordHandoff": {
       const handoff = command.handoff;
@@ -804,6 +844,14 @@ const dispatchCommand = (
           envelope.commandId,
           "invalid_transition",
           "new proposals must start submitted",
+        );
+      }
+      if (proposal.submissionEventRevision !== state.eventRevision + 1) {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal submission revision must be the accepting revision",
         );
       }
       if (!validManifest(proposal.candidate)) {
@@ -978,8 +1026,9 @@ const dispatchCommand = (
         state.policy.mergeCapability,
         context,
         sessionScope(state, proposal.proposerSessionId, proposal.proposalId),
+        command.grantId,
       );
-      if (grant === undefined || grant.grantId !== command.grantId) {
+      if (grant === undefined) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks proposal.merge");
       }
       if (proposal.basisContentRevision !== state.contentRevision) {
@@ -1081,7 +1130,7 @@ const dispatchCommand = (
           lease: acquiredLease,
         },
         [],
-        lease.effectId,
+        commandEffectIdentity(command),
       );
     }
     case "RenewWorkspaceLease": {

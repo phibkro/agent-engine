@@ -668,6 +668,78 @@ describe("semantic protocol and kernel laws", () => {
     expect(last[0]?.commandId).toBe(last[1]?.commandId);
   });
 
+  test("Merge validates the exact named Grant even when a broader Grant is presented first", () => {
+    const approved = buildApprovedState();
+    const proposalGrant = grant(119, "proposal.merge", {
+      projectId: PROJECT_ID,
+      proposalId: PROPOSAL_ID,
+    });
+    const outcome = dispatch(
+      approved.state,
+      {
+        _tag: "MergeProposal",
+        mergeId: MergeIdSchema.make(id("mrg_", 119)),
+        proposalId: PROPOSAL_ID,
+        grantId: proposalGrant.grantId,
+        candidateDigest: CANDIDATE_DIGEST,
+      },
+      119,
+      operator(),
+      NOW,
+      [proposalGrant],
+    );
+    expect(outcome.result._tag).toBe("Accepted");
+  });
+
+  test("SubmitProposal binds its declared submission revision to the accepting revision", () => {
+    const submitted = buildSubmittedState();
+    const beforeSubmission = replay(
+      emptyProjectState(PROJECT_ID),
+      submitted.state.history.slice(0, -1),
+    );
+    const outcome = dispatch(
+      beforeSubmission,
+      {
+        _tag: "SubmitProposal",
+        proposal: {
+          ...submitted.proposal,
+          submissionEventRevision: EventRevisionSchema.make(999),
+        },
+      },
+      199,
+    );
+    expect(outcome.result).toMatchObject({ _tag: "Rejected", code: "invalid_transition" });
+  });
+
+  test("scope Gate rejects empty, out-of-scope, and traversing changed paths", () => {
+    const submitted = buildSubmittedState();
+    const scopeEvidence = Object.values(submitted.state.evidence).find(
+      (item) => item.kind === "scope_check",
+    );
+    expect(scopeEvidence?.scope).toBeDefined();
+    if (scopeEvidence?.scope === undefined) return;
+    const acceptedScope = scopeEvidence.scope;
+    const evaluationFor = (changedPaths: readonly string[]): boolean | undefined => {
+      const changedEvidence: Evidence = {
+        ...scopeEvidence,
+        scope: { ...acceptedScope, changedPaths },
+      };
+      const changedState: ProjectState = {
+        ...submitted.state,
+        evidence: {
+          ...submitted.state.evidence,
+          [changedEvidence.evidenceId]: changedEvidence,
+        },
+      };
+      return deriveGates(changedState, submitted.proposal).evaluations.find(
+        (item) => item.gateKey === "gat_scope_valid",
+      )?.satisfied;
+    };
+    expect(evaluationFor([])).toBe(false);
+    expect(evaluationFor(["docs/readme.md"])).toBe(false);
+    expect(evaluationFor(["src/../secret.txt"])).toBe(false);
+  });
+
   test("approval is operator-bound, submission-bound, and cannot be host-recorded or forged", () => {
     const submitted = buildSubmittedState();
     const forged: Evidence = {
@@ -1039,7 +1111,7 @@ describe("semantic protocol and kernel laws", () => {
         sessionId: SESSION_ID,
         workspaceViewId: WorkspaceViewIdSchema.make(id("wsv_", 907)),
         startedAt: NOW,
-        effectId: effectId(907),
+        effectId: effectId(102),
       },
       907,
     );
@@ -1051,11 +1123,12 @@ describe("semantic protocol and kernel laws", () => {
         sessionId: SESSION_ID,
         workspaceViewId: WorkspaceViewIdSchema.make(id("wsv_", 908)),
         startedAt: NOW,
-        effectId: effectId(907),
+        effectId: effectId(102),
       },
       908,
     );
     expect(duplicate.result._tag).toBe("AlreadyApplied");
+    expect(requested.sessions[SESSION_ID]?.status).toBe("started");
   });
 
   test("replay ignores out-of-order revisions but accepts ordered same-command siblings", () => {
@@ -1063,6 +1136,7 @@ describe("semantic protocol and kernel laws", () => {
     const created: EventEnvelope = {
       _tag: "EventEnvelope",
       eventRevision: EventRevisionSchema.make(1),
+      eventIndex: 0,
       commandId: commandId(1001),
       event: { _tag: "ProjectCreated", projectId: PROJECT_ID, policy: tracerPolicy(), grants: [] },
     };
@@ -1080,12 +1154,14 @@ describe("semantic protocol and kernel laws", () => {
     const second: EventEnvelope = {
       _tag: "EventEnvelope",
       eventRevision: EventRevisionSchema.make(2),
+      eventIndex: 0,
       commandId: commandId(1002),
       event: { _tag: "WorkSubmitted", work },
     };
     const sibling: EventEnvelope = {
       _tag: "EventEnvelope",
       eventRevision: EventRevisionSchema.make(2),
+      eventIndex: 1,
       commandId: commandId(1002),
       event: {
         _tag: "GatesEvaluated",
@@ -1097,7 +1173,7 @@ describe("semantic protocol and kernel laws", () => {
         evidenceIds: [],
       },
     };
-    const rebuilt = replay(initial, [second, created, second, sibling]);
+    const rebuilt = replay(initial, [second, created, second, second, sibling, sibling]);
     expect(rebuilt.eventRevision).toBe(2);
     expect(rebuilt.history.map((item) => item.event._tag)).toEqual([
       "ProjectCreated",
@@ -1111,6 +1187,6 @@ describe("semantic protocol and kernel laws", () => {
   test("canonical JSON follows RFC 8785 ordering and manifest ordering", () => {
     expect(canonicalize({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
     const entries = sortManifestEntries([{ path: "a\uFFFD" }, { path: "a\u{10000}" }]);
-    expect(entries.map((entry) => entry.path)).toEqual(["a\u{10000}", "a\uFFFD"]);
+    expect(entries.map((entry) => entry.path)).toEqual(["a\uFFFD", "a\u{10000}"]);
   });
 });

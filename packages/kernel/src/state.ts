@@ -42,8 +42,11 @@ export interface WorkProcess {
   readonly requiredGates: readonly GateKey[];
 }
 
+export type EffectReceiptKind = "request" | "started" | "terminal";
+
 export interface EffectReceipt {
   readonly effectId: EffectId;
+  readonly kind: EffectReceiptKind;
   readonly receipt: AcceptedReceipt;
 }
 
@@ -68,7 +71,7 @@ export interface ProjectState {
   readonly mergeReceipts: Readonly<Record<MergeId, MergeReceipt>>;
   readonly history: readonly EventEnvelope[];
   readonly commandReceipts: Readonly<Record<CommandId, CommandReceipt>>;
-  readonly effectReceipts: Readonly<Record<EffectId, EffectReceipt>>;
+  readonly effectReceipts: Readonly<Record<string, EffectReceipt>>;
   readonly outbox: readonly EffectRequest[];
 }
 
@@ -332,7 +335,8 @@ export const foldEvent = (state: ProjectState, envelope: EventEnvelope): Project
   const isCommandSibling =
     envelope.eventRevision === state.eventRevision &&
     last !== undefined &&
-    last.commandId === envelope.commandId;
+    last.commandId === envelope.commandId &&
+    envelope.eventIndex === last.eventIndex + 1;
   if (!isFirstAtRevision && !isCommandSibling) return state;
   const next = applyEventBody(state, envelope.event);
   return {
@@ -349,16 +353,6 @@ export const commandReceipt = (
   state: ProjectState,
   commandId: CommandId,
 ): CommandReceipt | undefined => state.commandReceipts[commandId];
-
-export const hasActiveLease = (
-  state: ProjectState,
-  resourceId: ResourceId,
-  at: string,
-): ResourceClaim | undefined => {
-  const claims = state.resources[resourceId];
-  if (claims === undefined) return undefined;
-  return Object.values(claims).find((claim) => claim.expiresAt > at);
-};
 
 export const activeSession = (state: ProjectState, sessionId: SessionId): Session | undefined =>
   state.sessions[sessionId];

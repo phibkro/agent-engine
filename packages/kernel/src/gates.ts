@@ -111,6 +111,7 @@ const gateSatisfied = (
           candidate.scope !== undefined &&
           evidenceMatchesSubject(candidate, proposal, "proposal", proposal.proposalId) &&
           work !== undefined &&
+          candidate.scope.changedPaths.length > 0 &&
           candidate.scope.changedPaths.every((path) =>
             work.writableScope.some((scope) => pathWithin(path, scope)),
           ),
