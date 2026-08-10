@@ -10,11 +10,9 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
-    "@work-engine/kernel": "0.0.0",
     "@work-engine/protocol": "0.0.0",
     "@work-engine/runtime": "0.0.0",
-    "effect": "4.0.0-beta.102",
-    "json-canonicalize": "2.0.0"
+    "effect": "4.0.0-beta.102"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.20.3",

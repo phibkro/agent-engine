@@ -1,11 +1,10 @@
-import { ProjectDurableObject } from "../src/authority.ts";
+import { ProjectMemoryDurableObject, SessionDurableObject } from "../src/index.ts";
 
-export { ProjectDurableObject };
+export { ProjectMemoryDurableObject, SessionDurableObject };
 
 export default {
-  async fetch(request: Request, _env: Record<string, unknown>): Promise<Response> {
-    const url = new URL(request.url);
-    if (url.pathname === "/health") return new Response("ok");
-    return new Response("not found", { status: 404 });
+  async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === "/health") return Response.json({ status: "ok" });
+    return Response.json({ _tag: "NotFound" }, { status: 404 });
   },
 };

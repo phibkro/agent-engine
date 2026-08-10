@@ -7,11 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@work-engine/cloudflare": "0.0.0",
-    "@work-engine/kernel": "0.0.0",
-    "@work-engine/protocol": "0.0.0",
-    "@work-engine/runtime": "0.0.0",
-    "effect": "4.0.0-beta.102"
+    "@work-engine/cloudflare": "0.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260801.1"

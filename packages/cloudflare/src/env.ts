@@ -1,23 +1,24 @@
-import type { OutboxMessage } from "./schemas.ts";
+import type { CloudTask } from "./contract.ts";
 
-/** Bindings shared by the Worker, Project DO, Queue consumer, and Workflow. */
+/** Cloudflare bindings for the 0002 runtime. No 0001 D1, Queue, or Workflow bindings remain. */
 export interface CloudflareRuntimeEnv {
-  PROJECTS?: DurableObjectNamespace;
-  ARTIFACTS?: R2Bucket;
-  PROJECT_INDEX?: D1Database;
-  SESSION_HOST?: Fetcher;
-  SESSION_EFFECTS?: Queue<OutboxMessage>;
-  SESSION_DEAD_LETTER?: Queue<OutboxMessage>;
-  SESSION_WORKFLOW?: Workflow<OutboxMessage>;
-  AI?: Ai;
-  ACCESS_CLIENT_ID?: string;
-  ACCESS_CLIENT_SECRET?: string;
-  AUTHORIZED_SSH_KEY_NAME?: string;
-  CONTAINER_IMAGE_DIGEST?: string;
-  RECONCILIATION_QUEUE?: Queue<{ readonly _tag: "ReconcileProjects" }>;
+  readonly SESSION: DurableObjectNamespace;
+  readonly PROJECT_MEMORY: DurableObjectNamespace;
+  readonly DEPENDENCY_CACHE?: R2Bucket;
+  readonly GITHUB_TRANSPORT?: Fetcher;
+  readonly SANDBOX_PROVIDER?: Fetcher;
+  readonly CLOUD_TASK_AUTH_TOKEN?: string;
+  readonly CLOUD_TASK_ROUTER_SECRET?: string;
+  readonly CLOUD_TASK_AUTH?: Fetcher;
+  readonly PROFILE_CATALOG?: KVNamespace;
 }
 
-export const ACCESS_SERVICE_TOKEN_HEADERS = {
-  id: "CF-Access-Client-Id",
-  secret: "CF-Access-Client-Secret",
-} as const;
+export interface CloudTaskRequestContext {
+  readonly caller: string;
+  readonly task: CloudTask;
+}
+
+export const CLOUD_TASK_AUTHORIZATION = "Authorization";
+export const CLOUD_TASK_BEARER_PREFIX = "Bearer ";
+export const SESSION_DO_PATH = "/v1/session";
+export const PROJECT_MEMORY_DO_PATH = "/v1/project-memory";

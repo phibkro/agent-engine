@@ -7,9 +7,8 @@ export default defineConfig({
       main: "./test/worker.ts",
       miniflare: {
         bindings: {
-          ACCESS_CLIENT_ID: "test-client",
-          ACCESS_CLIENT_SECRET: "test-secret",
-          AUTHORIZED_SSH_KEY_NAME: "test-key",
+          CLOUD_TASK_AUTH_TOKEN: "test-token",
+          CLOUD_TASK_ROUTER_SECRET: "test-router-secret",
         },
       },
     }),
