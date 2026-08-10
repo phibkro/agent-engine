@@ -9,6 +9,7 @@ import {
 } from "@work-engine/protocol";
 import {
   CloudTaskClient,
+  CloudTaskUnavailable,
   type CloudTaskClient as CloudTaskClientShape,
 } from "@work-engine/runtime";
 import {
@@ -159,7 +160,7 @@ export const readCloudTask = (path: string): Effect.Effect<CloudTask, ParseFailu
 
 const clientFailure = (error: unknown): CloudTaskClientError => {
   if (isCloudTaskClientError(error)) return error;
-  return { _tag: "CloudTaskUnavailable", reason: String(error) };
+  return new CloudTaskUnavailable({ reason: String(error) });
 };
 
 const executeSpawn = (

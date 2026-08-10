@@ -75,7 +75,6 @@ export type {
   VerifiedWorkspace,
 };
 
-
 const ErrorReasonSchema = Schema.NonEmptyString;
 
 export class CloudTaskNotFound extends Schema.TaggedErrorClass<CloudTaskNotFound>()(

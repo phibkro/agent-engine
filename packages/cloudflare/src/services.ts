@@ -21,6 +21,7 @@ import {
   ProjectMemoryAcceptRequestSchema,
   ProjectMemoryProposeRequestSchema,
   ProjectMemoryFactSchema,
+  ProjectMemoryProposalSchema,
   ProjectMemoryReadRequestSchema,
   ProjectMemoryReadResponseSchema,
   ProjectMemoryRevisionSchema,
@@ -85,10 +86,7 @@ import {
   type RepositoryPublisher,
   type RepositoryPublisherError,
 } from "@work-engine/runtime";
-import {
-  type CacheExpectation,
-  R2DependencyCache,
-} from "./cache.ts";
+import { type CacheExpectation, R2DependencyCache } from "./cache.ts";
 import {
   CacheDigestMismatchError,
   CacheMissError,
@@ -289,13 +287,13 @@ const memoryFailure = (cause: unknown): ProjectMemoryError => {
         const details = decodeOrUndefined(MemoryRevisionMismatchDetailsSchema, cause.details);
         return details === undefined
           ? new MemoryUnavailable({ reason: "Project Memory returned malformed revision details" })
-          : new MemoryRevisionStale(details);
+          : new MemoryRevisionStale({
+              expectedRevision: details.expected,
+              observedRevision: details.observed,
+            });
       }
       case "MemoryRevisionUnavailable": {
-        const details = decodeOrUndefined(
-          MemoryRevisionUnavailableDetailsSchema,
-          cause.details,
-        );
+        const details = decodeOrUndefined(MemoryRevisionUnavailableDetailsSchema, cause.details);
         return details === undefined
           ? new MemoryUnavailable({ reason: "Project Memory returned malformed revision details" })
           : new MemoryRevisionUnavailable({ expectedRevision: details.revision });
@@ -421,7 +419,9 @@ const repositoryFailure = (
     case "RepositoryScopeViolation": {
       const details = decodeOrUndefined(RepositoryScopeViolationDetailsSchema, cause.details);
       return details === undefined
-        ? new RepositoryUnavailable({ reason: "Repository provider returned malformed scope details" })
+        ? new RepositoryUnavailable({
+            reason: "Repository provider returned malformed scope details",
+          })
         : new RepositoryScopeViolation({ path: details.paths[0] });
     }
     case "RepositoryConflict":
@@ -564,7 +564,9 @@ const cacheFailure = (cause: unknown): DependencyCacheError => {
   if (cause instanceof CacheMissError) {
     const details = decodeOrUndefined(CacheMissDetailsSchema, cause.details);
     return details === undefined
-      ? new DependencyCacheUnavailable({ reason: "Dependency cache returned malformed miss details" })
+      ? new DependencyCacheUnavailable({
+          reason: "Dependency cache returned malformed miss details",
+        })
       : new DependencyCacheMissing({ cacheKey: details.cacheKey });
   }
   return new DependencyCacheUnavailable({
@@ -588,10 +590,7 @@ export const DependencyCacheLive = (bucket: R2Bucket | undefined): Layer.Layer<D
         Effect.tryPromise({
           try: async () => {
             const decodedManifest = decode(DependencyCacheManifestSchema, manifest);
-            const restored = await adapter.restore(
-              decodedManifest,
-              cacheExpectation(expectation),
-            );
+            const restored = await adapter.restore(decodedManifest, cacheExpectation(expectation));
             if (restored.kind === "miss") {
               throw new CacheMissError(decodedManifest.cacheKey, restored.reason);
             }

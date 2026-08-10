@@ -15,7 +15,14 @@ import {
   type SessionObservation,
   type SessionResult,
 } from "@work-engine/protocol";
-import type { CloudTaskClient, CloudTaskError } from "@work-engine/runtime";
+import {
+  CloudTaskNotFound,
+  CloudTaskRejected,
+  CloudTaskUnauthorized,
+  CloudTaskUnavailable,
+  type CloudTaskClient,
+  type CloudTaskError,
+} from "@work-engine/runtime";
 import type { OperatorConfig } from "./config.ts";
 
 /** Cloudflare Access headers are part of the local adapter boundary. */
@@ -52,10 +59,7 @@ const decodeJsonStrict = <S extends Schema.ConstraintDecoder<unknown>>(
 ): S["Type"] =>
   Schema.decodeUnknownSync(Schema.fromJsonString(schema), { onExcessProperty: "error" })(input);
 
-const rejected = (reason: string): CloudTaskError => ({
-  _tag: "CloudTaskRejected",
-  reason,
-});
+const rejected = (reason: string): CloudTaskError => new CloudTaskRejected({ reason });
 
 const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
   response: unknown,
@@ -71,16 +75,17 @@ const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
 
 const responseError = (status: number, sessionId: SessionId): CloudTaskError => {
   if (status === 401) {
-    return {
-      _tag: "CloudTaskUnauthorized",
+    return new CloudTaskUnauthorized({
       reason: "Cloudflare Access rejected the service credentials",
-    };
+    });
   }
   if (status === 404) {
-    return { _tag: "CloudTaskNotFound", sessionId };
+    return new CloudTaskNotFound({ sessionId });
   }
   if (status >= 500) {
-    return { _tag: "CloudTaskUnavailable", reason: `cloud-task endpoint returned HTTP ${status}` };
+    return new CloudTaskUnavailable({
+      reason: `cloud-task endpoint returned HTTP ${status}`,
+    });
   }
   return rejected(`cloud-task endpoint returned HTTP ${status}`);
 };
@@ -114,19 +119,19 @@ const request = <S extends Schema.ConstraintDecoder<unknown>>(
           body,
           signal,
         }),
-      catch: (error) => ({
-        _tag: "CloudTaskUnavailable" as const,
-        reason: `${operation}: ${reasonOf(error)}`,
-      }),
+      catch: (error) =>
+        new CloudTaskUnavailable({
+          reason: `${operation}: ${reasonOf(error)}`,
+        }),
     });
     const text = yield* Effect.tryPromise({
       try: () => response.text(),
-      catch: (error) => ({
-        _tag: "CloudTaskUnavailable" as const,
-        reason: `${operation}: ${reasonOf(error)}`,
-      }),
+      catch: (error) =>
+        new CloudTaskUnavailable({
+          reason: `${operation}: ${reasonOf(error)}`,
+        }),
     });
-    if (!response.ok) return yield* Effect.fail(responseError(response.status, sessionId));
+    if (!response.ok) return yield* responseError(response.status, sessionId);
     return yield* Effect.try({
       try: () => decodeJsonStrict(responseSchema, text),
       catch: (error) => rejected(`${operation}: strict response decode failed: ${reasonOf(error)}`),

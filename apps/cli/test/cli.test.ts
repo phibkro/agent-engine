@@ -12,6 +12,7 @@ import { handleMcpRequest, runMcp } from "../src/mcp.ts";
 import { exitCodeFor, failureEnvelope, renderJson } from "../src/output.ts";
 import {
   CloudTaskClient as CloudTaskClientService,
+  CloudTaskUnauthorized,
   type CloudTaskClient,
 } from "@work-engine/runtime";
 import { AcceptedCursorSchema, MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
@@ -284,15 +285,17 @@ describe("0002 CLI public interface", () => {
   });
 
   test("renders typed failures without a fallback reason", () => {
-    const failure: CloudTaskClientError = {
-      _tag: "CloudTaskUnauthorized",
+    const failure: CloudTaskClientError = new CloudTaskUnauthorized({
       reason: "Access denied",
-    };
+    });
     const envelope = failureEnvelope("result", failure);
     expect(envelope.failure).toEqual(failure);
     expect(
       Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(renderJson(envelope)),
-    ).toMatchObject({ ok: false, failure });
+    ).toMatchObject({
+      ok: false,
+      failure: { _tag: "CloudTaskUnauthorized", reason: "Access denied" },
+    });
     expect(exitCodeFor(failure)).toBeGreaterThan(0);
   });
 });
