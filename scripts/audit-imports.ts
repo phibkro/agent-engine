@@ -116,6 +116,13 @@ const run = async (): Promise<void> => {
         errors.push(`${file} has an expired Effect exception (${removalDate ?? "missing date"})`);
       }
     }
+    const isTestSource =
+      file.includes("/test/") ||
+      file.includes("/__tests__/") ||
+      /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file);
+    if (!isTestSource && /\bas\s+(?:never|any|unknown\s+as)\b/u.test(source)) {
+      errors.push(`${file} contains an unsafe production cast; decode or construct the type`);
+    }
     for (const specifier of importsIn(file, source)) {
       checkedImports += 1;
       const blocked = forbidden(specifier, boundary.forbidden);
