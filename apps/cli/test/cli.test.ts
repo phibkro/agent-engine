@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { makeCloudTaskClient, type CloudTaskClientError } from "../src/client.ts";
 import { decodeOperatorConfig, type ConfigFileSystem } from "../src/config.ts";
+import { handleMcpRequest, runMcp } from "../src/mcp.ts";
 import { parseInvocation } from "../src/commands.ts";
 import { exitCodeFor, failureEnvelope, renderJson } from "../src/output.ts";
-import { MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
+import { AcceptedCursorSchema, MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
+import type { CloudTaskClient } from "@work-engine/runtime";
 
 const config = {
   baseUrl: "https://work.example",
@@ -157,6 +159,60 @@ describe("0002 CLI public interface", () => {
     expect(nonPrivate._tag).toBe("Failure");
     if (nonPrivate._tag === "Failure")
       expect(String(nonPrivate.cause)).toContain("ConfigPermissions");
+  });
+
+  test("preserves structured JSON through MCP Send and loops in one Effect", async () => {
+    const messages: unknown[] = [];
+    const client: CloudTaskClient = {
+      spawn: () => Effect.die("unused"),
+      send: (_sessionId, _messageId, message) => {
+        messages.push(message);
+        return Effect.succeed(AcceptedCursorSchema.make(1));
+      },
+      observe: () => Effect.die("unused"),
+      cancel: () => Effect.die("unused"),
+      result: () => Effect.die("unused"),
+    };
+    const request = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "session_send",
+      params: {
+        sessionId,
+        messageId,
+        message: { nested: [true, null, 42] },
+      },
+    };
+
+    await expect(Effect.runPromise(handleMcpRequest(client, request))).resolves.toMatchObject({
+      jsonrpc: "2.0",
+      id: 1,
+      result: 1,
+    });
+
+    const input = [JSON.stringify(request), "{", undefined];
+    const output: string[] = [];
+    await Effect.runPromise(
+      runMcp(client, {
+        readLine: Effect.sync(() => input.shift()),
+        writeLine: (line) =>
+          Effect.sync(() => {
+            output.push(line);
+          }),
+      }),
+    );
+
+    expect(messages).toEqual([{ nested: [true, null, 42] }, { nested: [true, null, 42] }]);
+    expect(
+      output.map((line) => Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(line)),
+    ).toEqual([
+      { jsonrpc: "2.0", id: 1, result: 1 },
+      {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Invalid JSON-RPC input" },
+      },
+    ]);
   });
 
   test("renders typed failures without a fallback reason", () => {

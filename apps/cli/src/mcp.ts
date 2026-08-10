@@ -49,14 +49,15 @@ export const SESSION_TOOLS: ReadonlyArray<McpTool> = [
 export type McpError =
   | CloudTaskClientError
   | { readonly _tag: "McpDecodeFailure"; readonly reason: string }
-  | { readonly _tag: "McpMethodNotFound"; readonly method: string };
+  | { readonly _tag: "McpMethodNotFound"; readonly method: string }
+  | { readonly _tag: "McpIoFailure"; readonly reason: string };
 
 const JsonRpcIdSchema = Schema.Union([Schema.String, Schema.Finite, Schema.Null]);
 const JsonRpcRequestSchema = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
   id: Schema.optionalKey(JsonRpcIdSchema),
   method: Schema.NonEmptyString,
-  params: Schema.optionalKey(Schema.Unknown),
+  params: Schema.optionalKey(Schema.Json),
 });
 
 type JsonRpcRequest = typeof JsonRpcRequestSchema.Type;
@@ -68,7 +69,7 @@ const SpawnParamsSchema = Schema.Struct({
 const SendParamsSchema = Schema.Struct({
   sessionId: SessionIdSchema,
   messageId: MessageIdSchema,
-  message: Schema.String,
+  message: Schema.Json,
 });
 const ObserveParamsSchema = Schema.Struct({
   sessionId: SessionIdSchema,
@@ -80,17 +81,24 @@ const CancelParamsSchema = Schema.Struct({
 });
 const ResultParamsSchema = Schema.Struct({ sessionId: SessionIdSchema });
 
-export type JsonRpcResponse =
-  | {
-      readonly jsonrpc: "2.0";
-      readonly id: string | number | null | undefined;
-      readonly result: unknown;
-    }
-  | {
-      readonly jsonrpc: "2.0";
-      readonly id: string | number | null | undefined;
-      readonly error: { readonly code: number; readonly message: string; readonly data?: unknown };
-    };
+const JsonRpcResponseSchema = Schema.Union([
+  Schema.Struct({
+    jsonrpc: Schema.Literal("2.0"),
+    id: Schema.optionalKey(JsonRpcIdSchema),
+    result: Schema.Json,
+  }),
+  Schema.Struct({
+    jsonrpc: Schema.Literal("2.0"),
+    id: Schema.optionalKey(JsonRpcIdSchema),
+    error: Schema.Struct({
+      code: Schema.Finite,
+      message: Schema.NonEmptyString,
+      data: Schema.optionalKey(Schema.Json),
+    }),
+  }),
+]);
+export type JsonRpcResponse = typeof JsonRpcResponseSchema.Type;
+const JsonRpcResponseFromStringSchema = Schema.fromJsonString(JsonRpcResponseSchema);
 
 const decode = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
@@ -164,42 +172,57 @@ export const handleMcpRequest = (
       return yield* Effect.fail({ _tag: "McpMethodNotFound" as const, method: request.method });
     }
     const result = yield* invoke(client, method, request.params);
-    return { jsonrpc: "2.0", id: requestId(request), result } satisfies JsonRpcResponse;
+    return yield* decode(JsonRpcResponseSchema, {
+      jsonrpc: "2.0",
+      ...(requestId(request) === undefined ? {} : { id: requestId(request) }),
+      result,
+    });
   });
 
 export interface McpStdio {
-  readonly readLine: () => Promise<string | undefined>;
-  readonly writeLine: (line: string) => Promise<void>;
+  readonly readLine: Effect.Effect<string | undefined, McpError>;
+  readonly writeLine: (line: string) => Effect.Effect<void, McpError>;
 }
 
-export const runMcp = (client: CloudTaskClient, stdio: McpStdio): Effect.Effect<void, never> => {
-  const processNext = async (): Promise<void> => {
-    const line = await stdio.readLine();
-    if (line === undefined) return;
-    let input: unknown;
-    try {
-      input = JSON.parse(line) as unknown;
-    } catch (error) {
-      await stdio.writeLine(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32700, message: String(error) },
-        }),
-      );
-      return processNext();
-    }
-    const exit = await Effect.runPromiseExit(handleMcpRequest(client, input));
-    await stdio.writeLine(
-      exit._tag === "Success"
-        ? JSON.stringify(exit.value)
-        : JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32000, message: String(exit.cause) },
-          }),
+const encodeResponse = (response: JsonRpcResponse): string =>
+  Schema.encodeSync(JsonRpcResponseFromStringSchema)(response);
+
+const errorResponse = (code: number, message: string): JsonRpcResponse =>
+  Schema.decodeUnknownSync(JsonRpcResponseSchema, { onExcessProperty: "error" })({
+    jsonrpc: "2.0",
+    id: null,
+    error: { code, message },
+  });
+
+export const runMcp = (client: CloudTaskClient, stdio: McpStdio): Effect.Effect<void, McpError> => {
+  const processLine = (line: string): Effect.Effect<void, McpError> =>
+    Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(line).pipe(
+      Effect.result,
+      Effect.flatMap((parsed) => {
+        if (parsed._tag === "Failure") {
+          return stdio.writeLine(encodeResponse(errorResponse(-32700, "Invalid JSON-RPC input")));
+        }
+        return handleMcpRequest(client, parsed.success).pipe(
+          Effect.result,
+          Effect.flatMap((handled) =>
+            stdio.writeLine(
+              encodeResponse(
+                handled._tag === "Success"
+                  ? handled.success
+                  : errorResponse(-32000, "JSON-RPC request failed"),
+              ),
+            ),
+          ),
+        );
+      }),
     );
-    return processNext();
-  };
-  return Effect.promise(processNext).pipe(Effect.asVoid, Effect.orDie);
+
+  const loop: Effect.Effect<void, McpError> = Effect.suspend(() =>
+    stdio.readLine.pipe(
+      Effect.flatMap((line) =>
+        line === undefined ? Effect.void : processLine(line).pipe(Effect.andThen(loop)),
+      ),
+    ),
+  );
+  return loop;
 };
