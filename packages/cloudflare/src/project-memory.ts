@@ -16,6 +16,7 @@ import {
   type ProjectMemoryRevision,
 } from "./contract.ts";
 import {
+  CloudRuntimeError,
   InvalidRequestError,
   MemoryProposalNotFoundError,
   MemoryRevisionMismatchError,
@@ -255,12 +256,21 @@ export class ProjectMemoryDurableObject implements DurableObject {
   #state: DurableObjectState;
   #memory: ProjectMemoryState | undefined;
 
-  constructor(state: DurableObjectState, _env: unknown) {
+  #coordinatorSecret: string | undefined;
+
+  constructor(
+    state: DurableObjectState,
+    env: { readonly PROJECT_MEMORY_COORDINATOR_SECRET?: string },
+  ) {
     this.#state = state;
+    this.#coordinatorSecret = env.PROJECT_MEMORY_COORDINATOR_SECRET;
   }
 
   async #load(projectId: string): Promise<ProjectMemoryState> {
-    if (this.#memory !== undefined) return this.#memory;
+    if (this.#memory !== undefined) {
+      if (this.#memory.projectId !== projectId) throw new MemoryUnauthorizedError();
+      return this.#memory;
+    }
     const snapshot = await this.#state.storage.get<ProjectMemorySnapshot>("memory");
     this.#memory = new ProjectMemoryState(projectId, snapshot);
     return this.#memory;
@@ -299,8 +309,14 @@ export class ProjectMemoryDurableObject implements DurableObject {
         return Response.json(proposal);
       }
       if (url.pathname.endsWith("/accept")) {
-        if (request.headers.get("X-Project-Memory-Coordinator") === null)
+        const presented = request.headers.get("X-Project-Memory-Coordinator");
+        if (
+          this.#coordinatorSecret === undefined ||
+          presented === null ||
+          presented !== this.#coordinatorSecret
+        ) {
           throw new MemoryUnauthorizedError();
+        }
         const revision = memory.acceptMemory(
           requiredString(body["proposalId"], "proposalId"),
           MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
@@ -322,9 +338,13 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
   const status =
     cause instanceof MemoryRevisionMismatchError || cause instanceof MemoryRevisionUnavailableError
       ? 409
-      : 400;
+      : cause instanceof MemoryUnauthorizedError
+        ? 403
+        : 400;
   const body =
-    cause instanceof Error ? { _tag: cause.name, reason: cause.message } : { _tag: "UnknownError" };
+    cause instanceof CloudRuntimeError
+      ? { _tag: cause._tag, reason: cause.message, details: cause.details }
+      : { _tag: "UnknownError", reason: String(cause) };
   return Response.json(body, { status });
 };
 
@@ -373,17 +393,20 @@ export class CloudflareProjectMemory {
   #namespace: DurableObjectNamespace | undefined;
   #projectId: string;
   #sessionId: string | undefined;
-  #coordinator: boolean;
+  #coordinatorSecret: string | undefined;
 
   constructor(
     namespace: DurableObjectNamespace | undefined,
     projectId: string,
-    options: { readonly sessionId?: string; readonly coordinator?: boolean } = {},
+    options: {
+      readonly sessionId?: string;
+      readonly coordinatorSecret?: string;
+    } = {},
   ) {
     this.#namespace = namespace;
     this.#projectId = projectId;
     this.#sessionId = options.sessionId;
-    this.#coordinator = options.coordinator === true;
+    this.#coordinatorSecret = options.coordinatorSecret;
   }
 
   async #call(path: string, body: Record<string, unknown>): Promise<unknown> {
@@ -395,7 +418,9 @@ export class CloudflareProjectMemory {
       "X-Project-Identity": this.#projectId,
     });
     if (this.#sessionId !== undefined) headers.set("X-Cloud-Task-Session", this.#sessionId);
-    if (this.#coordinator) headers.set("X-Project-Memory-Coordinator", "coordinator-binding");
+    if (this.#coordinatorSecret !== undefined) {
+      headers.set("X-Project-Memory-Coordinator", this.#coordinatorSecret);
+    }
     const response = await stub.fetch(`https://project-memory${path}`, {
       method: "POST",
       headers,
@@ -404,10 +429,21 @@ export class CloudflareProjectMemory {
     const value: unknown = await response.json();
     if (!response.ok) {
       const details = record(value);
-      throw new ProviderUnavailableError(
-        "Project Memory Durable Object",
-        String(details["reason"] ?? response.status),
-      );
+      const tag = details["_tag"];
+      const reason = String(details["reason"] ?? response.status);
+      const errorDetails =
+        typeof details["details"] === "object" && details["details"] !== null
+          ? record(details["details"])
+          : {};
+      if (
+        tag === "MemoryRevisionMismatch" ||
+        tag === "MemoryRevisionUnavailable" ||
+        tag === "MemoryProposalNotFound" ||
+        tag === "MemoryUnauthorized"
+      ) {
+        throw new CloudRuntimeError(tag, reason, errorDetails);
+      }
+      throw new ProviderUnavailableError("Project Memory Durable Object", reason);
     }
     return value;
   }
@@ -421,12 +457,14 @@ export class CloudflareProjectMemory {
     claim: string,
     provenance: unknown,
   ): Promise<unknown> {
-    if (this.#sessionId === undefined || this.#coordinator) throw new MemoryUnauthorizedError();
+    if (this.#sessionId === undefined || this.#coordinatorSecret !== undefined) {
+      throw new MemoryUnauthorizedError();
+    }
     return this.#call("/propose", { expectedRevision, claim, provenance });
   }
 
   acceptMemory(proposalId: string, expectedRevision: MemoryRevision): Promise<unknown> {
-    if (!this.#coordinator) throw new MemoryUnauthorizedError();
+    if (this.#coordinatorSecret === undefined) throw new MemoryUnauthorizedError();
     return this.#call("/accept", { proposalId, expectedRevision });
   }
 }

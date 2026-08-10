@@ -81,9 +81,14 @@ const taskFromPayload = (payload: Record<string, unknown>): CloudTask => {
 };
 
 const sessionIdFromPayload = (payload: Record<string, unknown>, task?: CloudTask): string => {
-  const candidate =
-    payload["sessionId"] ?? (task === undefined ? undefined : record(task)["sessionId"]);
-  return requiredString(candidate, "sessionId");
+  const sessionId = requiredString(payload["sessionId"], "sessionId");
+  if (
+    task !== undefined &&
+    sessionId !== requiredString(record(task)["sessionId"], "task.sessionId")
+  ) {
+    throw new InvalidRequestError("payload.sessionId must equal task.sessionId");
+  }
+  return sessionId;
 };
 
 /** One Session DO owns private lifecycle, cursor, messages, cancellation, and terminal result. */
@@ -128,8 +133,7 @@ export class SessionDurableObject implements DurableObject {
         return Response.json({ _tag: "Spawned", admission });
       }
       const sessionId = sessionIdFromPayload(payload);
-      if (sessionId !== this.#state.id.toString())
-        throw new UnauthorizedError("Session address mismatch");
+      if (sessionId !== session.sessionId) throw new UnauthorizedError("Session address mismatch");
       if (tag === "Send") {
         const messageId = requiredString(payload["messageId"], "messageId");
         const message = payload["message"];
@@ -254,8 +258,27 @@ export class CloudflareCloudTaskClient {
       body: json(payload),
     });
     const body: unknown = await response.json();
-    if (!response.ok)
-      throw new UnauthorizedError(String(record(body)["reason"] ?? response.status));
+    if (!response.ok) {
+      const error = record(body);
+      const tag = error["_tag"];
+      const reason = String(error["reason"] ?? response.status);
+      const details =
+        typeof error["details"] === "object" && error["details"] !== null
+          ? record(error["details"])
+          : {};
+      if (
+        tag === "Unauthenticated" ||
+        tag === "Unauthorized" ||
+        tag === "InvalidRequest" ||
+        tag === "SessionNotFound" ||
+        tag === "SessionConflict" ||
+        tag === "SessionTerminal" ||
+        tag === "ProviderUnavailable"
+      ) {
+        throw new CloudRuntimeError(tag, reason, details);
+      }
+      throw new ProviderUnavailableError("Cloud-task service binding", reason);
+    }
     return decode(CloudTaskResponseSchema, body);
   }
 

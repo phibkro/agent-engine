@@ -37,7 +37,7 @@ export interface RepositoryTransport {
   }): Promise<GitCandidateVerification>;
   updateRef(input: {
     readonly ref: string;
-    readonly expectedSha: string;
+    readonly expectedSha: string | undefined;
     readonly nextSha: string;
     readonly force: false;
   }): Promise<GitRefState>;
@@ -57,12 +57,24 @@ const asGrantRecord = (grant: RepositoryGrant): Record<string, unknown> => recor
 const pathMatches = (path: string, pattern: string): boolean => {
   const normalizedPath = path.replace(/^\/+/, "");
   const normalizedPattern = pattern.replace(/^\/+/, "");
-  if (normalizedPattern === "**" || normalizedPattern === "*") return true;
-  if (normalizedPattern.endsWith("/**"))
-    return normalizedPath.startsWith(normalizedPattern.slice(0, -3));
-  if (normalizedPattern.startsWith("**/"))
-    return normalizedPath.endsWith(normalizedPattern.slice(3));
-  return normalizedPath === normalizedPattern;
+  let source = "^";
+  for (let index = 0; index < normalizedPattern.length; index += 1) {
+    const character = normalizedPattern[index]!;
+    if (character === "*" && normalizedPattern[index + 1] === "*") {
+      if (normalizedPattern[index + 2] === "/") {
+        source += "(?:.*/)?";
+        index += 2;
+      } else {
+        source += ".*";
+        index += 1;
+      }
+    } else if (character === "*") {
+      source += "[^/]*";
+    } else {
+      source += character.replace(/[|\\{}()[\]^$+?.]/gu, "\\$&");
+    }
+  }
+  return new RegExp(`${source}$`, "u").test(normalizedPath);
 };
 
 const allowedPath = (path: string, patterns: readonly string[]): boolean =>
@@ -80,7 +92,7 @@ export const sessionRefs = (
       .replace(/^-+|-+$/gu, "") || "project";
   const identity = sessionId.replace(/[^a-zA-Z0-9._-]+/gu, "-");
   const prefix = `agent/${slug}/${identity}`;
-  return { wip: `${prefix}/wip`, candidate: prefix };
+  return { wip: `${prefix}/wip`, candidate: `${prefix}/candidate` };
 };
 
 export const refsAreDistinct = (refs: SessionRefs): boolean => refs.wip !== refs.candidate;
@@ -232,14 +244,18 @@ export class TrustedRepositoryPublisher {
     if (outOfScope.length > 0) throw new RepositoryScopeViolationError(outOfScope);
     const wipRef = requiredString(value["wipRef"], "grant.wipRef");
     const observed = await transport.readRef(wipRef);
-    if (observed.sha !== expectedRemoteCommit) {
+    const expectedObserved =
+      observed.sha === undefined && expectedRemoteCommit === baseOf(grant)
+        ? undefined
+        : expectedRemoteCommit;
+    if (observed.sha !== expectedObserved) {
       throw new RepositoryConflictError(
         `WIP ref changed from ${expectedRemoteCommit} to ${observed.sha ?? "<absent>"}`,
       );
     }
     const updated = await transport.updateRef({
       ref: wipRef,
-      expectedSha: expectedRemoteCommit,
+      expectedSha: observed.sha,
       nextSha: commit,
       force: false,
     });
@@ -290,7 +306,7 @@ export class TrustedRepositoryPublisher {
         ? observed
         : await transport.updateRef({
             ref: candidateRef,
-            expectedSha: observed.sha ?? baseOf(grant),
+            expectedSha: observed.sha,
             nextSha: candidateCommit,
             force: false,
           });
@@ -392,7 +408,7 @@ class FetcherRepositoryTransport implements RepositoryTransport {
 
   async updateRef(input: {
     readonly ref: string;
-    readonly expectedSha: string;
+    readonly expectedSha: string | undefined;
     readonly nextSha: string;
     readonly force: false;
   }): Promise<GitRefState> {

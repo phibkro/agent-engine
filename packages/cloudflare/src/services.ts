@@ -37,14 +37,30 @@ import { CloudflareProjectMemory } from "./project-memory.ts";
 import { CloudflareRepositoryPublisher } from "./repository.ts";
 import { ProfileRegistry as LocalProfileRegistry } from "./profiles.ts";
 
-const cloudTaskFailure = (cause: unknown): CloudTaskError =>
-  ({
-    _tag:
-      cause instanceof CloudRuntimeError && cause._tag === "Unauthorized"
-        ? "CloudTaskUnauthorized"
-        : "CloudTaskUnavailable",
+const cloudTaskFailure = (cause: unknown): CloudTaskError => {
+  if (cause instanceof CloudRuntimeError) {
+    if (cause._tag === "Unauthorized" || cause._tag === "Unauthenticated") {
+      return { _tag: "CloudTaskUnauthorized", reason: cause.message };
+    }
+    if (cause._tag === "SessionNotFound") {
+      const sessionId = cause.details["sessionId"];
+      return typeof sessionId === "string"
+        ? { _tag: "CloudTaskNotFound", sessionId: sessionId as never }
+        : { _tag: "CloudTaskRejected", reason: cause.message };
+    }
+    if (
+      cause._tag === "InvalidRequest" ||
+      cause._tag === "SessionConflict" ||
+      cause._tag === "SessionTerminal"
+    ) {
+      return { _tag: "CloudTaskRejected", reason: cause.message };
+    }
+  }
+  return {
+    _tag: "CloudTaskUnavailable",
     reason: cause instanceof Error ? cause.message : "Cloud-task provider unavailable",
-  }) as CloudTaskError;
+  };
+};
 
 const memoryFailure = (cause: unknown): ProjectMemoryError => {
   if (cause instanceof CloudRuntimeError && cause._tag === "MemoryRevisionMismatch") {
@@ -172,7 +188,7 @@ export const CloudTaskClientLive = (
 export const ProjectMemoryLive = (
   namespace: DurableObjectNamespace | undefined,
   projectId: string,
-  options: { readonly sessionId?: string; readonly coordinator?: boolean } = {},
+  options: { readonly sessionId?: string; readonly coordinatorSecret?: string } = {},
 ): Layer.Layer<ProjectMemory> => {
   const adapter = new CloudflareProjectMemory(namespace, projectId, options);
   const service: ProjectMemory = {

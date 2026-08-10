@@ -9,6 +9,7 @@ export interface CloudflareRuntimeEnv {
   readonly SANDBOX_PROVIDER?: Fetcher;
   readonly CLOUD_TASK_AUTH_TOKEN?: string;
   readonly CLOUD_TASK_ROUTER_SECRET?: string;
+  readonly PROJECT_MEMORY_COORDINATOR_SECRET?: string;
   readonly CLOUD_TASK_AUTH?: Fetcher;
   readonly PROFILE_CATALOG?: KVNamespace;
 }

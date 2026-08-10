@@ -9,21 +9,29 @@ import {
   type TrialRecord,
 } from "../../packages/protocol/src/index.ts";
 
+const NonNegativeNumberSchema = Schema.Number.check(
+  Schema.isFinite(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+
 const TrialMeasuresSchema = Schema.Struct({
-  correctnessScore: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  correctnessScore: Schema.Number.check(
+    Schema.isFinite(),
+    Schema.isBetween({ minimum: 0, maximum: 1 }),
+  ),
   verificationPassed: Schema.Boolean,
   safetyViolations: Schema.Array(Schema.String),
   recoveryRequired: Schema.Boolean,
   recoverySucceeded: Schema.Boolean,
-  operatorInterventions: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  operatorInterventions: NonNegativeNumberSchema.check(Schema.isInt()),
   isolationViolations: Schema.Array(Schema.String),
   reconstructable: Schema.Boolean,
   profileDigest: Schema.NonEmptyString,
   configurationCopied: Schema.Boolean,
-  modelToolConsumption: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
-  completionLatencyMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
-  directCostUsd: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
-  frictionCount: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+  modelToolConsumption: NonNegativeNumberSchema,
+  completionLatencyMs: NonNegativeNumberSchema,
+  directCostUsd: NonNegativeNumberSchema,
+  frictionCount: NonNegativeNumberSchema.check(Schema.isInt()),
 });
 export type TrialMeasures = typeof TrialMeasuresSchema.Type;
 
@@ -78,19 +86,13 @@ const aggregate = (records: ReadonlyArray<TrialRecord>) => {
   const measures = records.map(decodeMeasures);
   return {
     correctness: mean(measures.map((measure) => measure.correctnessScore)),
-    recoveryInterventions: measures
-      .filter((measure) => measure.recoveryRequired)
-      .reduce((total, measure) => total + measure.operatorInterventions, 0),
-    isolationViolations: measures.reduce(
-      (total, measure) => total + measure.isolationViolations.length,
-      0,
+    recoveryInterventions: mean(
+      measures.map((measure) => (measure.recoveryRequired ? measure.operatorInterventions : 0)),
     ),
-    reconstructable: measures.filter((measure) => measure.reconstructable).length,
-    friction: measures.reduce((total, measure) => total + measure.frictionCount, 0),
-    modelToolConsumption: measures.reduce(
-      (total, measure) => total + measure.modelToolConsumption,
-      0,
-    ),
+    isolationViolations: mean(measures.map((measure) => measure.isolationViolations.length)),
+    reconstructable: mean(measures.map((measure) => (measure.reconstructable ? 1 : 0))),
+    friction: mean(measures.map((measure) => measure.frictionCount)),
+    modelToolConsumption: mean(measures.map((measure) => measure.modelToolConsumption)),
     medianLatencyMs: median(measures.map((measure) => measure.completionLatencyMs)),
     medianCostUsd: median(measures.map((measure) => measure.directCostUsd)),
   };
@@ -104,6 +106,9 @@ export const evaluateComparativeTrials = (input: ComparativeTrialInput): Product
     decodeUnknownStrict(TrialManifestSchema, manifest),
   );
   const records = input.records.map((record) => decodeUnknownStrict(TrialRecordSchema, record));
+  if (manifests.length === 0 || records.length === 0) {
+    throw new Error("comparative evaluation requires manifests and records");
+  }
   const manifestById = new Map(manifests.map((manifest) => [manifest.trialId, manifest]));
 
   if (manifestById.size !== manifests.length)
@@ -114,10 +119,18 @@ export const evaluateComparativeTrials = (input: ComparativeTrialInput): Product
   }
   for (const manifest of manifests) {
     const matching = records.filter((record) => record.trialId === manifest.trialId);
-    for (const arm of ["baseline", "treatment"] as const) {
-      const runs = armRecords(matching, arm);
-      if (runs.length < 3)
-        throw new Error(`${manifest.trialId}/${arm} requires at least three runs`);
+    const baselineRuns = armRecords(matching, "baseline");
+    const treatmentRuns = armRecords(matching, "treatment");
+    if (baselineRuns.length < 3 || treatmentRuns.length < 3) {
+      throw new Error(`${manifest.trialId} requires at least three runs per arm`);
+    }
+    if (baselineRuns.length !== treatmentRuns.length) {
+      throw new Error(`${manifest.trialId} requires equal paired arm run counts`);
+    }
+    for (const [arm, runs] of [
+      ["baseline", baselineRuns],
+      ["treatment", treatmentRuns],
+    ] as const) {
       if (new Set(runs.map((record) => record.sessionId)).size !== runs.length) {
         throw new Error(`${manifest.trialId}/${arm} must use fresh Session identities`);
       }
@@ -146,16 +159,22 @@ export const evaluateComparativeTrials = (input: ComparativeTrialInput): Product
   const costWithinThreshold = treatment.medianCostUsd <= baseline.medianCostUsd * 1.2;
   const overheadAccepted = (latencyWithinThreshold && costWithinThreshold) || correctnessImproved;
   const expand =
+    baselineQualifies &&
     treatmentQualifies &&
     treatment.correctness >= baseline.correctness &&
     improvementCount >= 2 &&
     overheadAccepted;
-  const decision = expand ? "expand" : baselineQualifies ? "collapse" : "reject";
+  const decision =
+    !baselineQualifies || !treatmentQualifies ? "reject" : expand ? "expand" : "collapse";
   const reasons = expand
-    ? ["Treatment met every safety/recovery bar and materially improved at least two measures."]
-    : baselineQualifies
-      ? ["Harness-native baseline met the product bar without enough treatment advantage."]
-      : ["Neither the treatment expansion case nor the harness-native collapse case met the bar."];
+    ? [
+        "Both arms met every safety/recovery bar and treatment materially improved at least two measures.",
+      ]
+    : decision === "collapse"
+      ? ["Both arms met the product bar without enough treatment advantage."]
+      : [
+          "At least one arm failed a mandatory correctness, safety, recovery, or reconstruction bar.",
+        ];
 
   return decodeUnknownStrict(ProductDecisionReportSchema, {
     _tag: "ProductDecisionReport",

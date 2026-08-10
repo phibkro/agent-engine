@@ -18,6 +18,7 @@ export type OperatorEnvironment = typeof OperatorEnvironmentSchema.Type;
 export const OperatorCredentialFileSchema = Schema.Struct({
   accessClientId: NonEmptyStringSchema,
   accessClientSecret: NonEmptyStringSchema,
+  cloudTaskToken: NonEmptyStringSchema,
 });
 export type OperatorCredentialFile = typeof OperatorCredentialFileSchema.Type;
 
@@ -25,6 +26,7 @@ export interface OperatorConfig {
   readonly baseUrl: string;
   readonly accessClientId: string;
   readonly accessClientSecret: string;
+  readonly cloudTaskToken: string;
   readonly actorId?: string;
 }
 
@@ -159,6 +161,7 @@ export const decodeOperatorConfig = (
       baseUrl: yield* checkedUrl(env.WORK_ENGINE_BASE_URL),
       accessClientId: credential.accessClientId,
       accessClientSecret: credential.accessClientSecret,
+      cloudTaskToken: credential.cloudTaskToken,
       ...(env.WORK_ENGINE_ACTOR_ID === undefined ? {} : { actorId: env.WORK_ENGINE_ACTOR_ID }),
     } satisfies OperatorConfig;
   });
@@ -166,13 +169,14 @@ export const decodeOperatorConfig = (
 export const loadOperatorConfig: Effect.Effect<OperatorConfig, ConfigError> = Effect.sync(
   bunEnvironment,
 ).pipe(
-  Effect.flatMap((environment) =>
-    decodeOperatorConfig({
+  Effect.flatMap((environment) => {
+    const actorId = environment["WORK_ENGINE_ACTOR_ID"];
+    return decodeOperatorConfig({
       WORK_ENGINE_BASE_URL: environment["WORK_ENGINE_BASE_URL"],
       WORK_ENGINE_CREDENTIAL_FILE: environment["WORK_ENGINE_CREDENTIAL_FILE"],
-      WORK_ENGINE_ACTOR_ID: environment["WORK_ENGINE_ACTOR_ID"],
-    }),
-  ),
+      ...(actorId === undefined ? {} : { WORK_ENGINE_ACTOR_ID: actorId }),
+    });
+  }),
 );
 
 export const configErrorReason = (error: ConfigError): string =>

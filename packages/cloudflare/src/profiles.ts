@@ -1,3 +1,4 @@
+import { digestCanonical, type CanonicalJsonValue } from "@work-engine/protocol";
 import {
   ProfileSchema,
   decode,
@@ -29,11 +30,21 @@ const profileClassFor = (profile: Profile): ProfileClassName => {
 export class ProfileRegistry {
   #profiles = new Map<string, Profile>();
 
-  register(profile: Profile): void {
+  async register(profile: Profile): Promise<void> {
     const decoded = decode(ProfileSchema, profile);
     const value = record(decoded);
     const profileId = requiredString(value["profileId"], "profile.profileId");
     const revision = value["profileRevision"];
+    const declaredDigest = requiredString(value["profileDigest"], "profile.profileDigest");
+    const profileContent = Object.fromEntries(
+      Object.entries(value).filter(([key]) => key !== "profileDigest"),
+    );
+    const computedDigest = await digestCanonical(profileContent as CanonicalJsonValue);
+    if (declaredDigest !== computedDigest) {
+      throw new InvalidRequestError(
+        "Profile digest does not match the canonical registered Profile content",
+      );
+    }
     const key = profileKey(profileId, revision);
     const previous = this.#profiles.get(key);
     if (previous !== undefined) {
@@ -41,8 +52,7 @@ export class ProfileRegistry {
         record(previous)["profileDigest"],
         "profile.profileDigest",
       );
-      const digest = requiredString(value["profileDigest"], "profile.profileDigest");
-      if (previousDigest !== digest)
+      if (previousDigest !== declaredDigest)
         throw new SessionConflictError("Profile revision is immutable");
       return;
     }

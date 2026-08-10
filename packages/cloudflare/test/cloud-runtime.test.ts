@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CacheDigestMismatchError,
+  CloudflareProjectMemory,
   InMemoryCloudTaskDirectory,
   MemoryRevisionSchema,
   ProjectMemoryState,
@@ -72,6 +73,19 @@ describe("authenticated CloudTask routing", () => {
     );
     expect(response.status).toBe(403);
   });
+
+  it("rejects a route session that differs from the decoded task", async () => {
+    const directory = new InMemoryCloudTaskDirectory();
+    const response = await directory.fetch(
+      request({
+        _tag: "Spawn",
+        sessionId: "ses_00000000-0000-4000-8000-000000000099",
+        task: task(),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ _tag: "InvalidRequest" });
+  });
 });
 
 describe("Project Memory authority", () => {
@@ -100,6 +114,25 @@ describe("Project Memory authority", () => {
     expect(() => memory.acceptMemory(stale.proposalId, initialMemoryRevision)).toThrow(
       /Expected memory revision/iu,
     );
+  });
+
+  it("separates worker proposal authority from coordinator acceptance authority", () => {
+    const worker = new CloudflareProjectMemory(undefined, task().projectId, {
+      sessionId: task().sessionId,
+    });
+    const coordinator = new CloudflareProjectMemory(undefined, task().projectId, {
+      coordinatorSecret: "coordinator-secret",
+    });
+    expect(() =>
+      worker.acceptMemory("mpp_00000000-0000-4000-8000-000000000001", initialMemoryRevision),
+    ).toThrow(/cannot accept Project Memory proposals/iu);
+    expect(() =>
+      coordinator.proposeMemory(initialMemoryRevision, "claim", {
+        _tag: "ProjectMemoryProvenance",
+        source: "worker",
+        observedAt: "2026-08-10T00:00:00.000Z",
+      }),
+    ).toThrow(/cannot accept Project Memory proposals/iu);
   });
 });
 

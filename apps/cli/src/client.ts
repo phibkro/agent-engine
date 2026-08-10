@@ -31,15 +31,7 @@ export interface CloudTaskHttpOptions {
   readonly fetch?: CloudTaskFetch;
 }
 
-export const CloudTaskRoute = {
-  spawn: (sessionId: string): string => `/v1/sessions/${encodeURIComponent(sessionId)}/spawn`,
-  send: (sessionId: string, messageId: string): string =>
-    `/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
-  observe: (sessionId: string, afterCursor: number): string =>
-    `/v1/sessions/${encodeURIComponent(sessionId)}/observations?after=${encodeURIComponent(String(afterCursor))}`,
-  cancel: (sessionId: string): string => `/v1/sessions/${encodeURIComponent(sessionId)}/cancel`,
-  result: (sessionId: string): string => `/v1/sessions/${encodeURIComponent(sessionId)}/result`,
-} as const;
+export const CLOUD_TASK_ROUTE = "/v1/cloud-tasks";
 
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -92,33 +84,30 @@ const responseError = (status: number, sessionId: SessionId): CloudTaskError => 
 const endpoint = (config: OperatorConfig, path: string): string =>
   new URL(path, `${config.baseUrl.replace(/\/$/, "")}/`).toString();
 
-const headersFor = (config: OperatorConfig, body: boolean): Headers => {
-  const headers = new Headers({
+const headersFor = (config: OperatorConfig): Headers =>
+  new Headers({
     Accept: "application/json",
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${config.cloudTaskToken}`,
     [AccessHeader.clientId]: config.accessClientId,
     [AccessHeader.clientSecret]: config.accessClientSecret,
   });
-  if (body) headers.set("Content-Type", "application/json");
-  return headers;
-};
 
 const request = <S extends Schema.ConstraintDecoder<unknown>>(
   config: OperatorConfig,
   fetcher: CloudTaskFetch,
   operation: string,
   sessionId: SessionId,
-  method: "GET" | "POST",
-  path: string,
   responseSchema: S,
-  body?: string,
+  body: string,
 ): Effect.Effect<S["Type"], CloudTaskError> =>
   Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       try: (signal) =>
-        fetcher(endpoint(config, path), {
-          method,
-          headers: headersFor(config, body !== undefined),
-          ...(body === undefined ? {} : { body }),
+        fetcher(endpoint(config, CLOUD_TASK_ROUTE), {
+          method: "POST",
+          headers: headersFor(config),
+          body,
           signal,
         }),
       catch: (error) => ({
@@ -170,8 +159,6 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
         fetcher,
         "spawn",
         checkedSessionId,
-        "POST",
-        CloudTaskRoute.spawn(checkedSessionId),
         CloudTaskResponseSchema,
         body,
       );
@@ -188,8 +175,6 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
         fetcher,
         "send",
         sessionId,
-        "POST",
-        CloudTaskRoute.send(sessionId, messageId),
         CloudTaskResponseSchema,
         body,
       );
@@ -200,14 +185,14 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
     }),
   observe: (sessionId, afterCursor = 0) =>
     Effect.gen(function* () {
+      const body = yield* makeRequestBody({ _tag: "Observe", sessionId, afterCursor });
       const response = yield* request(
         config,
         fetcher,
         "observe",
         sessionId,
-        "GET",
-        CloudTaskRoute.observe(sessionId, afterCursor),
         CloudTaskResponseSchema,
+        body,
       );
       return yield* Effect.try({
         try: () => responseValue(response, "observations", Schema.Array(SessionObservationSchema)),
@@ -222,8 +207,6 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
         fetcher,
         "cancel",
         sessionId,
-        "POST",
-        CloudTaskRoute.cancel(sessionId),
         CloudTaskResponseSchema,
         body,
       );
@@ -234,14 +217,14 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
     }),
   result: (sessionId) =>
     Effect.gen(function* () {
+      const body = yield* makeRequestBody({ _tag: "Result", sessionId });
       const response = yield* request(
         config,
         fetcher,
         "result",
         sessionId,
-        "GET",
-        CloudTaskRoute.result(sessionId),
         CloudTaskResponseSchema,
+        body,
       );
       return yield* Effect.try({
         try: () => responseValue(response, "result", SessionResultSchema),

@@ -10,6 +10,7 @@ const config = {
   baseUrl: "https://work.example",
   accessClientId: "access-client",
   accessClientSecret: "access-secret",
+  cloudTaskToken: "cloud-task-token",
 } as const;
 
 const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000001");
@@ -104,12 +105,11 @@ describe("0002 CLI public interface", () => {
     const client = makeCloudTaskClient(config, { fetch: fetcher });
     const failure = await Effect.runPromiseExit(client.send(sessionId, messageId, "continue"));
     expect(failure._tag).toBe("Failure");
-    expect(requests[0]?.url).toBe(
-      `https://work.example/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
-    );
+    expect(requests[0]?.url).toBe("https://work.example/v1/cloud-tasks");
     const headers = requests[0]?.init.headers as Headers;
     expect(headers.get("CF-Access-Client-Id")).toBe("access-client");
     expect(headers.get("CF-Access-Client-Secret")).toBe("access-secret");
+    expect(headers.get("Authorization")).toBe("Bearer cloud-task-token");
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(JSON.parse(String(requests[0]?.init.body))).toEqual({
       _tag: "Send",
