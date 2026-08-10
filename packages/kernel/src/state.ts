@@ -331,7 +331,8 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
 /** Fold one accepted event. Decisions belong to the transition function; the fold is deterministic. */
 export const foldEvent = (state: ProjectState, envelope: EventEnvelope): ProjectState => {
   const last = state.history[state.history.length - 1];
-  const isFirstAtRevision = envelope.eventRevision === state.eventRevision + 1;
+  const isFirstAtRevision =
+    envelope.eventRevision === state.eventRevision + 1 && envelope.eventIndex === 0;
   const isCommandSibling =
     envelope.eventRevision === state.eventRevision &&
     last !== undefined &&

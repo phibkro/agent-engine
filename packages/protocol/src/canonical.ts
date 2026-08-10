@@ -31,10 +31,10 @@ export const sha256Bytes = sha256;
 export const digestCanonical = async (value: CanonicalJsonValue): Promise<Sha256Digest> =>
   sha256(canonicalJsonBytes(value));
 export const canonicalDigest = digestCanonical;
+const utf8Encoder = new TextEncoder();
 export const compareUtf8PathBytes = (left: string, right: string): number => {
-  const encoder = new TextEncoder();
-  const leftBytes = encoder.encode(left);
-  const rightBytes = encoder.encode(right);
+  const leftBytes = utf8Encoder.encode(left);
+  const rightBytes = utf8Encoder.encode(right);
   const limit = Math.min(leftBytes.length, rightBytes.length);
   for (let index = 0; index < limit; index += 1) {
     if (leftBytes[index] !== rightBytes[index]) return leftBytes[index]! - rightBytes[index]!;

@@ -1174,6 +1174,8 @@ describe("semantic protocol and kernel laws", () => {
       },
     };
     const rebuilt = replay(initial, [second, created, second, second, sibling, sibling]);
+    const revisionOne = replay(initial, [created]);
+    expect(foldEvent(revisionOne, sibling)).toBe(revisionOne);
     expect(rebuilt.eventRevision).toBe(2);
     expect(rebuilt.history.map((item) => item.event._tag)).toEqual([
       "ProjectCreated",
