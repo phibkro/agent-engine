@@ -17,9 +17,9 @@ import {
 import {
   SessionHostCancelRequestSchema,
   SessionHostWireResponseSchema,
+  type SessionHostError,
   type SessionHostWireResponse,
 } from "@work-engine/runtime";
-import type { SessionHostError } from "@work-engine/runtime";
 
 const json = (value: unknown): string => JSON.stringify(value);
 const decode = <S extends Schema.Top>(schema: S, value: unknown): S["Type"] =>
@@ -55,6 +55,26 @@ const readResponse = async (response: Response): Promise<SessionHostWireResponse
   return decode(SessionHostWireResponseSchema, payload);
 };
 
+class SessionHostFailure extends Error {
+  readonly failure: SessionHostError;
+
+  constructor(failure: SessionHostError) {
+    super("reason" in failure ? failure.reason : failure._tag);
+    this.name = "SessionHostFailure";
+    this.failure = failure;
+  }
+}
+
+export const sessionHostErrorFromCause = (cause: unknown): SessionHostError => {
+  if (cause instanceof SessionHostFailure) return cause.failure;
+  if (typeof cause === "object" && cause !== null && "_tag" in cause)
+    return cause as SessionHostError;
+  return {
+    _tag: "HostUnavailable",
+    reason: cause instanceof Error ? cause.message : "Session host request failed",
+  };
+};
+
 export class CloudflareSessionHost implements SessionHost {
   readonly #binding: Fetcher;
   readonly #headers: HeadersInit;
@@ -64,50 +84,48 @@ export class CloudflareSessionHost implements SessionHost {
     this.#headers = headers;
   }
 
+  async #requestPromise(path: string, body: unknown): Promise<SessionHostWireResponse> {
+    const response = await this.#binding.fetch(`https://session-host${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...this.#headers },
+      body: json(body),
+    });
+    if (!response.ok) {
+      throw new SessionHostFailure({
+        _tag: "HostUnavailable",
+        reason: `Session host returned ${response.status}`,
+      });
+    }
+    const decoded = await readResponse(response);
+    const failure = mapFailure(decoded);
+    if (failure !== undefined) throw new SessionHostFailure(failure);
+    return decoded;
+  }
+
   #request(path: string, body: unknown): Effect.Effect<SessionHostWireResponse, SessionHostError> {
     return Effect.tryPromise({
-      try: async () => {
-        const response = await this.#binding.fetch(`https://session-host${path}`, {
-          method: "POST",
-          headers: { "content-type": "application/json", ...this.#headers },
-          body: json(body),
-        });
-        if (!response.ok) {
-          throw {
-            _tag: "HostUnavailable",
-            reason: `Session host returned ${response.status}`,
-          } satisfies SessionHostError;
-        }
-        const decoded = await readResponse(response);
-        const failure = mapFailure(decoded);
-        if (failure !== undefined) throw failure;
-        return decoded;
-      },
-      catch: (cause) => {
-        if (typeof cause === "object" && cause !== null && "_tag" in cause)
-          return cause as SessionHostError;
-        return {
-          _tag: "HostUnavailable",
-          reason: cause instanceof Error ? cause.message : "Session host request failed",
-        };
-      },
+      try: () => this.#requestPromise(path, body),
+      catch: sessionHostErrorFromCause,
+    });
+  }
+
+  async ensureReadyPromise(lease: WorkspaceLease): Promise<WorkspaceReady> {
+    const response = await this.#requestPromise(
+      "/v1/session-host/workspaces/ensure-ready",
+      decode(WorkspaceLeaseSchema, lease),
+    );
+    if (response._tag === "WorkspaceReady") return decode(WorkspaceReadySchema, response);
+    throw new SessionHostFailure({
+      _tag: "HostUnavailable",
+      reason: "Session host returned a non-readiness receipt",
     });
   }
 
   ensureReady(lease: WorkspaceLease): Effect.Effect<WorkspaceReady, SessionHostError> {
-    return this.#request(
-      "/v1/session-host/workspaces/ensure-ready",
-      decode(WorkspaceLeaseSchema, lease),
-    ).pipe(
-      Effect.flatMap((response) =>
-        response._tag === "WorkspaceReady"
-          ? Effect.succeed(decode(WorkspaceReadySchema, response))
-          : Effect.fail({
-              _tag: "HostUnavailable",
-              reason: "Session host returned a non-readiness receipt",
-            }),
-      ),
-    );
+    return Effect.tryPromise({
+      try: () => this.ensureReadyPromise(lease),
+      catch: sessionHostErrorFromCause,
+    });
   }
 
   start(spec: SessionStartSpec): Effect.Effect<SessionHostReceipt, SessionHostError> {

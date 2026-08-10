@@ -53,6 +53,7 @@ export const consumeSessionEffects = async (
       body = decode(OutboxMessageSchema, message.body);
     } catch {
       if (env.SESSION_DEAD_LETTER !== undefined) {
+        // oxlint-disable-next-line eslint(no-await-in-loop) -- Dead-letter delivery must complete before acknowledging this message.
         await env.SESSION_DEAD_LETTER.send(message.body, { contentType: "json" });
       }
       message.ack();
@@ -60,6 +61,7 @@ export const consumeSessionEffects = async (
     }
     if (message.attempts > 3) {
       if (env.SESSION_DEAD_LETTER !== undefined)
+        // oxlint-disable-next-line eslint(no-await-in-loop) -- Dead-letter delivery must complete before acknowledging this message.
         await env.SESSION_DEAD_LETTER.send(body, { contentType: "json" });
       message.ack();
       continue;
@@ -70,13 +72,16 @@ export const consumeSessionEffects = async (
     }
     try {
       try {
+        // oxlint-disable-next-line eslint(no-await-in-loop) -- Each workflow create must settle before its idempotent lookup fallback.
         await env.SESSION_WORKFLOW.create({
           id: workflowInstanceId(body.effect.effectId),
           params: body,
         });
       } catch {
+        // oxlint-disable-next-line eslint(no-await-in-loop) -- An existing workflow must be confirmed only after create reports its idempotency conflict.
         await env.SESSION_WORKFLOW.get(workflowInstanceId(body.effect.effectId));
       }
+      // oxlint-disable-next-line eslint(no-await-in-loop) -- The authority receipt follows workflow creation and precedes message acknowledgement.
       await markWorkflowStarted(body, env);
       message.ack();
     } catch {
@@ -93,6 +98,7 @@ export const deadLetterSessionEffect = async (
     const body = decode(OutboxMessageSchema, message.body);
     if (env.PROJECTS !== undefined) {
       const stub = env.PROJECTS.getByName(body.projectId);
+      // oxlint-disable-next-line eslint(no-await-in-loop) -- The dead-letter receipt must settle before acknowledging the message.
       await stub.fetch("https://project/v1/outbox/workflow-started", {
         method: "POST",
         headers: authorityHeaders(env),

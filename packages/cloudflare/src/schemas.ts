@@ -15,16 +15,12 @@ import {
   PolicySchema,
   ProposalSchema,
   ProjectIdSchema,
-  ProjectObservationSchema,
   ProjectCommandSchema,
   SessionSchema,
-  Sha256DigestSchema,
   WorkSchema,
   WorkspaceLeaseSchema,
-  WorkspaceViewSchema,
 } from "@work-engine/protocol";
 import {
-  AttachResolutionRequestSchema,
   AttachResolutionSchema,
   SessionHostCancelRequestSchema,
   SessionHostWireResponseSchema,

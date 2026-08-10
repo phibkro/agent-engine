@@ -32,24 +32,20 @@ import {
   type Sha256Digest,
   type Timestamp,
 } from "@work-engine/protocol";
-import type {
-  ProjectAuthority,
-  ProjectAuthorityError,
-  SessionHostError,
-} from "@work-engine/runtime";
 import {
   AttachResolutionRequestSchema,
   AttachResolutionSchema,
   ProjectCreateResultSchema,
-  SessionHostWireResponseSchema,
   WorkEngineHeader,
   type AttachResolution,
   type AttachResolutionRequest,
+  type ProjectAuthority,
+  type ProjectAuthorityError,
   type ProjectCreateResult,
 } from "@work-engine/runtime";
 import { R2ArtifactStore } from "./artifact.ts";
 import type { CloudflareRuntimeEnv } from "./env.ts";
-import { CloudflareSessionHost } from "./session-host.ts";
+import { CloudflareSessionHost, sessionHostErrorFromCause } from "./session-host.ts";
 import {
   ModelAuthorizationRequestSchema,
   ModelAuthorizationSchema,
@@ -181,42 +177,11 @@ const verifyManifest = async (manifest: ContentManifest): Promise<void> => {
     throw new Error("candidate manifest digest mismatch");
 };
 
-const artifactManifest = (bytes: Uint8Array): ContentManifest => {
-  let value: unknown;
-  try {
-    value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-  } catch {
-    throw new Error("candidate artifact is not JSON");
-  }
-  return decode(ContentManifestSchema, value);
-};
+const ContentManifestJsonSchema = Schema.fromJsonString(ContentManifestSchema);
 
-const sessionHostError = (value: unknown): SessionHostError => {
-  const response = decode(SessionHostWireResponseSchema, value);
-  if (response._tag !== "SessionHostWireFailure")
-    return { _tag: "HostUnavailable", reason: "unexpected SessionHost response" };
-  switch (response.code) {
-    case "workspace_unavailable":
-      return { _tag: "WorkspaceUnavailable", reason: response.reason };
-    case "readiness_failed":
-      return { _tag: "ReadinessFailed", reason: response.reason };
-    case "version_mismatch":
-      return { _tag: "VersionMismatch", reason: response.reason };
-    case "process_unavailable":
-      return { _tag: "ProcessUnavailable", reason: response.reason };
-    case "model_unavailable":
-      return { _tag: "ModelUnavailable", reason: response.reason };
-    case "session_already_started":
-      return { _tag: "SessionAlreadyStarted", sessionId: "ses_unknown" as never };
-    case "session_not_found":
-      return { _tag: "SessionNotFound", sessionId: "ses_unknown" as never };
-    case "lease_expired":
-      return { _tag: "LeaseExpired", resourceId: "res_unknown" as never };
-    case "host_unavailable":
-    case "decode_failure":
-      return { _tag: "HostUnavailable", reason: response.reason };
-  }
-};
+const artifactManifest = (bytes: Uint8Array): ContentManifest =>
+  decode(ContentManifestJsonSchema, new TextDecoder().decode(bytes));
+
 
 export interface ProjectDurableObjectState extends DurableObjectState {
   readonly id: DurableObjectId;
@@ -388,7 +353,7 @@ export class ProjectDurableObject implements DurableObject {
           return { code: "artifact_missing", reason: "artifact store is unavailable" };
         const artifact = new R2ArtifactStore(this.#env.ARTIFACTS);
         const candidate = artifactManifest(
-          await Effect.runPromise(artifact.get(command.evidence.candidateDigest)),
+          await artifact.getVerified(command.evidence.candidateDigest),
         );
         await verifyManifest(candidate);
         if (candidate.digest !== command.evidence.candidateDigest)
@@ -492,9 +457,9 @@ export class ProjectDurableObject implements DurableObject {
     });
     let ready;
     try {
-      ready = await Effect.runPromise(host.ensureReady(effect.spec.workspaceLease));
+      ready = await host.ensureReadyPromise(effect.spec.workspaceLease);
     } catch (cause) {
-      const failure = cause as SessionHostError;
+      const failure = sessionHostErrorFromCause(cause);
       return apiFailure(
         failure._tag,
         "reason" in failure ? failure.reason : "workspace readiness failed",
@@ -676,6 +641,7 @@ export class ProjectDurableObject implements DurableObject {
         projectId: snapshot.state.projectId,
         effect,
       });
+      // oxlint-disable-next-line eslint(no-await-in-loop) -- Sending and recording each effect must stay ordered for outbox idempotency.
       await this.#env.SESSION_EFFECTS.send(message, { contentType: "json" });
       this.#ctx.storage.transactionSync(() => {
         ensureProjectStateTable(this.#ctx.storage.sql);
@@ -727,10 +693,7 @@ export class DurableObjectProjectAuthority implements ProjectAuthority {
           });
         const value: unknown = await response.json();
         if (!response.ok)
-          throw {
-            _tag: "AuthorityUnavailable",
-            reason: `Project authority returned ${response.status}`,
-          } satisfies ProjectAuthorityError;
+          throw new Error(`Project authority returned ${response.status}`);
         return value;
       },
       catch: (cause) => {

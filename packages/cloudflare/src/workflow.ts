@@ -42,8 +42,9 @@ export const runSessionEffect = async (
       "/v1/session-host/workspaces/ensure-ready",
       effect.spec.workspaceLease,
     );
-    if (decode(SessionHostWireResponseSchema, ready)._tag === "SessionHostWireFailure") {
-      throw new Error(decode(SessionHostWireResponseSchema, ready).reason);
+    const decodedReady = decode(SessionHostWireResponseSchema, ready);
+    if (decodedReady._tag === "SessionHostWireFailure") {
+      throw new Error(decodedReady.reason);
     }
     return requestHost(env, "/v1/session-host/sessions/start", effect.spec);
   }
@@ -60,12 +61,14 @@ export class SessionWorkflow extends WorkflowEntrypoint<CloudflareRuntimeEnv, Ou
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
+        // oxlint-disable-next-line eslint(no-await-in-loop) -- Workflow step names and retry outcomes must be observed in order.
         return await step.do(`session-host-attempt-${attempt + 1}`, () =>
           runSessionEffect(this.env, message.effect),
         );
       } catch (cause) {
         lastError = cause;
         if (attempt < 2)
+          // oxlint-disable-next-line eslint(no-await-in-loop) -- Backoff belongs to the failed retry before the next named workflow step.
           await step.sleep(`session-host-backoff-${attempt + 1}`, 10_000 * 2 ** attempt);
       }
     }

@@ -10,23 +10,10 @@ CREATE TABLE IF NOT EXISTS project_state (
 );
 `;
 
-const decodeSnapshot = (value: unknown): ProjectSnapshot =>
-  Schema.decodeUnknownSync(ProjectSnapshotSchema, { onExcessProperty: "error" })(value);
+const ProjectSnapshotJsonSchema = Schema.fromJsonString(ProjectSnapshotSchema);
 
-export const encodeSnapshot = (snapshot: ProjectSnapshot): string => {
-  const encoded = Schema.encodeSync(ProjectSnapshotSchema)(snapshot);
-  return canonicalize(encoded as never);
-};
-
-export const decodeSnapshotJson = (value: string): ProjectSnapshot => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value) as unknown;
-  } catch (cause) {
-    throw new Error("Persisted Project snapshot is not valid JSON", { cause });
-  }
-  return decodeSnapshot(parsed);
-};
+const decodeSnapshotJson = (value: string): ProjectSnapshot =>
+  Schema.decodeUnknownSync(ProjectSnapshotJsonSchema, { onExcessProperty: "error" })(value);
 
 export const ensureProjectStateTable = (storage: SqlStorage): void => {
   storage.exec(PROJECT_STATE_MIGRATION);

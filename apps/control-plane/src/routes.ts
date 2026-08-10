@@ -4,6 +4,7 @@ import {
   AuthenticatedActorSchema,
   CommandEnvelopeSchema,
   CreateProjectRequestSchema,
+  GrantIdSchema,
   ProjectIdSchema,
   Sha256DigestSchema,
   type AuthenticatedActor,
@@ -48,7 +49,8 @@ const grants = (request: Request): AuthenticatedActor["presentedGrants"] => {
   return raw
     .split(",")
     .map((value) => value.trim())
-    .filter((value) => value.length > 0) as AuthenticatedActor["presentedGrants"];
+    .filter((value) => value.length > 0)
+    .map((value) => decode(GrantIdSchema, value));
 };
 
 const actor = (
