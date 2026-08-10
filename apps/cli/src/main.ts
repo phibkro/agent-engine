@@ -17,15 +17,17 @@ export const CLI_VERSION = "work-engine 0.0.0";
 const stdout = Bun.stdout.writer();
 const stderr = Bun.stderr.writer();
 
-const writeStdout = (text: string): void => {
-  stdout.write(`${text}\n`);
-  stdout.flush();
-};
+const writeStdout = (text: string): Effect.Effect<void> =>
+  Effect.sync(() => {
+    stdout.write(`${text}\n`);
+    stdout.flush();
+  });
 
-const writeStderr = (text: string): void => {
-  stderr.write(`${text}\n`);
-  stderr.flush();
-};
+const writeStderr = (text: string): Effect.Effect<void> =>
+  Effect.sync(() => {
+    stderr.write(`${text}\n`);
+    stderr.flush();
+  });
 
 const unexpectedFailure = (error: unknown): CliFailure => ({
   _tag: "UnexpectedFailure",
@@ -45,12 +47,12 @@ export const runCli = (
     const parsed = parseInvocation(argv);
     if ("_tag" in parsed) {
       const envelope = failureEnvelope("result", parsed);
-      writeStdout(renderJson(envelope));
+      yield* writeStdout(renderJson(envelope));
       return exitCodeFor(parsed);
     }
     const configResult = yield* (dependencies.loadConfig ?? loadOperatorConfig).pipe(Effect.result);
     if (configResult._tag === "Failure") {
-      writeStdout(renderJson(failureEnvelope("result", configResult.failure)));
+      yield* writeStdout(renderJson(failureEnvelope("result", configResult.failure)));
       return exitCodeFor(configResult.failure);
     }
     const config = configResult.success;
@@ -58,16 +60,17 @@ export const runCli = (
     const result = yield* executeInvocation(parsed, client).pipe(Effect.result);
     if (result._tag === "Failure") {
       const failure: CliFailure = result.failure;
-      writeStdout(renderJson(failureEnvelope(parsed.operation, failure)));
+      yield* writeStdout(renderJson(failureEnvelope(parsed.operation, failure)));
       return exitCodeFor(failure);
     }
-    writeStdout(renderJson(successEnvelope(parsed.operation, result.success)));
+    yield* writeStdout(renderJson(successEnvelope(parsed.operation, result.success)));
     return 0;
   }).pipe(
     Effect.catchCause((error) => {
       const failure = unexpectedFailure(error);
-      writeStderr(JSON.stringify(failureEnvelope("result", failure)));
-      return Effect.succeed(exitCodeFor(failure));
+      return writeStderr(renderJson(failureEnvelope("result", failure))).pipe(
+        Effect.as(exitCodeFor(failure)),
+      );
     }),
   );
 

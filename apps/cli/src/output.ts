@@ -1,6 +1,18 @@
+import { Schema } from "effect";
 import type { ConfigError } from "./config.ts";
 import type { CloudTaskClientError } from "./client.ts";
 import type { ParseFailure, SessionOperation } from "./commands.ts";
+
+const SessionOperationSchema = Schema.Literals(["spawn", "send", "observe", "cancel", "result"]);
+
+export const ResultEnvelopeSchema = Schema.TaggedStruct("CloudTaskResult", {
+  operation: SessionOperationSchema,
+  ok: Schema.Boolean,
+  data: Schema.optionalKey(Schema.Unknown),
+  failure: Schema.optionalKey(Schema.Unknown),
+});
+const ResultEnvelopeFromStringSchema = Schema.fromJsonString(ResultEnvelopeSchema);
+const UnknownFromStringSchema = Schema.fromJsonString(Schema.Unknown);
 
 export const ExitCode = {
   success: 0,
@@ -71,13 +83,16 @@ export const failureEnvelope = (
   failure,
 });
 
-export const renderJson = (envelope: ResultEnvelope): string => JSON.stringify(envelope);
+export const renderJson = (envelope: ResultEnvelope): string =>
+  Schema.encodeSync(ResultEnvelopeFromStringSchema, { onExcessProperty: "error" })(envelope);
 
 export const renderInteractive = (envelope: ResultEnvelope): string => {
   if (!envelope.ok) {
     return `${envelope.operation}: failed [${envelope.failure?._tag ?? "UnexpectedFailure"}] ${
-      envelope.failure === undefined ? "" : JSON.stringify(envelope.failure)
+      envelope.failure === undefined
+        ? ""
+        : Schema.encodeSync(UnknownFromStringSchema)(envelope.failure)
     }`;
   }
-  return `${envelope.operation}: ${JSON.stringify(envelope.data)}`;
+  return `${envelope.operation}: ${Schema.encodeSync(UnknownFromStringSchema)(envelope.data)}`;
 };

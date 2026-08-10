@@ -142,16 +142,14 @@ const readJsonFile = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   path: string,
 ): Effect.Effect<S["Type"], ParseFailure> =>
-  Effect.gen(function* () {
-    const text = yield* readTextFile(path).pipe(
-      Effect.mapError((error) => usage(`cannot read ${path}: ${String(error)}`)),
-    );
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(text) as unknown,
-      catch: (error) => usage(`invalid JSON in ${path}: ${String(error)}`),
-    });
-    return yield* parseWith(schema, parsed, path);
-  });
+  readTextFile(path).pipe(
+    Effect.mapError((error) => usage(`cannot read ${path}: ${String(error)}`)),
+    Effect.flatMap((text) =>
+      Schema.decodeUnknownEffect(Schema.fromJsonString(schema), {
+        onExcessProperty: "error",
+      })(text).pipe(Effect.mapError((error) => usage(`${path}: ${String(error)}`))),
+    ),
+  );
 
 export const readCloudTask = (path: string): Effect.Effect<CloudTask, ParseFailure> =>
   readJsonFile(CloudTaskSchema, path);

@@ -41,13 +41,16 @@ const decodeStrict = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   input: unknown,
 ): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
-
 const encodeStrict = <S extends Schema.ConstraintEncoder<unknown>>(
   schema: S,
   input: S["Type"],
-): string => JSON.stringify(Schema.encodeSync(schema, { onExcessProperty: "error" })(input));
+): string => Schema.encodeSync(Schema.fromJsonString(schema), { onExcessProperty: "error" })(input);
 
-const parseJson = (text: string): unknown => JSON.parse(text) as unknown;
+const decodeJsonStrict = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  input: string,
+): S["Type"] =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(schema), { onExcessProperty: "error" })(input);
 
 const rejected = (reason: string): CloudTaskError => ({
   _tag: "CloudTaskRejected",
@@ -125,7 +128,7 @@ const request = <S extends Schema.ConstraintDecoder<unknown>>(
     });
     if (!response.ok) return yield* Effect.fail(responseError(response.status, sessionId));
     return yield* Effect.try({
-      try: () => decodeStrict(responseSchema, parseJson(text)),
+      try: () => decodeJsonStrict(responseSchema, text),
       catch: (error) => rejected(`${operation}: strict response decode failed: ${reasonOf(error)}`),
     });
   });

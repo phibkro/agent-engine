@@ -65,23 +65,15 @@ const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   text: string,
   path: string,
 ): Effect.Effect<S["Type"], ConfigError> =>
-  Effect.gen(function* () {
-    const parsed = yield* Effect.try({
-      try: () => JSON.parse(text) as unknown,
-      catch: (error) => ({
-        _tag: "ConfigDecodeFailure" as const,
-        path,
-        reason: reasonOf(error),
-      }),
-    });
-    return yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })(parsed).pipe(
-      Effect.mapError((error) => ({
-        _tag: "ConfigDecodeFailure" as const,
-        path,
-        reason: reasonOf(error),
-      })),
-    );
-  });
+  Schema.decodeUnknownEffect(Schema.fromJsonString(schema), {
+    onExcessProperty: "error",
+  })(text).pipe(
+    Effect.mapError((error) => ({
+      _tag: "ConfigDecodeFailure" as const,
+      path,
+      reason: reasonOf(error),
+    })),
+  );
 
 const makeBunFileSystem = (): ConfigFileSystem => ({
   readText: (path) =>
