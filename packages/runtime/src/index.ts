@@ -9,6 +9,9 @@ import {
   CloudTaskSchema,
   DependencyCacheManifestSchema,
   DependencyCacheRestoreSchema,
+  GrantIdSchema,
+  MemoryProposalIdSchema,
+  MemoryRevisionSchema,
   ProfileIdSchema,
   ProfileRevisionSchema,
   ProfileSchema,
@@ -43,6 +46,7 @@ import {
   type SessionObservation,
   type SessionResult,
   type Sha256Digest,
+  type TerminalSessionState,
   type VerifiedWorkspace,
 } from "@work-engine/protocol";
 
@@ -67,82 +71,168 @@ export type {
   SessionObservation,
   SessionResult,
   Sha256Digest,
+  TerminalSessionState,
   VerifiedWorkspace,
 };
 
+
 const ErrorReasonSchema = Schema.NonEmptyString;
 
+export class CloudTaskNotFound extends Schema.TaggedErrorClass<CloudTaskNotFound>()(
+  "CloudTaskNotFound",
+  { sessionId: SessionIdSchema },
+) {}
+
+export class CloudTaskUnauthorized extends Schema.TaggedErrorClass<CloudTaskUnauthorized>()(
+  "CloudTaskUnauthorized",
+  { reason: ErrorReasonSchema },
+) {}
+
+export class CloudTaskRejected extends Schema.TaggedErrorClass<CloudTaskRejected>()(
+  "CloudTaskRejected",
+  { reason: ErrorReasonSchema },
+) {}
+
+export class CloudTaskTerminal extends Schema.TaggedErrorClass<CloudTaskTerminal>()(
+  "CloudTaskTerminal",
+  { sessionId: SessionIdSchema, state: TerminalSessionStateSchema },
+) {}
+
+export class CloudTaskUnavailable extends Schema.TaggedErrorClass<CloudTaskUnavailable>()(
+  "CloudTaskUnavailable",
+  { reason: ErrorReasonSchema },
+) {}
+
 export const CloudTaskErrorSchema = Schema.Union([
-  Schema.TaggedStruct("CloudTaskNotFound", { sessionId: SessionIdSchema }),
-  Schema.TaggedStruct("CloudTaskUnauthorized", { reason: ErrorReasonSchema }),
-  Schema.TaggedStruct("CloudTaskRejected", { reason: ErrorReasonSchema }),
-  Schema.TaggedStruct("CloudTaskTerminal", {
-    sessionId: SessionIdSchema,
-    state: TerminalSessionStateSchema,
-  }),
-  Schema.TaggedStruct("CloudTaskUnavailable", { reason: ErrorReasonSchema }),
+  CloudTaskNotFound,
+  CloudTaskUnauthorized,
+  CloudTaskRejected,
+  CloudTaskTerminal,
+  CloudTaskUnavailable,
 ]);
 export type CloudTaskError = typeof CloudTaskErrorSchema.Type;
 
+export class MemoryRevisionUnavailable extends Schema.TaggedErrorClass<MemoryRevisionUnavailable>()(
+  "MemoryRevisionUnavailable",
+  { expectedRevision: MemoryRevisionSchema },
+) {}
+
+export class MemoryRevisionStale extends Schema.TaggedErrorClass<MemoryRevisionStale>()(
+  "MemoryRevisionStale",
+  { expectedRevision: MemoryRevisionSchema, observedRevision: MemoryRevisionSchema },
+) {}
+
+export class MemoryProposalNotFound extends Schema.TaggedErrorClass<MemoryProposalNotFound>()(
+  "MemoryProposalNotFound",
+  { proposalId: MemoryProposalIdSchema },
+) {}
+
+export class MemoryUnauthorized extends Schema.TaggedErrorClass<MemoryUnauthorized>()(
+  "MemoryUnauthorized",
+  { reason: ErrorReasonSchema },
+) {}
+
+export class MemoryUnavailable extends Schema.TaggedErrorClass<MemoryUnavailable>()(
+  "MemoryUnavailable",
+  { reason: ErrorReasonSchema },
+) {}
+
 export const ProjectMemoryErrorSchema = Schema.Union([
-  Schema.TaggedStruct("MemoryRevisionUnavailable", {
-    expectedRevision: Schema.Natural,
-  }),
-  Schema.TaggedStruct("MemoryRevisionStale", {
-    expectedRevision: Schema.Natural,
-    observedRevision: Schema.Natural,
-  }),
-  Schema.TaggedStruct("MemoryProposalNotFound", {
-    proposalId: Schema.NonEmptyString,
-  }),
-  Schema.TaggedStruct("MemoryUnauthorized", { reason: ErrorReasonSchema }),
-  Schema.TaggedStruct("MemoryUnavailable", { reason: ErrorReasonSchema }),
+  MemoryRevisionUnavailable,
+  MemoryRevisionStale,
+  MemoryProposalNotFound,
+  MemoryUnauthorized,
+  MemoryUnavailable,
 ]);
 export type ProjectMemoryError = typeof ProjectMemoryErrorSchema.Type;
 
+export class RepositoryGrantInvalid extends Schema.TaggedErrorClass<RepositoryGrantInvalid>()(
+  "RepositoryGrantInvalid",
+  { grantId: GrantIdSchema, reason: ErrorReasonSchema },
+) {}
+
+export class RepositoryGrantExpired extends Schema.TaggedErrorClass<RepositoryGrantExpired>()(
+  "RepositoryGrantExpired",
+  { grantId: GrantIdSchema },
+) {}
+
+export class RepositoryCommitInvalid extends Schema.TaggedErrorClass<RepositoryCommitInvalid>()(
+  "RepositoryCommitInvalid",
+  { reason: ErrorReasonSchema },
+) {}
+
+export class RepositoryScopeViolation extends Schema.TaggedErrorClass<RepositoryScopeViolation>()(
+  "RepositoryScopeViolation",
+  { path: ErrorReasonSchema },
+) {}
+
+export class RepositoryRefConflict extends Schema.TaggedErrorClass<RepositoryRefConflict>()(
+  "RepositoryRefConflict",
+  { reason: ErrorReasonSchema },
+) {}
+
+export class RepositoryUnavailable extends Schema.TaggedErrorClass<RepositoryUnavailable>()(
+  "RepositoryUnavailable",
+  { reason: ErrorReasonSchema },
+) {}
+
 export const RepositoryPublisherErrorSchema = Schema.Union([
-  Schema.TaggedStruct("RepositoryGrantInvalid", {
-    grantId: Schema.NonEmptyString,
-    reason: ErrorReasonSchema,
-  }),
-  Schema.TaggedStruct("RepositoryGrantExpired", {
-    grantId: Schema.NonEmptyString,
-  }),
-  Schema.TaggedStruct("RepositoryCommitInvalid", { reason: ErrorReasonSchema }),
-  Schema.TaggedStruct("RepositoryScopeViolation", {
-    path: ErrorReasonSchema,
-  }),
-  Schema.TaggedStruct("RepositoryRefConflict", { reason: ErrorReasonSchema }),
-  Schema.TaggedStruct("RepositoryUnavailable", { reason: ErrorReasonSchema }),
+  RepositoryGrantInvalid,
+  RepositoryGrantExpired,
+  RepositoryCommitInvalid,
+  RepositoryScopeViolation,
+  RepositoryRefConflict,
+  RepositoryUnavailable,
 ]);
 export type RepositoryPublisherError = typeof RepositoryPublisherErrorSchema.Type;
 
+export class DependencyCacheKeyMismatch extends Schema.TaggedErrorClass<DependencyCacheKeyMismatch>()(
+  "DependencyCacheKeyMismatch",
+  { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
+) {}
+
+export class DependencyCachePayloadMismatch extends Schema.TaggedErrorClass<DependencyCachePayloadMismatch>()(
+  "DependencyCachePayloadMismatch",
+  { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
+) {}
+
+export class DependencyCacheMissing extends Schema.TaggedErrorClass<DependencyCacheMissing>()(
+  "DependencyCacheMissing",
+  { cacheKey: Schema.NonEmptyString },
+) {}
+
+export class DependencyCacheUnavailable extends Schema.TaggedErrorClass<DependencyCacheUnavailable>()(
+  "DependencyCacheUnavailable",
+  { reason: ErrorReasonSchema },
+) {}
+
 export const DependencyCacheErrorSchema = Schema.Union([
-  Schema.TaggedStruct("DependencyCacheKeyMismatch", {
-    expected: Sha256DigestSchema,
-    observed: Sha256DigestSchema,
-  }),
-  Schema.TaggedStruct("DependencyCachePayloadMismatch", {
-    expected: Sha256DigestSchema,
-    observed: Sha256DigestSchema,
-  }),
-  Schema.TaggedStruct("DependencyCacheMissing", {
-    cacheKey: Schema.NonEmptyString,
-  }),
-  Schema.TaggedStruct("DependencyCacheUnavailable", { reason: ErrorReasonSchema }),
+  DependencyCacheKeyMismatch,
+  DependencyCachePayloadMismatch,
+  DependencyCacheMissing,
+  DependencyCacheUnavailable,
 ]);
 export type DependencyCacheError = typeof DependencyCacheErrorSchema.Type;
 
+export class ProfileNotFound extends Schema.TaggedErrorClass<ProfileNotFound>()("ProfileNotFound", {
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+}) {}
+
+export class ProfileDigestMismatch extends Schema.TaggedErrorClass<ProfileDigestMismatch>()(
+  "ProfileDigestMismatch",
+  { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
+) {}
+
+export class ProfileRegistryUnavailable extends Schema.TaggedErrorClass<ProfileRegistryUnavailable>()(
+  "ProfileRegistryUnavailable",
+  { reason: ErrorReasonSchema },
+) {}
+
 export const ProfileRegistryErrorSchema = Schema.Union([
-  Schema.TaggedStruct("ProfileNotFound", {
-    profileId: ProfileIdSchema,
-    profileRevision: ProfileRevisionSchema,
-  }),
-  Schema.TaggedStruct("ProfileDigestMismatch", {
-    expected: Sha256DigestSchema,
-    observed: Sha256DigestSchema,
-  }),
-  Schema.TaggedStruct("ProfileRegistryUnavailable", { reason: ErrorReasonSchema }),
+  ProfileNotFound,
+  ProfileDigestMismatch,
+  ProfileRegistryUnavailable,
 ]);
 export type ProfileRegistryError = typeof ProfileRegistryErrorSchema.Type;
 
@@ -150,21 +240,21 @@ export interface CloudTaskClient {
   readonly spawn: (
     sessionId: SessionId,
     task: CloudTask,
-  ) => Effect.Effect<SessionAdmission, CloudTaskError>;
+  ) => Effect.Effect<SessionAdmission, CloudTaskError, never>;
   readonly send: (
     sessionId: SessionId,
     messageId: MessageId,
     message: Json,
-  ) => Effect.Effect<AcceptedCursor, CloudTaskError>;
+  ) => Effect.Effect<AcceptedCursor, CloudTaskError, never>;
   readonly observe: (
     sessionId: SessionId,
     afterCursor: number,
-  ) => Effect.Effect<ReadonlyArray<SessionObservation>, CloudTaskError>;
+  ) => Effect.Effect<ReadonlyArray<SessionObservation>, CloudTaskError, never>;
   readonly cancel: (
     sessionId: SessionId,
     reason: string,
-  ) => Effect.Effect<SessionObservation, CloudTaskError>;
-  readonly result: (sessionId: SessionId) => Effect.Effect<SessionResult, CloudTaskError>;
+  ) => Effect.Effect<SessionObservation, CloudTaskError, never>;
+  readonly result: (sessionId: SessionId) => Effect.Effect<SessionResult, CloudTaskError, never>;
 }
 export const CloudTaskClient = Context.Service<CloudTaskClient>("work-engine/CloudTaskClient");
 
@@ -172,16 +262,16 @@ export interface ProjectMemory {
   readonly readContext: (
     atRevision: MemoryRevision,
     query: string,
-  ) => Effect.Effect<ReadonlyArray<ProjectMemoryFact>, ProjectMemoryError>;
+  ) => Effect.Effect<ReadonlyArray<ProjectMemoryFact>, ProjectMemoryError, never>;
   readonly proposeMemory: (
     expectedRevision: MemoryRevision,
     claim: string,
     provenance: ProjectMemoryProvenance,
-  ) => Effect.Effect<MemoryProposalId, ProjectMemoryError>;
+  ) => Effect.Effect<MemoryProposalId, ProjectMemoryError, never>;
   readonly acceptMemory: (
     proposalId: MemoryProposalId,
     expectedRevision: MemoryRevision,
-  ) => Effect.Effect<MemoryRevision, ProjectMemoryError>;
+  ) => Effect.Effect<MemoryRevision, ProjectMemoryError, never>;
 }
 export const ProjectMemory = Context.Service<ProjectMemory>("work-engine/ProjectMemory");
 
@@ -189,16 +279,16 @@ export interface RepositoryPublisher {
   readonly checkout: (
     sessionGrant: RepositoryGrant,
     baseOrCheckpointCommit: CloudTask["baseCommit"],
-  ) => Effect.Effect<VerifiedWorkspace, RepositoryPublisherError>;
+  ) => Effect.Effect<VerifiedWorkspace, RepositoryPublisherError, never>;
   readonly checkpoint: (
     sessionGrant: RepositoryGrant,
     commit: CloudTask["baseCommit"],
     expectedRemoteCommit: CloudTask["baseCommit"],
-  ) => Effect.Effect<CheckpointReceipt, RepositoryPublisherError>;
+  ) => Effect.Effect<CheckpointReceipt, RepositoryPublisherError, never>;
   readonly publishCandidate: (
     sessionGrant: RepositoryGrant,
     candidateCommit: CloudTask["baseCommit"],
-  ) => Effect.Effect<CandidateReceipt, RepositoryPublisherError>;
+  ) => Effect.Effect<CandidateReceipt, RepositoryPublisherError, never>;
 }
 export const RepositoryPublisher = Context.Service<RepositoryPublisher>(
   "work-engine/RepositoryPublisher",
@@ -213,7 +303,7 @@ export interface DependencyCache {
   readonly restore: (
     manifest: DependencyCacheManifest,
     expectation: DependencyCacheExpectation,
-  ) => Effect.Effect<DependencyCacheRestore, DependencyCacheError>;
+  ) => Effect.Effect<DependencyCacheRestore, DependencyCacheError, never>;
 }
 export const DependencyCache = Context.Service<DependencyCache>("work-engine/DependencyCache");
 
@@ -222,7 +312,7 @@ export interface ProfileRegistry {
     profileId: ProfileId,
     profileRevision: ProfileRevision,
     profileDigest: Profile["profileDigest"],
-  ) => Effect.Effect<Profile, ProfileRegistryError>;
+  ) => Effect.Effect<Profile, ProfileRegistryError, never>;
 }
 export const ProfileRegistry = Context.Service<ProfileRegistry>("work-engine/ProfileRegistry");
 
