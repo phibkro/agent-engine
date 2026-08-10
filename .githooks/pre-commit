@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const commands: readonly (readonly string[])[] = [
-  ["bun", "scripts/audit-artifacts.ts", "--staged"],
+  ["bun", "run", "audit:ownership"],
   ["bun", "run", "audit:sources"],
   ["bun", "run", "audit:imports"],
   ["bun", "run", "audit:config"],

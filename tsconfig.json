@@ -7,6 +7,16 @@
     "allowImportingTsExtensions": true,
     "lib": ["ES2022"],
     "types": ["bun"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "includeSuggestionsInTsc": true,
+        "ignoreEffectSuggestionsInTscExitCode": true,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "ignoreEffectErrorsInTscExitCode": false
+      }
+    ],
     "strict": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,

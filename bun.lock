@@ -27,6 +27,33 @@
         "wrangler": "4.120.0",
       },
     },
+    "packages/kernel": {
+      "name": "@work-engine/kernel",
+      "version": "0.0.0",
+      "dependencies": {
+        "@work-engine/protocol": "0.0.0",
+      },
+      "devDependencies": {
+        "fast-check": "4.9.0",
+        "vitest": "4.1.0",
+      },
+    },
+    "packages/protocol": {
+      "name": "@work-engine/protocol",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "4.0.0-beta.102",
+        "json-canonicalize": "2.0.0",
+      },
+    },
+    "packages/runtime": {
+      "name": "@work-engine/runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@work-engine/protocol": "0.0.0",
+        "effect": "4.0.0-beta.102",
+      },
+    },
   },
   "packages": {
     "@alcalzone/ansi-tokenize": ["@alcalzone/ansi-tokenize@0.2.5", "", { "dependencies": { "ansi-styles": "^6.2.1", "is-fullwidth-code-point": "^5.0.0" } }, "sha512-3NX/MpTdroi0aKz134A6RC2Gb2iXVECN4QaAXnvCIxxIm3C3AVB1mkUe8NaaiyvOpDfsrqWhYtj+Q6a62RrTsw=="],
@@ -608,6 +635,12 @@
     "@vitest/spy": ["@vitest/spy@4.1.0", "", {}, "sha512-pz77k+PgNpyMDv2FV6qmk5ZVau6c3R8HC8v342T2xlFxQKTrSeYw9waIJG8KgV9fFwAtTu4ceRzMivPTH6wSxw=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.0", "", { "dependencies": { "@vitest/pretty-format": "4.1.0", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.0.3" } }, "sha512-XfPXT6a8TZY3dcGY8EdwsBulFCIw+BeeX0RZn2x/BtiY/75YGh8FeWGG8QISN/WhaqSrE2OrlDgtF8q5uhOTmw=="],
+
+    "@work-engine/kernel": ["@work-engine/kernel@workspace:packages/kernel"],
+
+    "@work-engine/protocol": ["@work-engine/protocol@workspace:packages/protocol"],
+
+    "@work-engine/runtime": ["@work-engine/runtime@workspace:packages/runtime"],
 
     "agent-base": ["agent-base@7.1.4", "", {}, "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ=="],
 

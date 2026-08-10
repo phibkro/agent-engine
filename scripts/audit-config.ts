@@ -78,10 +78,18 @@ const requiredPackageNames: Readonly<Record<string, string>> = {
 };
 
 const expectedScripts: Readonly<Record<string, string>> = {
+  prepare: "bun run hooks:install",
+  "hooks:install": "bun scripts/install-git-hooks.ts",
+  commitlint: "commitlint",
+  fmt: "oxfmt .",
   "fmt:check": "oxfmt --check .",
   lint: "oxlint --deny-warnings --report-unused-disable-directives .",
   "audit:sources": "bun scripts/audit-sources.ts",
-  typecheck: "tsc --noEmit",
+  "audit:artifacts": "bun scripts/audit-artifacts.ts",
+  "audit:ownership": "bun scripts/audit-artifacts.ts --staged",
+  "audit:imports": "bun scripts/audit-imports.ts",
+  "audit:config": "bun scripts/audit-config.ts",
+  typecheck: "bun scripts/typecheck.ts",
   "test:kernel": "bun run --cwd packages/kernel test",
   "test:cloudflare": "bun run --cwd packages/cloudflare test",
   "test:session-host": "bun run --cwd packages/session-host test",

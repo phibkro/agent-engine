@@ -16,7 +16,7 @@ if (!existsSync(commitlint)) {
 }
 
 const result = Bun.spawnSync({
-  cmd: [commitlint, "--edit", messageFile],
+  cmd: ["bun", "--bun", "commitlint", "--edit", messageFile],
   cwd: root,
   stdin: "inherit",
   stdout: "inherit",

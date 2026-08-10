@@ -20,7 +20,6 @@ import type {
   ProjectCommand,
   ProjectEvent,
   ProjectId,
-  RejectedReceipt,
   ResourceClaim,
   ResourceId,
   Session,
@@ -36,7 +35,6 @@ export interface WorkProcess {
   readonly resourceIds: readonly ResourceId[];
   readonly requiredGates: readonly GateKey[];
 }
-
 
 export interface EffectReceipt {
   readonly effectId: EffectId;
@@ -154,7 +152,11 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
     case "SessionRequested": {
       const resources =
         event.effect._tag === "StartSessionEffect"
-          ? copyWith(state.resources, event.effect.spec.workspaceLease.resourceId, event.effect.spec.workspaceLease)
+          ? copyWith(
+              state.resources,
+              event.effect.spec.workspaceLease.resourceId,
+              event.effect.spec.workspaceLease,
+            )
           : state.resources;
       return appendOutbox(
         {
@@ -201,11 +203,20 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
         terminalAt: event.terminalAt,
       }));
     case "HandoffRecorded":
-      return { ...state, handoffs: copyWith(state.handoffs, event.handoff.handoffId, event.handoff) };
+      return {
+        ...state,
+        handoffs: copyWith(state.handoffs, event.handoff.handoffId, event.handoff),
+      };
     case "EvidenceRecorded":
-      return { ...state, evidence: copyWith(state.evidence, event.evidence.evidenceId, event.evidence) };
+      return {
+        ...state,
+        evidence: copyWith(state.evidence, event.evidence.evidenceId, event.evidence),
+      };
     case "ProposalSubmitted":
-      return { ...state, proposals: copyWith(state.proposals, event.proposal.proposalId, event.proposal) };
+      return {
+        ...state,
+        proposals: copyWith(state.proposals, event.proposal.proposalId, event.proposal),
+      };
     case "ApprovalRecorded": {
       const proposal = state.proposals[event.proposalId];
       if (proposal === undefined) return state;
@@ -243,13 +254,19 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
       };
     }
     case "WorkspaceLeaseAcquired":
-      return { ...state, resources: copyWith(state.resources, event.lease.resourceId, event.lease) };
+      return {
+        ...state,
+        resources: copyWith(state.resources, event.lease.resourceId, event.lease),
+      };
     case "WorkspaceLeaseRenewed": {
       const lease = state.resources[event.resourceId];
       if (lease === undefined) return state;
       return {
         ...state,
-        resources: copyWith(state.resources, event.resourceId, { ...lease, expiresAt: event.expiresAt }),
+        resources: copyWith(state.resources, event.resourceId, {
+          ...lease,
+          expiresAt: event.expiresAt,
+        }),
       };
     }
     case "WorkspaceLeaseReleased": {

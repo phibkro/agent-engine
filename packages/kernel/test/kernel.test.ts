@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import fc from "fast-check";
+import { array, assert, integer, property } from "fast-check";
 import {
   AuthenticatedActorSchema,
   CommandEnvelopeSchema,
@@ -111,7 +111,10 @@ describe("protocol and kernel contracts", () => {
     const first = createProject(request, PROJECT_ID, operator());
     expect(first.result._tag).toBe("Accepted");
     expect(first.state?.eventRevision).toBe(1);
-    const duplicate = transition(first.state, request, { projectId: PROJECT_ID, actor: operator() });
+    const duplicate = transition(first.state, request, {
+      projectId: PROJECT_ID,
+      actor: operator(),
+    });
     expect(duplicate.result._tag).toBe("AlreadyApplied");
     expect(duplicate.state?.eventRevision).toBe(1);
   });
@@ -171,7 +174,6 @@ describe("protocol and kernel contracts", () => {
     expect(replayed.state?.eventRevision).toBe(created.eventRevision);
   });
 
-
   test("retries have a new Session identity and retain predecessor provenance", () => {
     const state = emptyProjectState(PROJECT_ID);
     const predecessor: Session = {
@@ -198,7 +200,9 @@ describe("protocol and kernel contracts", () => {
       sessions: { [predecessor.sessionId]: predecessor, [retry.sessionId]: retry },
     };
     expect(retry.sessionId).not.toBe(predecessor.sessionId);
-    expect(withSessions.sessions[retry.sessionId]?.predecessorSessionId).toBe(predecessor.sessionId);
+    expect(withSessions.sessions[retry.sessionId]?.predecessorSessionId).toBe(
+      predecessor.sessionId,
+    );
   });
 
   test("Gate derivation is immutable evidence provenance, not an editable boolean", () => {
@@ -212,15 +216,20 @@ describe("protocol and kernel contracts", () => {
       basisContentRevision: 0 as ContentRevision,
       candidate: {
         _tag: "ContentManifest" as const,
-        digest: (`sha256:${"0".repeat(64)}`) as Sha256Digest,
+        digest: `sha256:${"0".repeat(64)}` as Sha256Digest,
         entries: [],
       },
       evidenceIds: [],
       status: "submitted" as const,
     } satisfies Proposal;
-    const decision = deriveGates({ ...state, proposals: { [proposal.proposalId]: proposal } }, proposal);
+    const decision = deriveGates(
+      { ...state, proposals: { [proposal.proposalId]: proposal } },
+      proposal,
+    );
     expect(decision.satisfied).toBe(false);
-    expect(decision.evaluations.every((gate) => gate.sourceEventRevision === state.eventRevision)).toBe(true);
+    expect(
+      decision.evaluations.every((gate) => gate.sourceEventRevision === state.eventRevision),
+    ).toBe(true);
   });
 
   test("folding the same event history is deterministic and Merge alone changes content", () => {
@@ -237,8 +246,8 @@ describe("protocol and kernel contracts", () => {
   });
 
   test("revision measurements obey a deterministic property", () => {
-    fc.assert(
-      fc.property(fc.array(fc.integer({ min: 0, max: 100 })), (values) => {
+    assert(
+      property(array(integer({ min: 0, max: 100 })), (values) => {
         const revisions = values.reduce((current, value) => current + Math.abs(value), 0);
         expect(revisions).toBeGreaterThanOrEqual(0);
       }),

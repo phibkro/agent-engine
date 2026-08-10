@@ -1,3 +1,4 @@
+import { canonicalizeEx } from "json-canonicalize";
 import { Sha256DigestSchema, type Sha256Digest } from "./identifiers.ts";
 
 export type CanonicalJsonPrimitive = null | boolean | number | string;
@@ -6,59 +7,15 @@ export type CanonicalJsonValue =
   | readonly CanonicalJsonValue[]
   | { readonly [key: string]: CanonicalJsonValue };
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const numberText = (value: number): string => {
-  if (!Number.isFinite(value)) {
-    throw new TypeError("RFC 8785 JSON cannot encode a non-finite number");
-  }
-  return JSON.stringify(value) ?? "0";
-};
-
-const encodeValue = (value: unknown, ancestors: WeakSet<object>): string => {
-  if (value === null) return "null";
-  switch (typeof value) {
-    case "boolean":
-      return value ? "true" : "false";
-    case "number":
-      return numberText(value);
-    case "string":
-      return JSON.stringify(value);
-    case "bigint":
-    case "function":
-    case "symbol":
-    case "undefined":
-      throw new TypeError("RFC 8785 JSON only accepts JSON values");
-    case "object":
-      break;
-    default:
-      throw new TypeError("RFC 8785 JSON only accepts JSON values");
-  }
-
-  if (ancestors.has(value)) {
-    throw new TypeError("RFC 8785 JSON cannot encode cyclic values");
-  }
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      return `[${value.map((item) => encodeValue(item, ancestors)).join(",")}]`;
-    }
-    if (!isObject(value)) {
-      throw new TypeError("RFC 8785 JSON only accepts plain JSON objects");
-    }
-    const keys = Object.keys(value).sort();
-    const members = keys.map((key) => `${JSON.stringify(key)}:${encodeValue(value[key], ancestors)}`);
-    return `{${members.join(",")}}`;
-  } finally {
-    ancestors.delete(value);
-  }
-};
-
 /** RFC 8785 JSON Canonicalization Scheme encoding. */
-export const canonicalize = (value: unknown): string => encodeValue(value, new WeakSet());
+export const canonicalize = (value: CanonicalJsonValue): string =>
+  canonicalizeEx(value, {
+    allowCircular: false,
+    filterUndefined: false,
+    undefinedInArrayToNull: false,
+  });
 export const canonicalJson = canonicalize;
-export const canonicalJsonBytes = (value: unknown): Uint8Array =>
+export const canonicalJsonBytes = (value: CanonicalJsonValue): Uint8Array =>
   new TextEncoder().encode(canonicalize(value));
 
 const hex = (bytes: Uint8Array): string =>
@@ -71,7 +28,7 @@ export const sha256 = async (bytes: Uint8Array): Promise<Sha256Digest> => {
 };
 
 export const sha256Bytes = sha256;
-export const digestCanonical = async (value: unknown): Promise<Sha256Digest> =>
+export const digestCanonical = async (value: CanonicalJsonValue): Promise<Sha256Digest> =>
   sha256(canonicalJsonBytes(value));
 export const canonicalDigest = digestCanonical;
 const utf8PathCompare = (left: string, right: string): number => {
@@ -86,10 +43,14 @@ const utf8PathCompare = (left: string, right: string): number => {
 
 export const sortManifestEntries = <Entry extends { readonly path: string }>(
   entries: readonly Entry[],
-): readonly Entry[] => [...entries].sort((left, right) => utf8PathCompare(left.path, right.path));
+): readonly Entry[] => entries.toSorted((left, right) => utf8PathCompare(left.path, right.path));
 
 export const digestManifest = async (
-  entries: readonly { readonly path: string; readonly digest: Sha256Digest; readonly bytes: number }[],
+  entries: readonly {
+    readonly path: string;
+    readonly digest: Sha256Digest;
+    readonly bytes: number;
+  }[],
 ): Promise<Sha256Digest> => digestCanonical({ entries: sortManifestEntries(entries) });
 export const canonicalEncode = canonicalize;
 export const sha256Digest = sha256;

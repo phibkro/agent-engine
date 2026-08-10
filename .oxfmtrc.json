@@ -5,6 +5,8 @@
     "dist/**",
     "coverage/**",
     "docs/founding/**",
+    "design-specs/**",
+    ".reef/**",
     ".wrangler/**",
     ".alchemy/**",
     "fixtures/tracer-0001/.git/**"

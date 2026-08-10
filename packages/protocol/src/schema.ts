@@ -254,13 +254,15 @@ export const WorkspaceViewSchema = Schema.TaggedStruct("WorkspaceView", {
     ),
   }),
   writableScope: Schema.Array(NonEmptyStringSchema),
-  lease: optional(Schema.Struct({
-    resourceId: ResourceIdSchema,
-    sessionId: SessionIdSchema,
-    mode: Schema.Literals(["read", "write"] as const),
-    acquiredAt: TimestampSchema,
-    expiresAt: TimestampSchema,
-  })),
+  lease: optional(
+    Schema.Struct({
+      resourceId: ResourceIdSchema,
+      sessionId: SessionIdSchema,
+      mode: Schema.Literals(["read", "write"] as const),
+      acquiredAt: TimestampSchema,
+      expiresAt: TimestampSchema,
+    }),
+  ),
 });
 export type WorkspaceView = typeof WorkspaceViewSchema.Type;
 
@@ -420,7 +422,12 @@ export const HandoffSchema = Schema.TaggedStruct("Handoff", {
 });
 export type Handoff = typeof HandoffSchema.Type;
 
-export const ProposalStatusSchema = Schema.Literals(["submitted", "approved", "rejected", "merged"] as const);
+export const ProposalStatusSchema = Schema.Literals([
+  "submitted",
+  "approved",
+  "rejected",
+  "merged",
+] as const);
 export type ProposalStatus = typeof ProposalStatusSchema.Type;
 
 export const ProposalSchema = Schema.TaggedStruct("Proposal", {
@@ -649,7 +656,11 @@ export const AlreadyAppliedSchema = Schema.TaggedStruct("AlreadyApplied", {
 });
 export type AlreadyApplied = typeof AlreadyAppliedSchema.Type;
 
-export const CommandResultSchema = Schema.Union([AcceptedReceiptSchema, RejectedReceiptSchema, AlreadyAppliedSchema]);
+export const CommandResultSchema = Schema.Union([
+  AcceptedReceiptSchema,
+  RejectedReceiptSchema,
+  AlreadyAppliedSchema,
+]);
 export type CommandResult = typeof CommandResultSchema.Type;
 
 export const ProjectEventSchema = Schema.Union([
@@ -664,7 +675,10 @@ export const ProjectEventSchema = Schema.Union([
     workspaceViewId: WorkspaceViewIdSchema,
     startedAt: TimestampSchema,
   }),
-  Schema.TaggedStruct("SessionCancellationRequested", { sessionId: SessionIdSchema, effect: EffectRequestSchema }),
+  Schema.TaggedStruct("SessionCancellationRequested", {
+    sessionId: SessionIdSchema,
+    effect: EffectRequestSchema,
+  }),
   Schema.TaggedStruct("SessionInterrupted", {
     sessionId: SessionIdSchema,
     reason: NonEmptyStringSchema,
@@ -675,12 +689,21 @@ export const ProjectEventSchema = Schema.Union([
     reason: NonEmptyStringSchema,
     terminalAt: TimestampSchema,
   }),
-  Schema.TaggedStruct("SessionCompleted", { sessionId: SessionIdSchema, terminalAt: TimestampSchema }),
+  Schema.TaggedStruct("SessionCompleted", {
+    sessionId: SessionIdSchema,
+    terminalAt: TimestampSchema,
+  }),
   Schema.TaggedStruct("HandoffRecorded", { handoff: HandoffSchema }),
   Schema.TaggedStruct("EvidenceRecorded", { evidence: EvidenceSchema }),
   Schema.TaggedStruct("ProposalSubmitted", { proposal: ProposalSchema }),
-  Schema.TaggedStruct("ApprovalRecorded", { proposalId: ProposalIdSchema, evidence: EvidenceSchema }),
-  Schema.TaggedStruct("ProposalRejected", { proposalId: ProposalIdSchema, reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("ApprovalRecorded", {
+    proposalId: ProposalIdSchema,
+    evidence: EvidenceSchema,
+  }),
+  Schema.TaggedStruct("ProposalRejected", {
+    proposalId: ProposalIdSchema,
+    reason: NonEmptyStringSchema,
+  }),
   Schema.TaggedStruct("GatesEvaluated", {
     proposalId: ProposalIdSchema,
     policyId: PolicyIdSchema,

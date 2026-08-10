@@ -108,7 +108,8 @@ export const makeWorkId = (): WorkId => WorkIdSchema.make(makeId("wrk_"));
 export const makeWorkProcessId = (): WorkProcessId => WorkProcessIdSchema.make(makeId("wpr_"));
 export const makeAgentProfileId = (): AgentProfileId => AgentProfileIdSchema.make(makeId("prf_"));
 export const makeSessionId = (): SessionId => SessionIdSchema.make(makeId("ses_"));
-export const makeWorkspaceViewId = (): WorkspaceViewId => WorkspaceViewIdSchema.make(makeId("wsv_"));
+export const makeWorkspaceViewId = (): WorkspaceViewId =>
+  WorkspaceViewIdSchema.make(makeId("wsv_"));
 export const makeResourceId = (): ResourceId => ResourceIdSchema.make(makeId("res_"));
 export const makeHandoffId = (): HandoffId => HandoffIdSchema.make(makeId("hnd_"));
 export const makeEvidenceId = (): EvidenceId => EvidenceIdSchema.make(makeId("evd_"));

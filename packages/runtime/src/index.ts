@@ -30,7 +30,11 @@ export type ProjectAuthorityError =
 export type ArtifactError =
   | { readonly _tag: "ArtifactMissing"; readonly digest: Sha256Digest }
   | { readonly _tag: "ArtifactConflict"; readonly digest: Sha256Digest; readonly reason: string }
-  | { readonly _tag: "ArtifactDigestMismatch"; readonly expected: Sha256Digest; readonly observed: Sha256Digest }
+  | {
+      readonly _tag: "ArtifactDigestMismatch";
+      readonly expected: Sha256Digest;
+      readonly observed: Sha256Digest;
+    }
   | { readonly _tag: "ArtifactUnavailable"; readonly reason: string };
 
 export type SessionHostError =

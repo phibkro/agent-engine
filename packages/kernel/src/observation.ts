@@ -1,7 +1,4 @@
-import type {
-  ProjectObservation,
-  Sha256Digest,
-} from "@work-engine/protocol";
+import type { ProjectObservation, Sha256Digest } from "@work-engine/protocol";
 import type { ProjectState } from "./state.ts";
 
 /** Project observations are projections only; the caller supplies the persisted source digest. */

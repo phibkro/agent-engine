@@ -1,6 +1,6 @@
 export default {
   extends: ["@commitlint/config-conventional"],
-  defaultIgnores: false,
+  defaultIgnores: true,
   rules: {
     "body-max-line-length": [0],
     "subject-empty": [2, "never"],

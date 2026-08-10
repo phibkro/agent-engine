@@ -51,7 +51,11 @@ const gateSatisfied = (
   proposal: Proposal,
   gate: GateKey,
   evidence: readonly Evidence[],
-): { readonly satisfied: boolean; readonly evidenceIds: readonly EvidenceId[]; readonly reason: string } => {
+): {
+  readonly satisfied: boolean;
+  readonly evidenceIds: readonly EvidenceId[];
+  readonly reason: string;
+} => {
   const session = state.sessions[proposal.proposerSessionId];
   const work = session === undefined ? undefined : state.works[session.workId];
   switch (gate) {

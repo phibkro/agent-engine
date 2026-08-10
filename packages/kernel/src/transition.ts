@@ -1,11 +1,14 @@
 import type {
   AcceptedReceipt,
+  AgentProfileId,
+  AttemptNumber,
   AuthenticatedActor,
   CommandEnvelope,
   CommandId,
   CommandReceipt,
   CommandResult,
   ContentManifest,
+  ContentRevision,
   CreateProjectRequest,
   EffectId,
   EffectRequest,
@@ -15,27 +18,17 @@ import type {
   ProjectCommand,
   ProjectEvent,
   ProjectId,
+  ProposalId,
   RejectedReceipt,
   RejectionCode,
-  Session,
-  Timestamp,
-} from "@work-engine/protocol";
-import { deriveGates } from "./gates.ts";
-import {
-  emptyProjectState,
-  foldEvent,
-  hasActiveLease,
-  type ProjectState,
-} from "./state.ts";
-import type {
-  AgentProfileId,
-  AttemptNumber,
-  ContentRevision,
-  ProposalId,
   ResourceId,
+  Session,
   SessionId,
+  Timestamp,
   WorkId,
 } from "@work-engine/protocol";
+import { deriveGates } from "./gates.ts";
+import { emptyProjectState, foldEvent, hasActiveLease, type ProjectState } from "./state.ts";
 
 export interface TransitionContext {
   /** Trusted authority-supplied identity for a CreateProject acceptance. */
@@ -103,7 +96,8 @@ const accepted = (
   };
   let next = foldEvent(state, envelope);
   const effectReceipts = { ...next.effectReceipts };
-  for (const effect of effectRequests) effectReceipts[effect.effectId] = { effectId: effect.effectId, receipt };
+  for (const effect of effectRequests)
+    effectReceipts[effect.effectId] = { effectId: effect.effectId, receipt };
   next = {
     commandReceipts: { ...next.commandReceipts, [commandId]: receipt },
     effectReceipts,
@@ -111,8 +105,10 @@ const accepted = (
   return { state: next, result: receipt };
 };
 
-
-const alreadyAppliedWithState = (state: ProjectState, receipt: CommandReceipt): TransitionOutcome => ({
+const alreadyAppliedWithState = (
+  state: ProjectState,
+  receipt: CommandReceipt,
+): TransitionOutcome => ({
   state,
   result: { _tag: "AlreadyApplied", originalReceipt: receipt },
 });
@@ -150,7 +146,11 @@ const authorized = (
   actor: AuthenticatedActor,
   capability: Grant["capability"],
   context: TransitionContext,
-  scope: { readonly workId?: WorkId; readonly sessionId?: SessionId; readonly proposalId?: ProposalId } = {},
+  scope: {
+    readonly workId?: WorkId;
+    readonly sessionId?: SessionId;
+    readonly proposalId?: ProposalId;
+  } = {},
 ): Grant | undefined => {
   for (const grantId of actor.presentedGrants) {
     const grant = state.grants[grantId];
@@ -172,7 +172,12 @@ const ensureExpectedRevision = (
   envelope: CommandEnvelope,
 ): TransitionOutcome | undefined => {
   if (envelope.projectId !== state.projectId) {
-    return reject(state, envelope.commandId, "project_not_found", "project identity does not match authority");
+    return reject(
+      state,
+      envelope.commandId,
+      "project_not_found",
+      "project identity does not match authority",
+    );
   }
   if (envelope.expectedRevision !== state.eventRevision) {
     return reject(
@@ -186,12 +191,18 @@ const ensureExpectedRevision = (
   return undefined;
 };
 
-const duplicateCommand = (state: ProjectState, commandId: CommandId): TransitionOutcome | undefined => {
+const duplicateCommand = (
+  state: ProjectState,
+  commandId: CommandId,
+): TransitionOutcome | undefined => {
   const receipt = state.commandReceipts[commandId];
   return receipt === undefined ? undefined : alreadyAppliedWithState(state, receipt);
 };
 
-const duplicateEffect = (state: ProjectState, command: ProjectCommand): TransitionOutcome | undefined => {
+const duplicateEffect = (
+  state: ProjectState,
+  command: ProjectCommand,
+): TransitionOutcome | undefined => {
   const effectId = commandEffectId(command);
   if (effectId === undefined) return undefined;
   const prior = state.effectReceipts[effectId];
@@ -236,14 +247,19 @@ const validManifest = (manifest: ContentManifest): boolean => {
 
 const evidenceBelongsToProject = (state: ProjectState, evidence: Evidence): boolean =>
   evidence.projectId === state.projectId &&
-  (evidence.producerSessionId === undefined || state.sessions[evidence.producerSessionId] !== undefined);
+  (evidence.producerSessionId === undefined ||
+    state.sessions[evidence.producerSessionId] !== undefined);
 
 const eventForTerminal = (
   command: Extract<ProjectCommand, { readonly _tag: "ReportSessionTerminal" }>,
 ): ProjectEvent => {
   switch (command.status) {
     case "completed":
-      return { _tag: "SessionCompleted", sessionId: command.sessionId, terminalAt: command.terminalAt };
+      return {
+        _tag: "SessionCompleted",
+        sessionId: command.sessionId,
+        terminalAt: command.terminalAt,
+      };
     case "failed":
       return {
         _tag: "SessionFailed",
@@ -277,13 +293,23 @@ const dispatchCommand = (
 
   switch (command._tag) {
     case "CreateProject":
-      return reject(state, envelope.commandId, "invalid_transition", "a Project cannot be created twice");
+      return reject(
+        state,
+        envelope.commandId,
+        "invalid_transition",
+        "a Project cannot be created twice",
+      );
     case "SubmitWork": {
       if (authorized(state, actor, "work.submit", context) === undefined) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks work.submit");
       }
       if (state.works[command.workId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "work identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "work identity already exists",
+        );
       }
       const work = {
         _tag: "Work" as const,
@@ -300,19 +326,32 @@ const dispatchCommand = (
       return accepted(state, envelope.commandId, { _tag: "WorkSubmitted", work });
     }
     case "OpenManagerSession": {
-      if (authorized(state, actor, "manager.open", context, { workId: command.workId }) === undefined) {
+      if (
+        authorized(state, actor, "manager.open", context, { workId: command.workId }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks manager.open");
       }
       const work = state.works[command.workId];
-      if (work === undefined) return reject(state, envelope.commandId, "invalid_transition", "work does not exist");
+      if (work === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "work does not exist");
       if (state.sessions[command.sessionId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "session identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "session identity already exists",
+        );
       }
       if (command.attempt > state.policy.maxAttempts) {
         return reject(state, envelope.commandId, "policy_rejected", "attempt exceeds policy limit");
       }
       if (leaseConflicts(state, command.resourceId, context.now ?? command.deadline)) {
-        return reject(state, envelope.commandId, "resource_conflict", "workspace resource is already leased");
+        return reject(
+          state,
+          envelope.commandId,
+          "resource_conflict",
+          "workspace resource is already leased",
+        );
       }
       const session = sessionBase(
         state.projectId,
@@ -347,35 +386,75 @@ const dispatchCommand = (
         toolBudget: command.toolBudget,
         workspaceLease: lease,
       };
-      const effect = { _tag: "StartSessionEffect" as const, effectId: command.effectId, sessionId: command.sessionId, attempt: command.attempt, spec };
-      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [effect]);
+      const effect = {
+        _tag: "StartSessionEffect" as const,
+        effectId: command.effectId,
+        sessionId: command.sessionId,
+        attempt: command.attempt,
+        spec,
+      };
+      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [
+        effect,
+      ]);
     }
     case "StartWorkerSession": {
-      if (authorized(state, actor, "worker.start", context, { workId: command.workId }) === undefined) {
+      if (
+        authorized(state, actor, "worker.start", context, { workId: command.workId }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks worker.start");
       }
       const work = state.works[command.workId];
-      if (work === undefined) return reject(state, envelope.commandId, "invalid_transition", "work does not exist");
+      if (work === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "work does not exist");
       if (state.sessions[command.sessionId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "session identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "session identity already exists",
+        );
       }
       if (command.predecessorSessionId !== undefined) {
         const predecessor = state.sessions[command.predecessorSessionId];
-        if (predecessor === undefined || predecessor.status === "started" || predecessor.status === "requested") {
-          return reject(state, envelope.commandId, "invalid_transition", "retry predecessor is not terminal");
+        if (
+          predecessor === undefined ||
+          predecessor.status === "started" ||
+          predecessor.status === "requested"
+        ) {
+          return reject(
+            state,
+            envelope.commandId,
+            "invalid_transition",
+            "retry predecessor is not terminal",
+          );
         }
         if (command.sessionId === command.predecessorSessionId) {
-          return reject(state, envelope.commandId, "invalid_transition", "retry must allocate a new session identity");
+          return reject(
+            state,
+            envelope.commandId,
+            "invalid_transition",
+            "retry must allocate a new session identity",
+          );
         }
         if (command.attempt !== predecessor.attempt + 1) {
-          return reject(state, envelope.commandId, "policy_rejected", "retry attempt must immediately follow its predecessor");
+          return reject(
+            state,
+            envelope.commandId,
+            "policy_rejected",
+            "retry attempt must immediately follow its predecessor",
+          );
         }
       }
       if (command.attempt > state.policy.maxAttempts) {
         return reject(state, envelope.commandId, "policy_rejected", "attempt exceeds policy limit");
       }
       if (leaseConflicts(state, command.resourceId, context.now ?? command.deadline)) {
-        return reject(state, envelope.commandId, "resource_conflict", "workspace resource is already leased");
+        return reject(
+          state,
+          envelope.commandId,
+          "resource_conflict",
+          "workspace resource is already leased",
+        );
       }
       const session = sessionBase(
         state.projectId,
@@ -406,23 +485,42 @@ const dispatchCommand = (
         workId: work.workId,
         profileId: command.profileId,
         attempt: command.attempt,
-        ...(command.predecessorSessionId === undefined ? {} : { predecessorSessionId: command.predecessorSessionId }),
+        ...(command.predecessorSessionId === undefined
+          ? {}
+          : { predecessorSessionId: command.predecessorSessionId }),
         deadline: command.deadline,
         outputLimit: command.outputLimit,
         toolBudget: command.toolBudget,
         workspaceLease: lease,
       };
-      const effect = { _tag: "StartSessionEffect" as const, effectId: command.effectId, sessionId: command.sessionId, attempt: command.attempt, spec };
-      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [effect]);
+      const effect = {
+        _tag: "StartSessionEffect" as const,
+        effectId: command.effectId,
+        sessionId: command.sessionId,
+        attempt: command.attempt,
+        spec,
+      };
+      return accepted(state, envelope.commandId, { _tag: "SessionRequested", session, effect }, [
+        effect,
+      ]);
     }
     case "ReportSessionStarted": {
-      if (authorized(state, actor, "session.started", context, { sessionId: command.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "session.started", context, { sessionId: command.sessionId }) ===
+        undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.started");
       }
       const session = state.sessions[command.sessionId];
-      if (session === undefined) return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
+      if (session === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
       if (session.status !== "requested") {
-        return reject(state, envelope.commandId, "invalid_transition", "only a requested session can start");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "only a requested session can start",
+        );
       }
       return accepted(state, envelope.commandId, {
         _tag: "SessionStarted",
@@ -432,13 +530,26 @@ const dispatchCommand = (
       });
     }
     case "CancelSession": {
-      if (authorized(state, actor, "session.cancel", context, { sessionId: command.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "session.cancel", context, { sessionId: command.sessionId }) ===
+        undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.cancel");
       }
       const session = state.sessions[command.sessionId];
-      if (session === undefined) return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
-      if (session.status === "completed" || session.status === "failed" || session.status === "interrupted") {
-        return reject(state, envelope.commandId, "invalid_transition", "terminal session cannot be cancelled");
+      if (session === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
+      if (
+        session.status === "completed" ||
+        session.status === "failed" ||
+        session.status === "interrupted"
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "terminal session cannot be cancelled",
+        );
       }
       const effect = {
         _tag: "CancelSessionEffect" as const,
@@ -446,87 +557,177 @@ const dispatchCommand = (
         sessionId: command.sessionId,
         reason: command.reason,
       };
-      return accepted(state, envelope.commandId, {
-        _tag: "SessionCancellationRequested",
-        sessionId: command.sessionId,
-        effect,
-      }, [effect]);
+      return accepted(
+        state,
+        envelope.commandId,
+        {
+          _tag: "SessionCancellationRequested",
+          sessionId: command.sessionId,
+          effect,
+        },
+        [effect],
+      );
     }
     case "ReportSessionTerminal": {
-      if (authorized(state, actor, "session.terminal", context, { sessionId: command.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "session.terminal", context, { sessionId: command.sessionId }) ===
+        undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.terminal");
       }
       const session = state.sessions[command.sessionId];
-      if (session === undefined) return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
-      if (session.status === "completed" || session.status === "failed" || session.status === "interrupted") {
-        return reject(state, envelope.commandId, "invalid_transition", "first terminal event already won");
+      if (session === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
+      if (
+        session.status === "completed" ||
+        session.status === "failed" ||
+        session.status === "interrupted"
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "first terminal event already won",
+        );
       }
       if (command.status === "completed" && session.status !== "started") {
-        return reject(state, envelope.commandId, "invalid_transition", "only a started session can complete");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "only a started session can complete",
+        );
       }
       return accepted(state, envelope.commandId, eventForTerminal(command));
     }
     case "RecordHandoff": {
       const handoff = command.handoff;
-      if (authorized(state, actor, "handoff.record", context, { sessionId: handoff.producerSessionId }) === undefined) {
+      if (
+        authorized(state, actor, "handoff.record", context, {
+          sessionId: handoff.producerSessionId,
+        }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks handoff.record");
       }
       const session = state.sessions[handoff.producerSessionId];
-      if (session === undefined) return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
+      if (session === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
       if (!["completed", "failed", "interrupted"].includes(session.status)) {
-        return reject(state, envelope.commandId, "invalid_transition", "handoff requires a terminal session");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "handoff requires a terminal session",
+        );
       }
       if (state.handoffs[handoff.handoffId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "handoff identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "handoff identity already exists",
+        );
       }
-      if (handoff.projectId !== state.projectId) return reject(state, envelope.commandId, "project_not_found", "handoff project mismatch");
+      if (handoff.projectId !== state.projectId)
+        return reject(state, envelope.commandId, "project_not_found", "handoff project mismatch");
       return accepted(state, envelope.commandId, { _tag: "HandoffRecorded", handoff });
     }
     case "RecordEvidence": {
       const evidence = command.evidence;
       if (
         evidence.producerSessionId === undefined ||
-        authorized(state, actor, "evidence.record", context, { sessionId: evidence.producerSessionId }) === undefined
+        authorized(state, actor, "evidence.record", context, {
+          sessionId: evidence.producerSessionId,
+        }) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks evidence.record");
       }
       if (!evidenceBelongsToProject(state, evidence)) {
-        return reject(state, envelope.commandId, "invalid_transition", "evidence provenance is not in this project");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "evidence provenance is not in this project",
+        );
       }
       if (evidence.producerSessionId === undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "recorded evidence needs a producer session");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "recorded evidence needs a producer session",
+        );
       }
       const evidenceShapeValid =
-        (evidence.kind !== "machine_check" || (evidence.check !== undefined && evidence.candidateDigest !== undefined)) &&
+        (evidence.kind !== "machine_check" ||
+          (evidence.check !== undefined && evidence.candidateDigest !== undefined)) &&
         (evidence.kind !== "scope_check" || evidence.scope !== undefined) &&
         (evidence.kind !== "session_terminal" || evidence.terminalStatus !== undefined) &&
         (evidence.kind !== "candidate_manifest" || evidence.candidateDigest !== undefined) &&
-        (evidence.kind !== "human_approval" || (evidence.producerActorId !== undefined && evidence.candidateDigest !== undefined));
+        (evidence.kind !== "human_approval" ||
+          (evidence.producerActorId !== undefined && evidence.candidateDigest !== undefined));
+      if (!evidenceShapeValid) {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "evidence payload is incomplete for its declared kind",
+        );
+      }
       if (state.evidence[evidence.evidenceId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "evidence identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "evidence identity already exists",
+        );
       }
       return accepted(state, envelope.commandId, { _tag: "EvidenceRecorded", evidence });
     }
     case "SubmitProposal": {
       const proposal = command.proposal;
-      if (authorized(state, actor, "proposal.submit", context, { sessionId: proposal.proposerSessionId }) === undefined) {
+      if (
+        authorized(state, actor, "proposal.submit", context, {
+          sessionId: proposal.proposerSessionId,
+        }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks proposal.submit");
       }
       const session = state.sessions[proposal.proposerSessionId];
       if (session === undefined || session.status !== "completed") {
-        return reject(state, envelope.commandId, "invalid_transition", "proposal requires a completed producer session");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal requires a completed producer session",
+        );
       }
       if (proposal.projectId !== state.projectId) {
-        return reject(state, envelope.commandId, "invalid_transition", "proposal provenance is invalid");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal provenance is invalid",
+        );
       }
       if (!validManifest(proposal.candidate)) {
-        return reject(state, envelope.commandId, "invalid_transition", "candidate manifest paths are not sorted");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "candidate manifest paths are not sorted",
+        );
       }
       let candidateEvidence = false;
       for (const evidenceId of proposal.evidenceIds) {
         const evidence = state.evidence[evidenceId];
         if (evidence === undefined || evidence.projectId !== state.projectId) {
-          return reject(state, envelope.commandId, "invalid_transition", "proposal references unaccepted evidence");
+          return reject(
+            state,
+            envelope.commandId,
+            "invalid_transition",
+            "proposal references unaccepted evidence",
+          );
         }
         if (
           evidence.kind === "candidate_manifest" &&
@@ -540,19 +741,46 @@ const dispatchCommand = (
         }
       }
       if (!candidateEvidence) {
-        return reject(state, envelope.commandId, "artifact_missing", "proposal candidate manifest is not verified");
+        return reject(
+          state,
+          envelope.commandId,
+          "artifact_missing",
+          "proposal candidate manifest is not verified",
+        );
       }
       if (state.proposals[proposal.proposalId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "proposal identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal identity already exists",
+        );
       }
       return accepted(state, envelope.commandId, { _tag: "ProposalSubmitted", proposal });
     }
     case "ApproveProposal": {
       const proposal = state.proposals[command.proposalId];
-      if (proposal === undefined) return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
-      if (proposal.status !== "submitted") return reject(state, envelope.commandId, "invalid_transition", "proposal is not awaiting approval");
-      if (actor.kind !== "operator" || authorized(state, actor, "proposal.approve", context, { proposalId: proposal.proposalId }) === undefined) {
-        return reject(state, envelope.commandId, "unauthorized", "only a granted operator may approve");
+      if (proposal === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
+      if (proposal.status !== "submitted")
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal is not awaiting approval",
+        );
+      if (
+        actor.kind !== "operator" ||
+        authorized(state, actor, "proposal.approve", context, {
+          proposalId: proposal.proposalId,
+        }) === undefined
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "unauthorized",
+          "only a granted operator may approve",
+        );
       }
       const evidence = command.evidence;
       if (
@@ -564,50 +792,128 @@ const dispatchCommand = (
         evidence.candidateDigest !== proposal.candidate.digest ||
         evidence.projectId !== state.projectId
       ) {
-        return reject(state, envelope.commandId, "invalid_transition", "approval evidence is not bound to this proposal");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "approval evidence is not bound to this proposal",
+        );
       }
       if (state.evidence[evidence.evidenceId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "approval evidence identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "approval evidence identity already exists",
+        );
       }
-      return accepted(state, envelope.commandId, { _tag: "ApprovalRecorded", proposalId: proposal.proposalId, evidence });
+      return accepted(state, envelope.commandId, {
+        _tag: "ApprovalRecorded",
+        proposalId: proposal.proposalId,
+        evidence,
+      });
     }
     case "RejectProposal": {
       const proposal = state.proposals[command.proposalId];
-      if (proposal === undefined) return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
-      if (proposal.status !== "submitted" && proposal.status !== "approved") return reject(state, envelope.commandId, "invalid_transition", "proposal is already terminal");
-      if (actor.kind !== "operator" || authorized(state, actor, "proposal.reject", context, { proposalId: proposal.proposalId }) === undefined) {
-        return reject(state, envelope.commandId, "unauthorized", "only a granted operator may reject");
+      if (proposal === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
+      if (proposal.status !== "submitted" && proposal.status !== "approved")
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "proposal is already terminal",
+        );
+      if (
+        actor.kind !== "operator" ||
+        authorized(state, actor, "proposal.reject", context, {
+          proposalId: proposal.proposalId,
+        }) === undefined
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "unauthorized",
+          "only a granted operator may reject",
+        );
       }
-      return accepted(state, envelope.commandId, { _tag: "ProposalRejected", proposalId: proposal.proposalId, reason: command.reason });
+      return accepted(state, envelope.commandId, {
+        _tag: "ProposalRejected",
+        proposalId: proposal.proposalId,
+        reason: command.reason,
+      });
     }
     case "MergeProposal": {
       const proposal = state.proposals[command.proposalId];
-      if (proposal === undefined) return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
+      if (proposal === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "proposal does not exist");
       if (proposal.status !== "submitted" && proposal.status !== "approved") {
-        return reject(state, envelope.commandId, "invalid_transition", "only a submitted or approved proposal can Merge");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "only a submitted or approved proposal can Merge",
+        );
       }
       if (state.merges[command.mergeId] !== undefined) {
-        return reject(state, envelope.commandId, "invalid_transition", "merge identity already exists");
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "merge identity already exists",
+        );
       }
-      if (actor.kind === "project_manager" || actor.kind === "worker_session" || actor.kind === "session_host") {
-        return reject(state, envelope.commandId, "unauthorized", "agent-scoped actors cannot Merge");
+      if (
+        actor.kind === "project_manager" ||
+        actor.kind === "worker_session" ||
+        actor.kind === "session_host"
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "unauthorized",
+          "agent-scoped actors cannot Merge",
+        );
       }
-      const grant = authorized(state, actor, state.policy.mergeCapability, context, { proposalId: proposal.proposalId });
+      const grant = authorized(state, actor, state.policy.mergeCapability, context, {
+        proposalId: proposal.proposalId,
+      });
       if (proposal.basisContentRevision !== state.contentRevision) {
-        return reject(state, envelope.commandId, "proposal_stale", "proposal basis content revision is stale", {
-          proposalContentRevision: proposal.basisContentRevision,
-          observedContentRevision: state.contentRevision,
-        });
+        return reject(
+          state,
+          envelope.commandId,
+          "proposal_stale",
+          "proposal basis content revision is stale",
+          {
+            proposalContentRevision: proposal.basisContentRevision,
+            observedContentRevision: state.contentRevision,
+          },
+        );
       }
       if (proposal.candidate.digest !== command.candidateDigest) {
-        return reject(state, envelope.commandId, "proposal_stale", "Merge candidate digest differs from Proposal");
+        return reject(
+          state,
+          envelope.commandId,
+          "proposal_stale",
+          "Merge candidate digest differs from Proposal",
+        );
       }
       if (actor.actorId === proposal.proposerSessionId) {
-        return reject(state, envelope.commandId, "unauthorized", "the proposing Session cannot Merge itself");
+        return reject(
+          state,
+          envelope.commandId,
+          "unauthorized",
+          "the proposing Session cannot Merge itself",
+        );
       }
       const decision = deriveGates(state, proposal);
       if (!decision.satisfied) {
-        return reject(state, envelope.commandId, "gate_unsatisfied", "all five Merge Gates must be satisfied");
+        return reject(
+          state,
+          envelope.commandId,
+          "gate_unsatisfied",
+          "all five Merge Gates must be satisfied",
+        );
       }
       const receipt = {
         _tag: "MergeReceipt" as const,
@@ -629,23 +935,45 @@ const dispatchCommand = (
     }
     case "AcquireWorkspaceLease": {
       const lease = command.lease;
-      if (authorized(state, actor, "workspace.lease", context, { sessionId: lease.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "workspace.lease", context, { sessionId: lease.sessionId }) ===
+        undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.lease");
       }
-      if (state.sessions[lease.sessionId] === undefined) return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
+      if (state.sessions[lease.sessionId] === undefined)
+        return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
       if (leaseConflicts(state, lease.resourceId, lease.acquiredAt)) {
-        return reject(state, envelope.commandId, "resource_conflict", "workspace resource is already leased");
+        return reject(
+          state,
+          envelope.commandId,
+          "resource_conflict",
+          "workspace resource is already leased",
+        );
       }
       return accepted(state, envelope.commandId, { _tag: "WorkspaceLeaseAcquired", lease });
     }
     case "RenewWorkspaceLease": {
       const lease = state.resources[command.resourceId];
-      if (authorized(state, actor, "workspace.heartbeat", context, { sessionId: command.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "workspace.heartbeat", context, {
+          sessionId: command.sessionId,
+        }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.heartbeat");
       }
-      if (lease === undefined || lease.sessionId !== command.sessionId) return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
-      if ((context.now ?? lease.expiresAt) >= lease.expiresAt || command.expiresAt <= lease.expiresAt) {
-        return reject(state, envelope.commandId, "lease_expired", "workspace lease is expired or renewal is not later");
+      if (lease === undefined || lease.sessionId !== command.sessionId)
+        return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
+      if (
+        (context.now ?? lease.expiresAt) >= lease.expiresAt ||
+        command.expiresAt <= lease.expiresAt
+      ) {
+        return reject(
+          state,
+          envelope.commandId,
+          "lease_expired",
+          "workspace lease is expired or renewal is not later",
+        );
       }
       return accepted(state, envelope.commandId, {
         _tag: "WorkspaceLeaseRenewed",
@@ -656,10 +984,14 @@ const dispatchCommand = (
     }
     case "ReleaseWorkspaceLease": {
       const lease = state.resources[command.resourceId];
-      if (authorized(state, actor, "workspace.lease", context, { sessionId: command.sessionId }) === undefined) {
+      if (
+        authorized(state, actor, "workspace.lease", context, { sessionId: command.sessionId }) ===
+        undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.lease");
       }
-      if (lease === undefined || lease.sessionId !== command.sessionId) return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
+      if (lease === undefined || lease.sessionId !== command.sessionId)
+        return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
       return accepted(state, envelope.commandId, {
         _tag: "WorkspaceLeaseReleased",
         resourceId: command.resourceId,
@@ -712,7 +1044,15 @@ export const transition = (
     });
   }
   if (state === undefined) {
-    return { state: undefined, result: { _tag: "Rejected", eventRevision: 0 as EventRevision, code: "project_not_found", details: { reason: "Project authority has no state" } } };
+    return {
+      state: undefined,
+      result: {
+        _tag: "Rejected",
+        eventRevision: 0 as EventRevision,
+        code: "project_not_found",
+        details: { reason: "Project authority has no state" },
+      },
+    };
   }
   return dispatchCommand(state, input, context);
 };

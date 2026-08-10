@@ -16,6 +16,7 @@
     "eqeqeq": "error",
     "import/no-duplicates": "error",
     "no-throw-literal": "error",
+    "no-underscore-dangle": ["error", { "allow": ["_tag"] }],
     "promise/always-return": "off",
     "promise/no-multiple-resolved": "error",
     "typescript/consistent-type-imports": "error",
@@ -43,6 +44,14 @@
           }
         ],
         "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "pure-library",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-untyped-throw": [
           "error",
           {
             "technology": "effect-v4",
@@ -200,6 +209,19 @@
             "platform": "web-worker",
             "boundaries": ["external-data"]
           }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "node:*",
+              "bun:*",
+              "@effect/platform-bun",
+              "@effect/platform-node",
+              "herdr",
+              "omp"
+            ]
+          }
         ]
       }
     },
@@ -222,14 +244,6 @@
             "platform": "bun"
           }
         ],
-        "effect/no-untyped-throw": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "runtime-adapter",
-            "platform": "bun"
-          }
-        ],
         "no-restricted-imports": [
           "error",
           {
@@ -242,14 +256,6 @@
       "files": ["apps/control-plane/**/*.ts", "apps/control-plane/**/*.tsx"],
       "rules": {
         "effect/no-cross-runtime": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "composition-root",
-            "platform": "web-worker"
-          }
-        ],
-        "effect/no-premature-execution": [
           "error",
           {
             "technology": "effect-v4",
@@ -285,14 +291,6 @@
       "files": ["apps/cli/**/*.ts", "apps/cli/**/*.tsx"],
       "rules": {
         "effect/no-cross-runtime": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "composition-root",
-            "platform": "bun"
-          }
-        ],
-        "effect/no-premature-execution": [
           "error",
           {
             "technology": "effect-v4",
