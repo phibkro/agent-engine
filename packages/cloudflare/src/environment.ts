@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import {
   EnvironmentCheckpointRequestSchema,
   EnvironmentCreateRequestSchema,
@@ -56,6 +57,12 @@ export interface EnvironmentCreated {
   readonly snapshot: EnvironmentSnapshot;
   readonly pairing: EnvironmentPairing;
 }
+const FinalDestroyFailureSchema = Schema.Struct({
+  _tag: Schema.Literal("EnvironmentDestroyFailed"),
+  lifecycle: Schema.Literal("Failed"),
+  reason: Schema.Literal("Final checkpoint failed"),
+  dataLossWarning: Schema.Literal(true),
+});
 
 const digestText = async (value: string): Promise<`sha256:${string}`> => {
   const bytes = new TextEncoder().encode(value);
@@ -123,6 +130,7 @@ export class EnvironmentCoordinator {
     const createdAt = this.#options.now();
     const requested = snapshot({
       _tag: "EnvironmentSnapshot",
+      schemaVersion: "work-engine/v2",
       environmentId: request.environmentId,
       ownerId: request.ownerId,
       repository: request.repository,
@@ -427,13 +435,32 @@ export class EnvironmentCoordinator {
     const existingReceipt = current.commandReceipts.find(
       (receipt) => receipt.commandId === request.commandId,
     );
-    if (existingReceipt !== undefined) {
-      if (existingReceipt.requestDigest !== requestDigest) {
-        throw new InvalidRequestError("Destroy command identifier was reused with different input");
-      }
-      return current;
+    if (existingReceipt !== undefined && existingReceipt.requestDigest !== requestDigest) {
+      throw new InvalidRequestError("Destroy command identifier was reused with different input");
     }
     if (current.lifecycle === "Destroyed") return current;
+
+    let retryFinalCaptureFailure = false;
+    if (existingReceipt !== undefined) {
+      try {
+        decodeUnknownStrict(FinalDestroyFailureSchema, existingReceipt.result);
+        retryFinalCaptureFailure = true;
+      } catch {
+        retryFinalCaptureFailure = false;
+      }
+      if (retryFinalCaptureFailure || current.lifecycle === "Failed") {
+        await this.#options.runtime.destroy(current);
+        if (retryFinalCaptureFailure) return current;
+        const destroyedAfterRetry = snapshot({
+          ...current,
+          lifecycle: "Destroyed",
+          generation: null,
+          acceptedCheckpoint: null,
+        });
+        await this.#options.store.save(destroyedAfterRetry);
+        return destroyedAfterRetry;
+      }
+    }
 
     let cleanup = snapshot({ ...current, lifecycle: "Destroying" });
     await this.#options.store.save(cleanup);
@@ -472,13 +499,19 @@ export class EnvironmentCoordinator {
         await this.#options.store.save(cleanup);
       }
     }
+    if (finalCheckpointFailed) {
+      try {
+        await this.#options.runtime.destroy(cleanup);
+      } catch (cleanupFailure) {
+        await this.#options.store.save(cleanup);
+        throw cleanupFailure;
+      }
+      return cleanup;
+    }
+
     try {
       await this.#options.runtime.destroy(cleanup);
-    } catch (cause) {
-      if (finalCheckpointFailed) {
-        await this.#options.store.save(cleanup);
-        return cleanup;
-      }
+    } catch (cleanupFailure) {
       const failedAt = this.#options.now();
       const failed = snapshot({
         ...cleanup,
@@ -501,9 +534,8 @@ export class EnvironmentCoordinator {
         ],
       });
       await this.#options.store.save(failed);
-      throw cause;
+      throw cleanupFailure;
     }
-    if (finalCheckpointFailed) return cleanup;
     const acceptedAt = this.#options.now();
     const destroyed = snapshot({
       ...cleanup,

@@ -1,6 +1,8 @@
 import {
   EnvironmentCheckpointSchema,
+  EnvironmentPairingOutputSchema,
   EnvironmentPairingSchema,
+  SandboxProcessStateSchema,
   decodeUnknownStrict,
   type EnvironmentCheckpoint,
   type EnvironmentPairing,
@@ -42,6 +44,14 @@ const requireSuccessfulExec = async (
   }
   return result;
 };
+interface ProcessStatusSource {
+  getStatus(): Promise<string>;
+}
+
+const processState = async (
+  process: ProcessStatusSource,
+): Promise<typeof SandboxProcessStateSchema.Type> =>
+  decodeUnknownStrict(SandboxProcessStateSchema, { status: await process.getStatus() });
 
 const requireSafeGitSegment = (value: string, field: string): string => {
   if (!SAFE_GIT_SEGMENT.test(value) || value === "." || value === "..") {
@@ -52,13 +62,10 @@ const requireSafeGitSegment = (value: string, field: string): string => {
 
 const parsePairingOutput = (
   output: string,
-): { readonly token: string; readonly expiresAt: string } => {
+): typeof EnvironmentPairingOutputSchema.Type => {
   const token = /^Token:\s*(\S+)\s*$/mu.exec(output)?.[1];
   const expiresAt = /^Expires:\s*(\S+)\s*$/mu.exec(output)?.[1];
-  if (token === undefined || expiresAt === undefined) {
-    throw new Error("T3Code did not emit a pairing token and expiry");
-  }
-  return { token, expiresAt };
+  return decodeUnknownStrict(EnvironmentPairingOutputSchema, { token, expiresAt });
 };
 
 export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
@@ -152,7 +159,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
 
   async #startT3Code(sandbox: Sandbox): Promise<void> {
     const existing = await sandbox.getProcess(T3CODE_PROCESS_ID);
-    if (existing !== null && (await existing.getStatus()) === "running") return;
+    if (existing !== null && (await processState(existing)).status === "running") return;
     const process = await sandbox.startProcess(
       `t3 serve --host 0.0.0.0 --port ${String(T3CODE_PORT)} --base-dir ${T3CODE_HOME} ${REPOSITORY_DIR}`,
       { processId: T3CODE_PROCESS_ID, autoCleanup: false },
@@ -179,9 +186,9 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   }
   async isReady(generationId: string): Promise<boolean> {
     const process = await this.#sandbox(generationId).getProcess(T3CODE_PROCESS_ID);
-    return process !== null && (await process.getStatus()) === "running";
-  }
+    return process !== null && (await processState(process)).status === "running";
 
+  }
   async mintPairing(input: { readonly environmentId: string }): Promise<EnvironmentPairing> {
     const sandbox = this.#activeSandbox;
     if (sandbox === undefined) throw new Error("Sandbox is not active");
@@ -211,7 +218,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     if (snapshot.generation === null) throw new Error("Cannot checkpoint without a generation");
     const sandbox = this.#sandbox(snapshot.generation.id);
     const process = await sandbox.getProcess(T3CODE_PROCESS_ID);
-    if (process !== null && (await process.getStatus()) === "running") {
+    if (process !== null && (await processState(process)).status === "running") {
       await process.kill("SIGTERM");
       await process.waitForExit(30_000);
     }
@@ -242,7 +249,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       try {
         await this.#validateCheckpoint(snapshot.environmentId, candidate);
       } catch (cause) {
-        await this.deleteCheckpoint(candidate).catch(() => undefined);
+        try {
+          await this.deleteCheckpoint(candidate);
+        } catch (cleanupFailure) {
+          throw new AggregateError([cause, cleanupFailure], "Checkpoint cleanup failed");
+        }
         throw cause;
       }
       return decodeUnknownStrict(EnvironmentCheckpointSchema, {
@@ -269,8 +280,8 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       await this.#validateRestoredState(sandbox, checkpoint);
       await this.#startT3Code(sandbox);
     } finally {
-      await sandbox.setKeepAlive(false).catch(() => undefined);
-      await sandbox.destroy().catch(() => undefined);
+      await sandbox.setKeepAlive(false);
+      await sandbox.destroy();
     }
   }
 
@@ -391,11 +402,40 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       this.#generationId = generationId;
       return { generationId };
     } catch (cause) {
-      await this.#options.credentials
-        .revoke({ environmentId: input.snapshot.environmentId, generationId })
-        .catch(() => undefined);
-      await sandbox.setKeepAlive(false).catch(() => undefined);
-      await sandbox.destroy().catch(() => undefined);
+      const cleanupFailures: Error[] = [];
+      try {
+        await this.#options.credentials.revoke({
+          environmentId: input.snapshot.environmentId,
+          generationId,
+        });
+      } catch (cleanupFailure) {
+        cleanupFailures.push(
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new Error("Credential revocation failed"),
+        );
+      }
+      try {
+        await sandbox.setKeepAlive(false);
+      } catch (cleanupFailure) {
+        cleanupFailures.push(
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new Error("Sandbox keep-alive cleanup failed"),
+        );
+      }
+      try {
+        await sandbox.destroy();
+      } catch (cleanupFailure) {
+        cleanupFailures.push(
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new Error("Sandbox destruction failed"),
+        );
+      }
+      if (cleanupFailures.length > 0) {
+        throw new AggregateError([cause, ...cleanupFailures], "Sandbox recovery cleanup failed");
+      }
       throw cause;
     }
   }

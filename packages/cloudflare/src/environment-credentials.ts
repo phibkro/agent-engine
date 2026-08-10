@@ -1,8 +1,14 @@
-export interface EnvironmentCredentialLease {
-  readonly generationToken: string;
+import {
+  EnvironmentCredentialLeaseSchema,
+  decodeUnknownStrict,
+} from "@work-engine/protocol";
+import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
+
+type ProtocolEnvironmentCredentialLease = typeof EnvironmentCredentialLeaseSchema.Type;
+
+export type EnvironmentCredentialLease = ProtocolEnvironmentCredentialLease & {
   readonly brokerOrigin: string;
-  readonly expiresAt: string;
-}
+};
 
 export interface EnvironmentCredentialSubject {
   readonly environmentId: string;
@@ -19,41 +25,30 @@ export interface EnvironmentCredentialBroker {
   revoke(input: EnvironmentCredentialSubject): Promise<void>;
 }
 
-const requireObject = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("Credential broker returned an invalid response");
-  }
-  return value as Record<string, unknown>;
-};
-
-const requireNonEmptyString = (value: unknown, field: string): string => {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`Credential broker returned invalid ${field}`);
-  }
-  return value;
-};
-
-const requireHttpsOrigin = (value: unknown): string => {
-  const url = new URL(requireNonEmptyString(value, "brokerOrigin"));
-  if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
-    throw new Error("Credential broker returned invalid brokerOrigin");
-  }
-  return url.origin;
-};
-
 export class FetcherEnvironmentCredentialBroker implements EnvironmentCredentialBroker {
   readonly #fetcher: { fetch(input: string, init?: RequestInit): Promise<Response> };
   readonly #endpoint: string;
   readonly #authorization: string;
+  readonly #brokerOrigin: string;
 
   constructor(
     fetcher: { fetch(input: string, init?: RequestInit): Promise<Response> },
     endpoint: string,
     authorization: string,
   ) {
+    let endpointUrl: URL;
+    try {
+      endpointUrl = new URL(endpoint);
+    } catch {
+      throw new InvalidRequestError("Credential broker endpoint is invalid");
+    }
+    if (endpointUrl.protocol !== "https:") {
+      throw new InvalidRequestError("Credential broker endpoint must use HTTPS");
+    }
     this.#fetcher = fetcher;
     this.#endpoint = endpoint;
     this.#authorization = authorization;
+    this.#brokerOrigin = endpointUrl.origin;
   }
 
   async lease(
@@ -63,23 +58,20 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
     },
   ): Promise<EnvironmentCredentialLease> {
     const response = await this.#request("POST", input);
-    const payload = requireObject(await response.json());
-    const expiresAt = requireNonEmptyString(payload["expiresAt"], "expiresAt");
-    if (!Number.isFinite(Date.parse(expiresAt))) {
-      throw new Error("Credential broker returned invalid expiresAt");
+    let payload: ProtocolEnvironmentCredentialLease;
+    try {
+      payload = decodeUnknownStrict(EnvironmentCredentialLeaseSchema, await response.json());
+    } catch {
+      throw new ProviderUnavailableError("Credential broker", "invalid lease response");
     }
-    return {
-      generationToken: requireNonEmptyString(payload["generationToken"], "generationToken"),
-      brokerOrigin: requireHttpsOrigin(payload["brokerOrigin"]),
-      expiresAt,
-    };
+    return { ...payload, brokerOrigin: this.#brokerOrigin };
   }
 
   async revoke(input: EnvironmentCredentialSubject): Promise<void> {
     await this.#request("DELETE", input);
   }
 
-  async #request(method: "POST" | "DELETE", body: unknown): Promise<Response> {
+  async #request(method: "POST" | "DELETE", body: object): Promise<Response> {
     const response = await this.#fetcher.fetch(this.#endpoint, {
       method,
       headers: {
@@ -89,8 +81,9 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
       body: JSON.stringify(body),
     });
     if (!response.ok) {
-      throw new Error(
-        `Credential broker rejected the ${method === "POST" ? "lease" : "revocation"} request with ${String(response.status)}`,
+      throw new ProviderUnavailableError(
+        "Credential broker",
+        method === "POST" ? "lease request rejected" : "revocation request rejected",
       );
     }
     return response;

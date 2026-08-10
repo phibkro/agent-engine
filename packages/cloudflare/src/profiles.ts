@@ -1,14 +1,13 @@
-import { digestCanonical, type CanonicalJsonValue } from "@work-engine/protocol";
 import {
+  digestCanonical,
+  type CanonicalJsonValue,
   ProfileSchema,
-  decode,
-  record,
-  requiredString,
   type CloudTask,
   type Profile,
   type ProfileId,
   type ProfileRevision,
-} from "./contract.ts";
+} from "@work-engine/protocol";
+import { CloudTaskSchema, decode } from "./contract.ts";
 import { InvalidRequestError, SessionConflictError } from "./errors.ts";
 import { SessionState, type SessionSnapshot } from "./session.ts";
 
@@ -17,19 +16,16 @@ export type ProfileClassName =
   | "ProjectWorkerSession"
   | "IndependentReviewerSession";
 
-const profileKey = (profileId: string, revision: unknown): string =>
+const profileKey = (profileId: ProfileId, revision: ProfileRevision): string =>
   `${profileId}\u0000${String(revision)}`;
 
-export const profileCatalogKey = (profileId: string, revision: unknown): string =>
+export const profileCatalogKey = (profileId: ProfileId, revision: ProfileRevision): string =>
   `profiles/${profileId}/revisions/${String(revision)}`;
 
 const verifyProfileDigest = async (profile: Profile): Promise<Profile> => {
-  const value = record(profile);
-  const declaredDigest = requiredString(value["profileDigest"], "profile.profileDigest");
-  const profileContent = Object.fromEntries(
-    Object.entries(value).filter(([key]) => key !== "profileDigest"),
-  );
-  const computedDigest = await digestCanonical(profileContent as CanonicalJsonValue);
+  const { profileDigest: declaredDigest, ...content } = profile;
+  const canonicalContent = { ...content } satisfies CanonicalJsonValue;
+  const computedDigest = await digestCanonical(canonicalContent);
   if (declaredDigest !== computedDigest) {
     throw new InvalidRequestError(
       "Profile digest does not match the canonical registered Profile content",
@@ -43,18 +39,15 @@ export const resolveCatalogProfile = async (
   task: CloudTask,
 ): Promise<Profile> => {
   if (catalog === undefined) throw new InvalidRequestError("Profile catalog binding is required");
-  const taskValue = record(task);
-  const profileId = requiredString(taskValue["profileId"], "task.profileId");
-  const revision = taskValue["profileRevision"];
-  const stored = await catalog.get(profileCatalogKey(profileId, revision), "json");
-  if (stored === null)
+  const stored = await catalog.get(profileCatalogKey(task.profileId, task.profileRevision), "json");
+  if (stored === null) {
     throw new InvalidRequestError("Requested Profile revision is not registered");
+  }
   const profile = await verifyProfileDigest(decode(ProfileSchema, stored));
-  const profileValue = record(profile);
   if (
-    profileValue["profileId"] !== profileId ||
-    profileValue["profileRevision"] !== revision ||
-    profileValue["profileDigest"] !== taskValue["profileDigest"]
+    profile.profileId !== task.profileId ||
+    profile.profileRevision !== task.profileRevision ||
+    profile.profileDigest !== task.profileDigest
   ) {
     throw new InvalidRequestError("Task Profile identity does not match the catalog revision");
   }
@@ -62,9 +55,8 @@ export const resolveCatalogProfile = async (
 };
 
 const profileClassFor = (profile: Profile): ProfileClassName => {
-  const role = String(record(profile)["role"] ?? "");
-  if (role === "reviewer") return "IndependentReviewerSession";
-  if (role === "orchestrator") return "ProjectOrchestratorSession";
+  if (profile.role === "reviewer") return "IndependentReviewerSession";
+  if (profile.role === "orchestrator") return "ProjectOrchestratorSession";
   return "ProjectWorkerSession";
 };
 
@@ -73,20 +65,13 @@ export class ProfileRegistry {
 
   async register(profile: Profile): Promise<void> {
     const decoded = decode(ProfileSchema, profile);
-    const value = record(decoded);
-    const profileId = requiredString(value["profileId"], "profile.profileId");
-    const revision = value["profileRevision"];
-    const declaredDigest = requiredString(value["profileDigest"], "profile.profileDigest");
     await verifyProfileDigest(decoded);
-    const key = profileKey(profileId, revision);
+    const key = profileKey(decoded.profileId, decoded.profileRevision);
     const previous = this.#profiles.get(key);
     if (previous !== undefined) {
-      const previousDigest = requiredString(
-        record(previous)["profileDigest"],
-        "profile.profileDigest",
-      );
-      if (previousDigest !== declaredDigest)
+      if (previous.profileDigest !== decoded.profileDigest) {
         throw new SessionConflictError("Profile revision is immutable");
+      }
       return;
     }
     this.#profiles.set(key, decoded);
@@ -94,9 +79,10 @@ export class ProfileRegistry {
 
   resolve(profileId: ProfileId, revision: ProfileRevision, digest: string): Profile {
     const profile = this.#profiles.get(profileKey(profileId, revision));
-    if (profile === undefined)
+    if (profile === undefined) {
       throw new InvalidRequestError("Requested Profile revision is not registered");
-    if (record(profile)["profileDigest"] !== digest) {
+    }
+    if (profile.profileDigest !== digest) {
       throw new InvalidRequestError(
         "Requested Profile digest does not match the registered revision",
       );
@@ -120,18 +106,17 @@ export class ProfileSession {
 
   constructor(profile: Profile, task: CloudTask, options: ProfileSessionOptions = {}) {
     this.profile = decode(ProfileSchema, profile);
-    const taskValue = record(task);
-    const profileValue = record(this.profile);
+    const decodedTask = decode(CloudTaskSchema, task);
     if (
-      taskValue["profileId"] !== profileValue["profileId"] ||
-      taskValue["profileRevision"] !== profileValue["profileRevision"] ||
-      taskValue["profileDigest"] !== profileValue["profileDigest"]
+      decodedTask.profileId !== this.profile.profileId ||
+      decodedTask.profileRevision !== this.profile.profileRevision ||
+      decodedTask.profileDigest !== this.profile.profileDigest
     ) {
       throw new SessionConflictError(
         "Task Profile identity does not match the registered Profile revision",
       );
     }
-    this.state = new SessionState(task, options.existing);
+    this.state = new SessionState(decodedTask, options.existing);
     this.className = profileClassFor(this.profile);
   }
 }
@@ -139,24 +124,27 @@ export class ProfileSession {
 export class ProjectOrchestratorSession extends ProfileSession {
   constructor(profile: Profile, task: CloudTask, options: ProfileSessionOptions = {}) {
     super(profile, task, options);
-    if (this.className !== "ProjectOrchestratorSession")
+    if (this.className !== "ProjectOrchestratorSession") {
       throw new InvalidRequestError("Profile is not an orchestrator Profile");
+    }
   }
 }
 
 export class ProjectWorkerSession extends ProfileSession {
   constructor(profile: Profile, task: CloudTask, options: ProfileSessionOptions = {}) {
     super(profile, task, options);
-    if (this.className !== "ProjectWorkerSession")
+    if (this.className !== "ProjectWorkerSession") {
       throw new InvalidRequestError("Profile is not a worker Profile");
+    }
   }
 }
 
 export class IndependentReviewerSession extends ProfileSession {
   constructor(profile: Profile, task: CloudTask, options: ProfileSessionOptions = {}) {
     super(profile, task, options);
-    if (this.className !== "IndependentReviewerSession")
+    if (this.className !== "IndependentReviewerSession") {
       throw new InvalidRequestError("Profile is not a reviewer Profile");
+    }
   }
 }
 

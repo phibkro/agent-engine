@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import type { Json } from "effect/Schema";
 import {
+  SchemaVersionSchema,
   CommitShaSchema,
   NonEmptyStringSchema,
   SessionCompletedResultSchema,
@@ -57,8 +58,9 @@ const terminalResultTag = (status: SessionLifecycle): SessionResult["_tag"] | un
   if (status === "completed") return "Completed";
   return undefined;
 };
-
 const SessionSnapshotBaseSchema = Schema.Struct({
+  _tag: Schema.Literal("SessionSnapshot"),
+  schemaVersion: SchemaVersionSchema,
   task: CloudTaskSchema,
   admission: SessionAdmissionSchema,
   status: SessionLifecycleSchema,
@@ -247,6 +249,8 @@ export class SessionState {
       return;
     }
     this.#snapshot = decode(SessionSnapshotSchema, {
+      _tag: "SessionSnapshot",
+      schemaVersion: "work-engine/v2",
       task: decoded,
       admission: admission(decoded),
       status: "admitted",

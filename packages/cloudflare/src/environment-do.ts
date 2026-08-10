@@ -105,20 +105,20 @@ export class EnvironmentDurableObject implements DurableObject {
   } {
     const sandbox = this.#env.SANDBOX;
     const backupBucket = this.#env.BACKUP_BUCKET;
-    const credentialFetcher = this.#env.CREDENTIAL_BROKER ?? {
-      fetch: (input: string, init?: RequestInit) => fetch(input, init),
-    };
+    if (sandbox === undefined || backupBucket === undefined) {
+      throw new InvalidRequestError("Environment runtime bindings are incomplete");
+    }
+    const credentialFetcher = this.#env.CREDENTIAL_BROKER;
     const credentialEndpoint = this.#env.CREDENTIAL_BROKER_URL;
     const credentialSecret = this.#env.CREDENTIAL_BROKER_SECRET;
     const publicOrigin = this.#env.ENVIRONMENT_PUBLIC_ORIGIN;
     if (
-      backupBucket === undefined ||
-      sandbox === undefined ||
+      credentialFetcher === undefined ||
       credentialEndpoint === undefined ||
       credentialSecret === undefined ||
       publicOrigin === undefined
     ) {
-      throw new Error("Environment runtime bindings are incomplete");
+      throw new InvalidRequestError("Environment runtime bindings are incomplete");
     }
     const credentials = new FetcherEnvironmentCredentialBroker(
       credentialFetcher,
@@ -300,6 +300,11 @@ export class EnvironmentDurableObject implements DurableObject {
         });
       }
       if (tag === "CheckpointEnvironment") {
+        if (this.#activeConnections > 0) {
+          throw new InvalidRequestError(
+            "Environment checkpoint requires all accepted WebSocket connections to close",
+          );
+        }
         const checkpointed = await coordinator.checkpoint(payload);
         await this.#schedule(checkpointed);
         return Response.json({
@@ -309,13 +314,21 @@ export class EnvironmentDurableObject implements DurableObject {
       }
       throw new InvalidRequestError("Unsupported Environment operation");
     } catch (cause) {
+      let rescheduleFailure: Error | undefined;
       try {
         const current = await this.#coordinator().coordinator.inspect();
         if (current !== undefined) await this.#schedule(current);
-      } catch {
-        // Preserve the original typed failure when persisted state cannot be read.
+      } catch (cleanupFailure) {
+        rescheduleFailure =
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new Error("Environment rescheduling failed");
       }
-      return jsonError(cause);
+      return jsonError(
+        rescheduleFailure === undefined
+          ? cause
+          : new AggregateError([cause, rescheduleFailure], "Environment failure cleanup failed"),
+      );
     }
   }
 

@@ -3,6 +3,12 @@ import * as Schema from "effect/Schema";
 import {
   NonEmptyStringSchema,
   ProjectIdSchema,
+  ProjectMemoryAcceptRequestSchema,
+  ProjectMemoryProposeRequestSchema,
+  ProjectMemoryProposalModel,
+  ProjectMemoryReadRequestSchema,
+  ProjectMemoryReadResponseSchema,
+  SchemaVersionSchema,
   SessionIdSchema,
   TimestampSchema,
 } from "@work-engine/protocol";
@@ -16,8 +22,6 @@ import {
   encode,
   newId,
   nowIso,
-  record,
-  requiredString,
   type MemoryRevision,
   type ProjectMemoryFact,
   type ProjectMemoryProposal,
@@ -33,6 +37,14 @@ import {
   MemoryUnauthorizedError,
   ProviderUnavailableError,
 } from "./errors.ts";
+const ProjectMemoryFailureSchema = Schema.Union([
+  Schema.TaggedStruct("InvalidRequest", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("MemoryRevisionUnavailable", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("MemoryRevisionMismatch", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("MemoryProposalNotFound", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("MemoryUnauthorized", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("ProviderUnavailable", { reason: NonEmptyStringSchema }),
+]);
 
 const MemoryRevisionRecordSchema = Schema.Struct({
   revision: MemoryRevisionSchema,
@@ -41,13 +53,13 @@ const MemoryRevisionRecordSchema = Schema.Struct({
 });
 
 const MemoryProposalRecordSchema = Schema.Struct({
-  ...ProjectMemoryProposalSchema.fields,
-  sessionId: SessionIdSchema,
-  createdAt: TimestampSchema,
+  ...ProjectMemoryProposalModel.select.fields,
 });
 type MemoryProposalRecord = typeof MemoryProposalRecordSchema.Type;
 
 export const ProjectMemorySnapshotSchema = Schema.Struct({
+  _tag: Schema.Literal("ProjectMemorySnapshot"),
+  schemaVersion: SchemaVersionSchema,
   projectId: ProjectIdSchema,
   currentRevision: MemoryRevisionSchema,
   revisions: Schema.Array(MemoryRevisionRecordSchema),
@@ -90,13 +102,14 @@ const clone = (snapshot: ProjectMemorySnapshot): ProjectMemorySnapshot =>
 
 const initialSnapshot = (projectId: string): ProjectMemorySnapshot =>
   decode(ProjectMemorySnapshotSchema, {
+    _tag: "ProjectMemorySnapshot",
+    schemaVersion: "work-engine/v2",
     projectId,
     currentRevision: 0,
     revisions: [{ revision: 0, facts: [], acceptedAt: nowIso() }],
     proposals: [],
   });
 
-const revisionValue = (revision: unknown): MemoryRevision => decode(MemoryRevisionSchema, revision);
 
 const makeFact = (claim: string, provenance: ProjectMemoryProvenance): ProjectMemoryFact =>
   decode(ProjectMemoryFactSchema, {
@@ -139,6 +152,7 @@ const makeRevision = (
     ...(previousRevision === undefined ? {} : { previousRevision }),
   });
 
+
 /** Single authority for accepted Project facts. It intentionally has no session identity in reads. */
 export class ProjectMemoryState {
   #snapshot: ProjectMemorySnapshot;
@@ -167,7 +181,7 @@ export class ProjectMemoryState {
   }
 
   readContext(atRevision: MemoryRevision, query = ""): readonly ProjectMemoryFact[] {
-    const requested = revisionValue(atRevision);
+    const requested = atRevision;
     const revision = this.#snapshot.revisions.find((entry) => entry.revision === requested);
     if (revision === undefined) throw new MemoryRevisionUnavailableError(this.projectId, requested);
     const normalizedQuery = query.trim().toLowerCase();
@@ -180,11 +194,11 @@ export class ProjectMemoryState {
     sessionId: string,
     expectedRevision: MemoryRevision,
     claim: string,
-    provenance: unknown,
+    provenance: ProjectMemoryProvenance,
   ): ProjectMemoryProposal {
     const decodedSessionId = decode(SessionIdSchema, sessionId);
     const decodedClaim = decode(NonEmptyStringSchema, claim);
-    const expected = revisionValue(expectedRevision);
+    const expected = expectedRevision;
     if (expected > this.#snapshot.currentRevision) {
       throw new MemoryRevisionUnavailableError(this.projectId, expected);
     }
@@ -197,7 +211,6 @@ export class ProjectMemoryState {
       provenance: decodedProvenance,
       proposedAt: nowIso(),
       sessionId: decodedSessionId,
-      createdAt: nowIso(),
     });
     const nextSnapshot = decode(ProjectMemorySnapshotSchema, {
       ...this.#snapshot,
@@ -213,7 +226,7 @@ export class ProjectMemoryState {
   }
 
   acceptMemory(proposalId: string, expectedRevision: MemoryRevision): ProjectMemoryRevision {
-    const expected = revisionValue(expectedRevision);
+    const expected = expectedRevision;
     const proposal = this.#snapshot.proposals.find((entry) => entry.proposalId === proposalId);
     if (proposal === undefined) throw new MemoryProposalNotFoundError(proposalId);
     if (expected !== this.#snapshot.currentRevision || proposal.expectedRevision !== expected) {
@@ -312,33 +325,38 @@ export class ProjectMemoryDurableObject implements DurableObject {
 
   async fetch(request: Request): Promise<Response> {
     try {
-      const projectId = request.headers.get("X-Project-Identity");
-      if (projectId === null || projectId.length === 0) throw new MemoryUnauthorizedError();
+      const projectIdHeader = request.headers.get("X-Project-Identity");
+      if (projectIdHeader === null) throw new MemoryUnauthorizedError();
+      const projectId = decode(ProjectIdSchema, projectIdHeader);
       const memory = await this.#load(projectId);
       const url = new URL(request.url);
-      const payload: unknown = request.method === "GET" ? undefined : await request.json();
-      const body = payload === undefined ? {} : record(payload);
       if (url.pathname.endsWith("/read")) {
-        const facts = memory.readContext(
-          revisionValue(body["atRevision"]),
-          typeof body["query"] === "string" ? body["query"] : "",
-        );
-        return Response.json({ _tag: "ProjectMemoryRead", facts });
+        const raw: unknown = await request.json();
+        const input = decode(ProjectMemoryReadRequestSchema, raw);
+        const response = decode(ProjectMemoryReadResponseSchema, {
+          _tag: "ProjectMemoryRead",
+          facts: memory.readContext(input.atRevision, input.query),
+        });
+        return Response.json(response);
       }
+      const raw: unknown = await request.json();
       if (url.pathname.endsWith("/propose")) {
-        const sessionId = request.headers.get("X-Cloud-Task-Session");
-        if (sessionId === null || sessionId.length === 0) throw new MemoryUnauthorizedError();
+        const input = decode(ProjectMemoryProposeRequestSchema, raw);
+        const sessionHeader = request.headers.get("X-Cloud-Task-Session");
+        if (sessionHeader === null) throw new MemoryUnauthorizedError();
+        const sessionId = decode(SessionIdSchema, sessionHeader);
         const nextMemory = new ProjectMemoryState(projectId, memory.snapshot);
         const proposal = nextMemory.proposeMemory(
           sessionId,
-          revisionValue(body["expectedRevision"]),
-          requiredString(body["claim"], "claim"),
-          body["provenance"],
+          input.expectedRevision,
+          input.claim,
+          input.provenance,
         );
         await this.#save(nextMemory);
         return Response.json(proposal);
       }
       if (url.pathname.endsWith("/accept")) {
+        const input = decode(ProjectMemoryAcceptRequestSchema, raw);
         const presented = request.headers.get("X-Project-Memory-Coordinator");
         if (
           this.#coordinatorSecret === undefined ||
@@ -348,17 +366,11 @@ export class ProjectMemoryDurableObject implements DurableObject {
           throw new MemoryUnauthorizedError();
         }
         const nextMemory = new ProjectMemoryState(projectId, memory.snapshot);
-        const revision = nextMemory.acceptMemory(
-          requiredString(body["proposalId"], "proposalId"),
-          revisionValue(body["expectedRevision"]),
-        );
+        const revision = nextMemory.acceptMemory(input.proposalId, input.expectedRevision);
         await this.#save(nextMemory);
         return Response.json(revision);
       }
-      return Response.json(
-        { _tag: "InvalidRequest", reason: "Unknown Project Memory operation" },
-        { status: 400 },
-      );
+      throw new InvalidRequestError("Unknown Project Memory operation");
     } catch (cause) {
       return projectMemoryErrorResponse(cause);
     }
@@ -371,11 +383,25 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
       ? 409
       : cause instanceof MemoryUnauthorizedError
         ? 403
-        : 400;
-  const body =
-    cause instanceof CloudRuntimeError
-      ? { _tag: cause._tag, reason: cause.message, details: cause.details }
-      : { _tag: "UnknownError", reason: String(cause) };
+        : cause instanceof ProviderUnavailableError
+          ? 503
+          : 400;
+  const tag =
+    cause instanceof MemoryRevisionMismatchError
+      ? "MemoryRevisionMismatch"
+      : cause instanceof MemoryRevisionUnavailableError
+        ? "MemoryRevisionUnavailable"
+        : cause instanceof MemoryProposalNotFoundError
+          ? "MemoryProposalNotFound"
+          : cause instanceof MemoryUnauthorizedError
+            ? "MemoryUnauthorized"
+            : cause instanceof ProviderUnavailableError
+              ? "ProviderUnavailable"
+              : "InvalidRequest";
+  const body = decode(ProjectMemoryFailureSchema, {
+    _tag: tag,
+    reason: "Project Memory request failed",
+  });
   return Response.json(body, { status });
 };
 
@@ -396,12 +422,12 @@ export class SessionProjectMemoryBinding {
   proposeMemory(
     expectedRevision: MemoryRevision,
     claim: string,
-    provenance: unknown,
+    provenance: ProjectMemoryProvenance,
   ): ProjectMemoryProposal {
     return this.#memory.proposeMemory(this.#sessionId, expectedRevision, claim, provenance);
   }
 
-  acceptMemory(): never {
+  acceptMemory(): ProjectMemoryRevision {
     throw new MemoryUnauthorizedError();
   }
 }
@@ -422,7 +448,7 @@ export class CoordinatorProjectMemoryBinding {
 /** Production adapter; missing Durable Object binding is an explicit typed failure. */
 export class CloudflareProjectMemory {
   #namespace: DurableObjectNamespace | undefined;
-  #projectId: string;
+  #projectId: typeof ProjectIdSchema.Type;
   #sessionId: string | undefined;
   #coordinatorSecret: string | undefined;
 
@@ -435,12 +461,17 @@ export class CloudflareProjectMemory {
     } = {},
   ) {
     this.#namespace = namespace;
-    this.#projectId = projectId;
-    this.#sessionId = options.sessionId;
+    this.#projectId = decode(ProjectIdSchema, projectId);
+    this.#sessionId =
+      options.sessionId === undefined ? undefined : decode(SessionIdSchema, options.sessionId);
     this.#coordinatorSecret = options.coordinatorSecret;
   }
 
-  async #call(path: string, body: Record<string, unknown>): Promise<unknown> {
+  async #call<S extends Schema.ConstraintDecoder<unknown>>(
+    path: string,
+    body: object,
+    responseSchema: S,
+  ): Promise<S["Type"]> {
     if (this.#namespace === undefined)
       throw new ProviderUnavailableError("Project Memory Durable Object");
     const stub = this.#namespace.getByName(this.#projectId);
@@ -459,44 +490,53 @@ export class CloudflareProjectMemory {
     });
     const value: unknown = await response.json();
     if (!response.ok) {
-      const details = record(value);
-      const tag = details["_tag"];
-      const reason = String(details["reason"] ?? response.status);
-      const errorDetails =
-        typeof details["details"] === "object" && details["details"] !== null
-          ? record(details["details"])
-          : {};
-      if (
-        tag === "MemoryRevisionMismatch" ||
-        tag === "MemoryRevisionUnavailable" ||
-        tag === "MemoryProposalNotFound" ||
-        tag === "MemoryUnauthorized"
-      ) {
-        throw new CloudRuntimeError(tag, reason, errorDetails);
+      let failure: typeof ProjectMemoryFailureSchema.Type;
+      try {
+        failure = decode(ProjectMemoryFailureSchema, value);
+      } catch {
+        throw new ProviderUnavailableError(
+          "Project Memory Durable Object",
+          "invalid failure response",
+        );
       }
-      throw new ProviderUnavailableError("Project Memory Durable Object", reason);
+      if (failure._tag === "ProviderUnavailable") {
+        throw new ProviderUnavailableError("Project Memory Durable Object", failure.reason);
+      }
+      if (failure._tag === "InvalidRequest") throw new InvalidRequestError(failure.reason);
+      throw new CloudRuntimeError(failure._tag, failure.reason);
     }
-    return value;
+    return decode(responseSchema, value);
   }
 
-  readContext(atRevision: MemoryRevision, query = ""): Promise<unknown> {
-    return this.#call("/read", { atRevision, query });
+  async readContext(atRevision: MemoryRevision, query = ""): Promise<readonly ProjectMemoryFact[]> {
+    const request = decode(ProjectMemoryReadRequestSchema, { atRevision, query });
+    const response = await this.#call("/read", request, ProjectMemoryReadResponseSchema);
+    return response.facts;
   }
 
-  proposeMemory(
+  async proposeMemory(
     expectedRevision: MemoryRevision,
     claim: string,
-    provenance: unknown,
-  ): Promise<unknown> {
+    provenance: ProjectMemoryProvenance,
+  ): Promise<ProjectMemoryProposal> {
     if (this.#sessionId === undefined || this.#coordinatorSecret !== undefined) {
       throw new MemoryUnauthorizedError();
     }
-    return this.#call("/propose", { expectedRevision, claim, provenance });
+    const request = decode(ProjectMemoryProposeRequestSchema, {
+      expectedRevision,
+      claim,
+      provenance,
+    });
+    return this.#call("/propose", request, ProjectMemoryProposalSchema);
   }
 
-  acceptMemory(proposalId: string, expectedRevision: MemoryRevision): Promise<unknown> {
+  async acceptMemory(
+    proposalId: string,
+    expectedRevision: MemoryRevision,
+  ): Promise<ProjectMemoryRevision> {
     if (this.#coordinatorSecret === undefined) throw new MemoryUnauthorizedError();
-    return this.#call("/accept", { proposalId, expectedRevision });
+    const request = decode(ProjectMemoryAcceptRequestSchema, { proposalId, expectedRevision });
+    return this.#call("/accept", request, ProjectMemoryRevisionSchema);
   }
 }
 

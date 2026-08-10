@@ -1,12 +1,10 @@
 import {
   DependencyCacheManifestSchema,
   decode,
-  record,
-  requiredString,
   sha256,
   type DependencyCacheManifest,
 } from "./contract.ts";
-import { CacheDigestMismatchError, CacheMissError, ProviderUnavailableError } from "./errors.ts";
+import { CacheDigestMismatchError, ProviderUnavailableError } from "./errors.ts";
 
 export interface CacheExpectation {
   readonly runtimeDigest: string;
@@ -30,28 +28,25 @@ export interface CacheMiss {
 
 export type CacheRestore = CacheHit | CacheMiss;
 
-const field = (manifest: DependencyCacheManifest, key: string): unknown => record(manifest)[key];
-
 const assertMatches = (
   manifest: DependencyCacheManifest,
   expectation: CacheExpectation,
   observedPayloadDigest: string,
 ): void => {
-  const pairs: readonly [string, unknown, string][] = [
-    ["runtimeDigest", field(manifest, "runtimeDigest"), expectation.runtimeDigest],
-    ["platformDigest", field(manifest, "platformDigest"), expectation.platformDigest],
-    ["imageDigest", field(manifest, "imageDigest"), expectation.imageDigest],
-    ["repositoryDigest", field(manifest, "repositoryDigest"), expectation.repositoryDigest],
-    ["lockfileDigest", field(manifest, "lockfileDigest"), expectation.lockfileDigest],
-    ["payloadDigest", field(manifest, "payloadDigest"), observedPayloadDigest],
+  const pairs: readonly [string, string, string][] = [
+    ["runtimeDigest", manifest.runtimeDigest, expectation.runtimeDigest],
+    ["platformDigest", manifest.platformDigest, expectation.platformDigest],
+    ["imageDigest", manifest.imageDigest, expectation.imageDigest],
+    ["repositoryDigest", manifest.repositoryDigest, expectation.repositoryDigest],
+    ["lockfileDigest", manifest.lockfileDigest, expectation.lockfileDigest],
+    ["payloadDigest", manifest.payloadDigest, observedPayloadDigest],
   ];
   for (const [name, observed, expected] of pairs) {
     if (observed !== expected) {
-      throw new CacheDigestMismatchError(`${name}:${expected}`, `${name}:${String(observed)}`);
+      throw new CacheDigestMismatchError(`${name}:${expected}`, `${name}:${observed}`);
     }
   }
 };
-
 export const verifyDependencyCache = async (
   manifest: DependencyCacheManifest,
   expectation: CacheExpectation,
@@ -81,35 +76,24 @@ export class R2DependencyCache {
   ): Promise<CacheRestore> {
     if (this.#bucket === undefined) throw new ProviderUnavailableError("DependencyCache R2");
     const decoded = decode(DependencyCacheManifestSchema, manifest);
-    const key = requiredString(record(decoded)["cacheKey"], "manifest.cacheKey");
-    const object = await this.#bucket.get(key);
-    if (object === null) return { kind: "miss", reason: `No cache payload at ${key}` };
+    const object = await this.#bucket.get(decoded.cacheKey);
+    if (object === null) return { kind: "miss", reason: `No cache payload at ${decoded.cacheKey}` };
     const payload = new Uint8Array(await object.arrayBuffer());
-    try {
-      return await verifyDependencyCache(decoded, expectation, payload);
-    } catch (cause) {
-      if (cause instanceof CacheDigestMismatchError) throw cause;
-      throw new CacheDigestMismatchError(
-        String(record(decoded)["payloadDigest"]),
-        await sha256(payload),
-      );
-    }
+    return verifyDependencyCache(decoded, expectation, payload);
   }
 
   async write(manifest: DependencyCacheManifest, payload: Uint8Array): Promise<void> {
     if (this.#bucket === undefined) throw new ProviderUnavailableError("DependencyCache R2");
     const decoded = decode(DependencyCacheManifestSchema, manifest);
-    const values = record(decoded);
     const expectation: CacheExpectation = {
-      runtimeDigest: requiredString(values["runtimeDigest"], "manifest.runtimeDigest"),
-      platformDigest: requiredString(values["platformDigest"], "manifest.platformDigest"),
-      imageDigest: requiredString(values["imageDigest"], "manifest.imageDigest"),
-      repositoryDigest: requiredString(values["repositoryDigest"], "manifest.repositoryDigest"),
-      lockfileDigest: requiredString(values["lockfileDigest"], "manifest.lockfileDigest"),
+      runtimeDigest: decoded.runtimeDigest,
+      platformDigest: decoded.platformDigest,
+      imageDigest: decoded.imageDigest,
+      repositoryDigest: decoded.repositoryDigest,
+      lockfileDigest: decoded.lockfileDigest,
     };
     await verifyDependencyCache(decoded, expectation, payload);
-    const key = requiredString(values["cacheKey"], "manifest.cacheKey");
-    await this.#bucket.put(key, payload, {
+    await this.#bucket.put(decoded.cacheKey, payload, {
       httpMetadata: { contentType: "application/octet-stream" },
     });
   }
@@ -144,8 +128,7 @@ export const restoreOrSetup = async (
     const payload = await setup();
     return { source: "uncached", payload, reason: restored.reason };
   } catch (cause) {
-    if (!(cause instanceof CacheDigestMismatchError) && !(cause instanceof CacheMissError))
-      throw cause;
+    if (!(cause instanceof CacheDigestMismatchError)) throw cause;
     const payload = await setup();
     return { source: "uncached", payload, reason: cause.message };
   }
