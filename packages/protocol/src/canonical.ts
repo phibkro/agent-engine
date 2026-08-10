@@ -14,7 +14,7 @@ export const canonicalize = (value: CanonicalJsonValue): string =>
     filterUndefined: true,
     undefinedInArrayToNull: true,
   });
-export const canonicalJson = canonicalize;
+
 export const canonicalJsonBytes = (value: CanonicalJsonValue): Uint8Array =>
   new TextEncoder().encode(canonicalize(value));
 
@@ -27,10 +27,9 @@ export const sha256 = async (bytes: Uint8Array): Promise<Sha256Digest> => {
   return Sha256DigestSchema.make(`sha256:${hex(new Uint8Array(digest))}`);
 };
 
-export const sha256Bytes = sha256;
 export const digestCanonical = async (value: CanonicalJsonValue): Promise<Sha256Digest> =>
   sha256(canonicalJsonBytes(value));
-export const canonicalDigest = digestCanonical;
+
 const utf8Encoder = new TextEncoder();
 export const compareUtf8PathBytes = (left: string, right: string): number => {
   const leftBytes = utf8Encoder.encode(left);
@@ -54,6 +53,3 @@ export const digestManifest = async (
     readonly bytes: number;
   }[],
 ): Promise<Sha256Digest> => digestCanonical(sortManifestEntries(entries));
-export const canonicalEncode = canonicalize;
-export const sha256Digest = sha256;
-export const canonicalJsonDigest = digestCanonical;

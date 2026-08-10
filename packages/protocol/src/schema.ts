@@ -1,770 +1,623 @@
 import { Schema } from "effect";
 import {
-  ActorIdSchema,
-  AgentProfileIdSchema,
-  AttemptNumberSchema,
-  CommandIdSchema,
-  ContentRevisionSchema,
-  EffectIdSchema,
-  EventRevisionSchema,
-  EvidenceIdSchema,
-  GateIdSchema,
+  CommitShaSchema,
   GrantIdSchema,
-  HandoffIdSchema,
-  MergeIdSchema,
-  PolicyIdSchema,
-  ProposalIdSchema,
+  MemoryProposalIdSchema,
+  MemoryRevisionSchema,
+  MessageIdSchema,
+  NonEmptyStringSchema,
+  ProfileIdSchema,
+  ProfileRevisionSchema,
   ProjectIdSchema,
-  ResourceIdSchema,
   SchemaVersionSchema,
   SessionIdSchema,
   Sha256DigestSchema,
+  TaskIdSchema,
   TimestampSchema,
-  WorkIdSchema,
-  WorkProcessIdSchema,
-  WorkspaceViewIdSchema,
-  type ActorId,
-  type AgentProfileId,
-  type AttemptNumber,
-  type CommandId,
-  type ContentRevision,
-  type EffectId,
-  type EventRevision,
-  type EvidenceId,
-  type GateId,
+  type CommitSha,
   type GrantId,
-  type HandoffId,
-  type MergeId,
-  type PolicyId,
-  type ProposalId,
+  type MemoryProposalId,
+  type MemoryRevision,
+  type MessageId,
+  type ProfileId,
+  type ProfileRevision,
   type ProjectId,
-  type ResourceId,
   type SessionId,
   type Sha256Digest,
+  type TaskId,
   type Timestamp,
-  type WorkId,
-  type WorkProcessId,
-  type WorkspaceViewId,
 } from "./identifiers.ts";
-
-export {
-  ActorIdSchema,
-  AgentProfileIdSchema,
-  AttemptNumberSchema,
-  CommandIdSchema,
-  ContentRevisionSchema,
-  EffectIdSchema,
-  EventRevisionSchema,
-  EvidenceIdSchema,
-  GateIdSchema,
-  GrantIdSchema,
-  HandoffIdSchema,
-  MergeIdSchema,
-  PolicyIdSchema,
-  ProposalIdSchema,
-  ProjectIdSchema,
-  ResourceIdSchema,
-  SchemaVersionSchema,
-  SessionIdSchema,
-  Sha256DigestSchema,
-  TimestampSchema,
-  WorkIdSchema,
-  WorkProcessIdSchema,
-  WorkspaceViewIdSchema,
-};
-
-export type {
-  ActorId,
-  AgentProfileId,
-  AttemptNumber,
-  CommandId,
-  ContentRevision,
-  EffectId,
-  EventRevision,
-  EvidenceId,
-  GateId,
-  GrantId,
-  HandoffId,
-  MergeId,
-  PolicyId,
-  ProposalId,
-  ProjectId,
-  ResourceId,
-  SessionId,
-  Sha256Digest,
-  Timestamp,
-  WorkId,
-  WorkProcessId,
-  WorkspaceViewId,
-};
 
 const optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(schema);
 const JsonRecordSchema = Schema.Record(Schema.String, Schema.Json);
-const NonEmptyStringSchema = Schema.NonEmptyString;
+const StringArraySchema = Schema.Array(NonEmptyStringSchema);
 
-export const ActorKindSchema = Schema.Literals([
-  "operator",
-  "project_manager",
-  "worker_session",
-  "session_workflow",
-  "session_host",
-  "system",
-] as const);
-export type ActorKind = typeof ActorKindSchema.Type;
+export {
+  CommitShaSchema,
+  GrantIdSchema,
+  MemoryProposalIdSchema,
+  MemoryRevisionSchema,
+  MessageIdSchema,
+  ProfileIdSchema,
+  ProfileRevisionSchema,
+  ProjectIdSchema,
+  SchemaVersionSchema,
+  SessionIdSchema,
+  Sha256DigestSchema,
+  TaskIdSchema,
+  TimestampSchema,
+};
 
-export const AuthenticatedActorSchema = Schema.TaggedStruct("AuthenticatedActor", {
-  actorId: ActorIdSchema,
-  sessionId: optional(SessionIdSchema),
-  kind: ActorKindSchema,
-  presentedGrants: Schema.Array(GrantIdSchema),
-});
-export type AuthenticatedActor = typeof AuthenticatedActorSchema.Type;
+export type {
+  CommitSha,
+  GrantId,
+  MemoryProposalId,
+  MemoryRevision,
+  MessageId,
+  ProfileId,
+  ProfileRevision,
+  ProjectId,
+  SessionId,
+  Sha256Digest,
+  TaskId,
+  Timestamp,
+};
 
-export const CapabilitySchema = Schema.Literals([
-  "project.create",
-  "project.read",
-  "work.submit",
-  "work.read",
-  "manager.open",
-  "worker.start",
-  "session.cancel",
-  "session.cancel.execute",
-  "session.started",
-  "session.terminal",
-  "handoff.record",
-  "workspace.lease",
-  "workspace.heartbeat",
-  "workspace.read",
-  "workspace.write",
-  "candidate.finalize",
-  "artifact.put",
-  "evidence.record",
-  "evidence.read",
-  "proposal.submit",
-  "proposal.read",
-  "proposal.approve",
-  "proposal.reject",
-  "proposal.merge",
-] as const);
-export type Capability = typeof CapabilitySchema.Type;
-
-export const GrantScopeSchema = Schema.Struct({
-  projectId: ProjectIdSchema,
-  workId: optional(WorkIdSchema),
-  sessionId: optional(SessionIdSchema),
-  proposalId: optional(ProposalIdSchema),
-});
-export type GrantScope = typeof GrantScopeSchema.Type;
-
-export const GrantSchema = Schema.TaggedStruct("Grant", {
-  grantId: GrantIdSchema,
-  subjectActorId: ActorIdSchema,
-  capability: CapabilitySchema,
-  scope: GrantScopeSchema,
-  validFrom: TimestampSchema,
-  validUntil: TimestampSchema,
-  grantingAuthority: ActorIdSchema,
-});
-export type Grant = typeof GrantSchema.Type;
-
-export const GateKeySchema = Schema.Literals([
-  "gat_session_completed",
-  "gat_candidate_present",
-  "gat_scope_valid",
-  "gat_check_passed",
-  "gat_human_approved",
-] as const);
-export type GateKey = typeof GateKeySchema.Type;
-
-export const PolicySchema = Schema.TaggedStruct("Policy", {
-  policyId: PolicyIdSchema,
-  revision: EventRevisionSchema,
-  requiredGates: Schema.Array(GateKeySchema),
-  mergeCapability: Schema.Literal("proposal.merge"),
-  maxAttempts: Schema.Natural,
-});
-export type Policy = typeof PolicySchema.Type;
-
-export const WorkKindSchema = NonEmptyStringSchema;
-export type WorkKind = typeof WorkKindSchema.Type;
-
-export const WorkSchema = Schema.TaggedStruct("Work", {
-  workId: WorkIdSchema,
-  projectId: ProjectIdSchema,
-  workProcessId: WorkProcessIdSchema,
-  objective: NonEmptyStringSchema,
-  kind: WorkKindSchema,
-  writableScope: Schema.Array(NonEmptyStringSchema),
-  requiredCheck: NonEmptyStringSchema,
-  title: optional(NonEmptyStringSchema),
-  lifecycle: Schema.Literals(["submitted", "active", "completed", "rejected"] as const),
-});
-export type Work = typeof WorkSchema.Type;
-
-export const AgentProfileSchema = Schema.TaggedStruct("AgentProfile", {
-  profileId: AgentProfileIdSchema,
-  role: NonEmptyStringSchema,
-  harnessReference: NonEmptyStringSchema,
-  instructionReferences: Schema.Array(NonEmptyStringSchema),
-  skillReferences: Schema.Array(NonEmptyStringSchema),
-  modelPolicy: NonEmptyStringSchema,
-});
-export type AgentProfile = typeof AgentProfileSchema.Type;
-
-export const SessionStatusSchema = Schema.Literals([
-  "requested",
-  "started",
-  "cancellation_requested",
-  "completed",
-  "failed",
-  "interrupted",
-] as const);
-export type SessionStatus = typeof SessionStatusSchema.Type;
-
-export const SessionSchema = Schema.TaggedStruct("Session", {
-  sessionId: SessionIdSchema,
-  projectId: ProjectIdSchema,
-  workId: WorkIdSchema,
-  profileId: AgentProfileIdSchema,
-  attempt: AttemptNumberSchema,
-  predecessorSessionId: optional(SessionIdSchema),
-  contextReference: NonEmptyStringSchema,
-  deadline: TimestampSchema,
-  outputLimit: Schema.Natural,
-  toolBudget: Schema.Natural,
-  status: SessionStatusSchema,
-  workspaceViewId: optional(WorkspaceViewIdSchema),
-  terminalReason: optional(NonEmptyStringSchema),
-  startedAt: optional(TimestampSchema),
-  terminalAt: optional(TimestampSchema),
-});
-export type Session = typeof SessionSchema.Type;
-
-export const WorkspaceViewSchema = Schema.TaggedStruct("WorkspaceView", {
-  workspaceViewId: WorkspaceViewIdSchema,
-  projectId: ProjectIdSchema,
-  basisContentRevision: ContentRevisionSchema,
-  manifest: Schema.Struct({
-    digest: Sha256DigestSchema,
-    entries: Schema.Array(
-      Schema.Struct({
-        path: NonEmptyStringSchema,
-        digest: Sha256DigestSchema,
-        bytes: Schema.Natural,
-      }),
-    ),
-  }),
-  writableScope: Schema.Array(NonEmptyStringSchema),
-  lease: optional(
-    Schema.Struct({
-      resourceId: ResourceIdSchema,
-      sessionId: SessionIdSchema,
-      mode: Schema.Literals(["read", "write"] as const),
-      acquiredAt: TimestampSchema,
-      expiresAt: TimestampSchema,
-    }),
-  ),
-});
-export type WorkspaceView = typeof WorkspaceViewSchema.Type;
-
-export const WorkspaceLeaseSchema = Schema.TaggedStruct("WorkspaceLease", {
-  resourceId: ResourceIdSchema,
-  sessionId: SessionIdSchema,
-  mode: Schema.Literals(["read", "write"] as const),
-  acquiredAt: TimestampSchema,
-  expiresAt: TimestampSchema,
-  effectId: optional(EffectIdSchema),
-});
-export type WorkspaceLease = typeof WorkspaceLeaseSchema.Type;
-export const ResourceClaimSchema = WorkspaceLeaseSchema;
-export type ResourceClaim = WorkspaceLease;
-
-export const ContentManifestEntrySchema = Schema.Struct({
-  path: NonEmptyStringSchema,
+export const ProfileReferenceSchema = Schema.Struct({
+  name: NonEmptyStringSchema,
   digest: Sha256DigestSchema,
-  bytes: Schema.Natural,
 });
-export type ContentManifestEntry = typeof ContentManifestEntrySchema.Type;
+export type ProfileReference = typeof ProfileReferenceSchema.Type;
 
-export const ContentManifestSchema = Schema.TaggedStruct("ContentManifest", {
-  digest: Sha256DigestSchema,
-  entries: Schema.Array(ContentManifestEntrySchema),
-});
-export type ContentManifest = typeof ContentManifestSchema.Type;
-
-export const ArtifactReceiptSchema = Schema.TaggedStruct("ArtifactReceipt", {
-  digest: Sha256DigestSchema,
-  bytes: Schema.Natural,
-  mediaType: NonEmptyStringSchema,
-});
-export type ArtifactReceipt = typeof ArtifactReceiptSchema.Type;
-
-export const WorkspaceReadySchema = Schema.TaggedStruct("WorkspaceReady", {
-  instanceId: NonEmptyStringSchema,
-  containerGeneration: NonEmptyStringSchema,
-  imageDigest: Sha256DigestSchema,
-  readyAt: TimestampSchema,
-});
-export type WorkspaceReady = typeof WorkspaceReadySchema.Type;
-
-export const SessionStartSpecSchema = Schema.TaggedStruct("SessionStartSpec", {
-  sessionId: SessionIdSchema,
-  effectId: EffectIdSchema,
-  projectId: ProjectIdSchema,
-  workId: WorkIdSchema,
-  profileId: AgentProfileIdSchema,
-  attempt: AttemptNumberSchema,
-  predecessorSessionId: optional(SessionIdSchema),
-  deadline: TimestampSchema,
-  outputLimit: Schema.Natural,
-  toolBudget: Schema.Natural,
-  workspaceLease: WorkspaceLeaseSchema,
-});
-export type SessionStartSpec = typeof SessionStartSpecSchema.Type;
-
-export const SessionHostReceiptSchema = Schema.TaggedStruct("SessionHostReceipt", {
-  sessionId: SessionIdSchema,
-  effectId: EffectIdSchema,
-  acceptedAt: TimestampSchema,
-  processReference: optional(NonEmptyStringSchema),
-});
-export type SessionHostReceipt = typeof SessionHostReceiptSchema.Type;
-
-export const StartSessionEffectSchema = Schema.TaggedStruct("StartSessionEffect", {
-  effectId: EffectIdSchema,
-  sessionId: SessionIdSchema,
-  attempt: AttemptNumberSchema,
-  spec: SessionStartSpecSchema,
-});
-export const CancelSessionEffectSchema = Schema.TaggedStruct("CancelSessionEffect", {
-  effectId: EffectIdSchema,
-  sessionId: SessionIdSchema,
-  reason: NonEmptyStringSchema,
-});
-export const EffectRequestSchema = Schema.Union([
-  StartSessionEffectSchema,
-  CancelSessionEffectSchema,
-]);
-export type StartSessionEffect = typeof StartSessionEffectSchema.Type;
-export type CancelSessionEffect = typeof CancelSessionEffectSchema.Type;
-export type EffectRequest = typeof EffectRequestSchema.Type;
-
-export const EvidenceKindSchema = Schema.Literals([
-  "session_terminal",
-  "candidate_manifest",
-  "scope_check",
-  "machine_check",
-  "human_approval",
-  "usage",
-  "artifact",
+export const ProfileRoleSchema = Schema.Literals([
+  "orchestrator",
+  "worker",
+  "reviewer",
 ] as const);
-export type EvidenceKind = typeof EvidenceKindSchema.Type;
+export type ProfileRole = typeof ProfileRoleSchema.Type;
 
-export const EvidenceRoleSchema = Schema.Literals([
-  "session_completion",
-  "candidate_present",
-  "scope_valid",
-  "check_passed",
-  "human_approval",
-  "supporting",
-] as const);
-export type EvidenceRole = typeof EvidenceRoleSchema.Type;
+export const ProfileSchema = Schema.TaggedStruct("Profile", {
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+  profileDigest: Sha256DigestSchema,
+  role: ProfileRoleSchema,
+  roleInstructions: NonEmptyStringSchema,
+  modelPolicy: JsonRecordSchema,
+  capabilities: StringArraySchema,
+  skillRefs: Schema.Array(ProfileReferenceSchema),
+  hookRefs: Schema.Array(ProfileReferenceSchema),
+  sandboxPolicy: JsonRecordSchema,
+  memoryCapabilities: StringArraySchema,
+  repositoryCapabilities: StringArraySchema,
+  executionBudget: JsonRecordSchema,
+  evidenceBudget: JsonRecordSchema,
+});
+export type Profile = typeof ProfileSchema.Type;
 
-export const EvidenceCheckSchema = Schema.TaggedStruct("CheckEvidence", {
+export const PathPatternSchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\u0000]+$/)),
+);
+export type PathPattern = typeof PathPatternSchema.Type;
+
+export const RepositoryIdentitySchema = Schema.Struct({
+  owner: NonEmptyStringSchema,
+  name: NonEmptyStringSchema,
+});
+export type RepositoryIdentity = typeof RepositoryIdentitySchema.Type;
+
+export const CommitMetadataSchema = Schema.Struct({
+  sha: CommitShaSchema,
+  message: NonEmptyStringSchema,
+  author: optional(NonEmptyStringSchema),
+  authoredAt: optional(TimestampSchema),
+});
+export type CommitMetadata = typeof CommitMetadataSchema.Type;
+
+export const CommandObservationSchema = Schema.Struct({
   command: NonEmptyStringSchema,
-  exitCode: Schema.Int,
-  stdoutDigest: Sha256DigestSchema,
-  stderrDigest: Sha256DigestSchema,
-  candidateDigest: Sha256DigestSchema,
-  containerImageDigest: Sha256DigestSchema,
-  toolVersions: Schema.Record(Schema.String, NonEmptyStringSchema),
+  exitStatus: Schema.Int,
+  outputDigest: optional(Sha256DigestSchema),
+  outputReference: optional(NonEmptyStringSchema),
+  startedAt: optional(TimestampSchema),
+  completedAt: optional(TimestampSchema),
 });
-export type EvidenceCheck = typeof EvidenceCheckSchema.Type;
+export type CommandObservation = typeof CommandObservationSchema.Type;
 
-export const EvidenceScopeSchema = Schema.TaggedStruct("ScopeEvidence", {
-  changedPaths: Schema.Array(NonEmptyStringSchema),
-  writableScope: Schema.Array(NonEmptyStringSchema),
+export const ArtifactDigestSchema = Schema.Struct({
+  name: NonEmptyStringSchema,
+  digest: Sha256DigestSchema,
 });
-export type EvidenceScope = typeof EvidenceScopeSchema.Type;
+export type ArtifactDigest = typeof ArtifactDigestSchema.Type;
 
-export const EvidenceSubjectSchema = Schema.TaggedStruct("EvidenceSubject", {
-  subjectType: Schema.Literals(["work", "session", "proposal", "workspace"] as const),
-  subjectId: NonEmptyStringSchema,
-});
-export type EvidenceSubject = typeof EvidenceSubjectSchema.Type;
-
-export const EvidenceSchema = Schema.TaggedStruct("Evidence", {
-  evidenceId: EvidenceIdSchema,
+export const CloudTaskSchema = Schema.TaggedStruct("CloudTask", {
+  taskId: TaskIdSchema,
+  sessionId: SessionIdSchema,
   projectId: ProjectIdSchema,
-  kind: EvidenceKindSchema,
-  role: EvidenceRoleSchema,
-  subject: EvidenceSubjectSchema,
-  producerSessionId: optional(SessionIdSchema),
-  producerActorId: optional(ActorIdSchema),
-  observedAt: TimestampSchema,
-  payloadDigest: Sha256DigestSchema,
-  limitations: Schema.Array(NonEmptyStringSchema),
-  /** Required by ApproveProposal for immutable approval provenance. */
-  proposalSubmissionEventRevision: optional(EventRevisionSchema),
-  candidateDigest: optional(Sha256DigestSchema),
-  check: optional(EvidenceCheckSchema),
-  scope: optional(EvidenceScopeSchema),
-  terminalStatus: optional(Schema.Literals(["completed", "failed", "interrupted"] as const)),
-});
-export type Evidence = typeof EvidenceSchema.Type;
-
-export const HandoffSchema = Schema.TaggedStruct("Handoff", {
-  handoffId: HandoffIdSchema,
-  projectId: ProjectIdSchema,
-  producerSessionId: SessionIdSchema,
-  intendedConsumer: NonEmptyStringSchema,
-  basisEventRevision: EventRevisionSchema,
-  basisContentRevision: ContentRevisionSchema,
-  payloadDigest: Sha256DigestSchema,
-  provenance: Schema.Array(EvidenceIdSchema),
-});
-export type Handoff = typeof HandoffSchema.Type;
-
-export const ProposalStatusSchema = Schema.Literals([
-  "submitted",
-  "approved",
-  "rejected",
-  "merged",
-] as const);
-export type ProposalStatus = typeof ProposalStatusSchema.Type;
-
-export const ProposalSchema = Schema.TaggedStruct("Proposal", {
-  proposalId: ProposalIdSchema,
-  projectId: ProjectIdSchema,
-  proposerSessionId: SessionIdSchema,
-  submissionEventRevision: EventRevisionSchema,
-  basisContentRevision: ContentRevisionSchema,
-  candidate: ContentManifestSchema,
-  evidenceIds: Schema.Array(EvidenceIdSchema),
-  status: ProposalStatusSchema,
-  rejectionReason: optional(NonEmptyStringSchema),
-});
-export type Proposal = typeof ProposalSchema.Type;
-
-export const MergeReceiptSchema = Schema.TaggedStruct("MergeReceipt", {
-  mergeId: MergeIdSchema,
-  proposalId: ProposalIdSchema,
-  actorId: ActorIdSchema,
-  grantId: GrantIdSchema,
-  policyId: PolicyIdSchema,
-  policyRevision: EventRevisionSchema,
-  gateKeys: Schema.Array(GateKeySchema),
-  evidenceIds: Schema.Array(EvidenceIdSchema),
-  priorEventRevision: EventRevisionSchema,
-  resultingEventRevision: EventRevisionSchema,
-  priorContentRevision: ContentRevisionSchema,
-  resultingContentRevision: ContentRevisionSchema,
-  candidateDigest: Sha256DigestSchema,
-});
-export type MergeReceipt = typeof MergeReceiptSchema.Type;
-
-export const RejectionCodeSchema = Schema.Literals([
-  "project_not_found",
-  "revision_mismatch",
-  "unauthorized",
-  "invalid_transition",
-  "resource_conflict",
-  "gate_unsatisfied",
-  "policy_rejected",
-  "proposal_stale",
-  "lease_expired",
-  "artifact_missing",
-] as const);
-export type RejectionCode = typeof RejectionCodeSchema.Type;
-
-export const CreateProjectSchema = Schema.TaggedStruct("CreateProject", {
-  policy: PolicySchema,
-  grants: optional(Schema.Array(GrantSchema)),
-});
-export type CreateProject = typeof CreateProjectSchema.Type;
-
-export const SubmitWorkSchema = Schema.TaggedStruct("SubmitWork", {
-  workId: WorkIdSchema,
-  workProcessId: WorkProcessIdSchema,
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+  profileDigest: Sha256DigestSchema,
+  baseCommit: CommitShaSchema,
   objective: NonEmptyStringSchema,
-  kind: WorkKindSchema,
-  writableScope: Schema.Array(NonEmptyStringSchema),
-  requiredCheck: NonEmptyStringSchema,
-  title: optional(NonEmptyStringSchema),
-});
-export type SubmitWork = typeof SubmitWorkSchema.Type;
-
-export const OpenManagerSessionSchema = Schema.TaggedStruct("OpenManagerSession", {
-  sessionId: SessionIdSchema,
-  workId: WorkIdSchema,
-  profileId: AgentProfileIdSchema,
-  attempt: AttemptNumberSchema,
-  contextReference: NonEmptyStringSchema,
+  writablePaths: Schema.Array(PathPatternSchema),
+  requiredCommands: StringArraySchema,
   deadline: TimestampSchema,
-  outputLimit: Schema.Natural,
-  toolBudget: Schema.Natural,
-  resourceId: ResourceIdSchema,
-  effectId: EffectIdSchema,
+  outputLimitBytes: Schema.Natural,
+  memoryRevision: optional(MemoryRevisionSchema),
 });
-export type OpenManagerSession = typeof OpenManagerSessionSchema.Type;
+export type CloudTask = typeof CloudTaskSchema.Type;
 
-export const StartWorkerSessionSchema = Schema.TaggedStruct("StartWorkerSession", {
+export const SessionPendingStateSchema = Schema.TaggedStruct("Pending", {
   sessionId: SessionIdSchema,
-  workId: WorkIdSchema,
-  profileId: AgentProfileIdSchema,
-  attempt: AttemptNumberSchema,
-  predecessorSessionId: optional(SessionIdSchema),
-  contextReference: NonEmptyStringSchema,
-  deadline: TimestampSchema,
-  outputLimit: Schema.Natural,
-  toolBudget: Schema.Natural,
-  resourceId: ResourceIdSchema,
-  effectId: EffectIdSchema,
+  cursor: Schema.Natural,
 });
-export type StartWorkerSession = typeof StartWorkerSessionSchema.Type;
+export type SessionPendingState = typeof SessionPendingStateSchema.Type;
 
-export const CancelSessionSchema = Schema.TaggedStruct("CancelSession", {
+export const SessionRunningStateSchema = Schema.TaggedStruct("Running", {
   sessionId: SessionIdSchema,
-  effectId: EffectIdSchema,
-  reason: NonEmptyStringSchema,
-});
-export type CancelSession = typeof CancelSessionSchema.Type;
-
-export const ReportSessionStartedSchema = Schema.TaggedStruct("ReportSessionStarted", {
-  sessionId: SessionIdSchema,
-  workspaceViewId: WorkspaceViewIdSchema,
+  cursor: Schema.Natural,
   startedAt: TimestampSchema,
-  effectId: optional(EffectIdSchema),
 });
-export type ReportSessionStarted = typeof ReportSessionStartedSchema.Type;
+export type SessionRunningState = typeof SessionRunningStateSchema.Type;
 
-export const ReportSessionTerminalSchema = Schema.TaggedStruct("ReportSessionTerminal", {
+export const SessionCheckpointedStateSchema = Schema.TaggedStruct("Checkpointed", {
   sessionId: SessionIdSchema,
-  status: Schema.Literals(["completed", "failed", "interrupted"] as const),
-  reason: NonEmptyStringSchema,
-  terminalAt: TimestampSchema,
-  effectId: optional(EffectIdSchema),
+  cursor: Schema.Natural,
+  commit: CommitShaSchema,
+  acknowledgedAt: TimestampSchema,
 });
-export type ReportSessionTerminal = typeof ReportSessionTerminalSchema.Type;
+export type SessionCheckpointedState = typeof SessionCheckpointedStateSchema.Type;
 
-export const RecordHandoffSchema = Schema.TaggedStruct("RecordHandoff", {
-  handoff: HandoffSchema,
+export const SessionCompletedStateSchema = Schema.TaggedStruct("Completed", {
+  sessionId: SessionIdSchema,
+  cursor: Schema.Natural,
+  completedAt: TimestampSchema,
 });
-export type RecordHandoff = typeof RecordHandoffSchema.Type;
+export type SessionCompletedState = typeof SessionCompletedStateSchema.Type;
 
-export const RecordEvidenceSchema = Schema.TaggedStruct("RecordEvidence", {
-  evidence: EvidenceSchema,
-});
-export type RecordEvidence = typeof RecordEvidenceSchema.Type;
-
-export const SubmitProposalSchema = Schema.TaggedStruct("SubmitProposal", {
-  proposal: ProposalSchema,
-});
-export type SubmitProposal = typeof SubmitProposalSchema.Type;
-
-export const ApproveProposalSchema = Schema.TaggedStruct("ApproveProposal", {
-  proposalId: ProposalIdSchema,
-  evidence: EvidenceSchema,
-});
-export type ApproveProposal = typeof ApproveProposalSchema.Type;
-
-export const RejectProposalSchema = Schema.TaggedStruct("RejectProposal", {
-  proposalId: ProposalIdSchema,
+export const SessionFailedStateSchema = Schema.TaggedStruct("Failed", {
+  sessionId: SessionIdSchema,
+  cursor: Schema.Natural,
+  failedAt: TimestampSchema,
   reason: NonEmptyStringSchema,
 });
-export type RejectProposal = typeof RejectProposalSchema.Type;
+export type SessionFailedState = typeof SessionFailedStateSchema.Type;
 
-export const MergeProposalSchema = Schema.TaggedStruct("MergeProposal", {
-  mergeId: MergeIdSchema,
-  proposalId: ProposalIdSchema,
+export const SessionCancelledStateSchema = Schema.TaggedStruct("Cancelled", {
+  sessionId: SessionIdSchema,
+  cursor: Schema.Natural,
+  cancelledAt: TimestampSchema,
+  reason: NonEmptyStringSchema,
+});
+export type SessionCancelledState = typeof SessionCancelledStateSchema.Type;
+
+export const SessionExpiredStateSchema = Schema.TaggedStruct("Expired", {
+  sessionId: SessionIdSchema,
+  cursor: Schema.Natural,
+  expiredAt: TimestampSchema,
+  reason: NonEmptyStringSchema,
+});
+export type SessionExpiredState = typeof SessionExpiredStateSchema.Type;
+
+export const SessionStateSchema = Schema.Union([
+  SessionPendingStateSchema,
+  SessionRunningStateSchema,
+  SessionCheckpointedStateSchema,
+  SessionCompletedStateSchema,
+  SessionFailedStateSchema,
+  SessionCancelledStateSchema,
+  SessionExpiredStateSchema,
+]);
+export type SessionState = typeof SessionStateSchema.Type;
+
+export const TerminalSessionStateSchema = Schema.Union([
+  SessionCompletedStateSchema,
+  SessionFailedStateSchema,
+  SessionCancelledStateSchema,
+  SessionExpiredStateSchema,
+]);
+export type TerminalSessionState = typeof TerminalSessionStateSchema.Type;
+
+export const SessionAdmissionSchema = Schema.TaggedStruct("SessionAdmission", {
+  sessionId: SessionIdSchema,
+  taskId: TaskIdSchema,
+  projectId: ProjectIdSchema,
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+  profileDigest: Sha256DigestSchema,
+  baseCommit: CommitShaSchema,
+  acceptedCursor: Schema.Natural,
+  admittedAt: TimestampSchema,
+  memoryRevision: optional(MemoryRevisionSchema),
+  grantId: optional(GrantIdSchema),
+  generatedClass: optional(NonEmptyStringSchema),
+  binding: optional(NonEmptyStringSchema),
+  migrationTag: optional(NonEmptyStringSchema),
+  configurationDigest: optional(Sha256DigestSchema),
+});
+export type SessionAdmission = typeof SessionAdmissionSchema.Type;
+
+export const SessionObservationSchema = Schema.TaggedStruct("SessionObservation", {
+  sessionId: SessionIdSchema,
+  cursor: Schema.Natural,
+  observedAt: TimestampSchema,
+  state: SessionStateSchema,
+  messageId: optional(MessageIdSchema),
+  message: optional(Schema.Json),
+  event: optional(Schema.Json),
+});
+export type SessionObservation = typeof SessionObservationSchema.Type;
+
+export const ObservationCursorSchema = Schema.Natural;
+export type ObservationCursor = typeof ObservationCursorSchema.Type;
+export const AcceptedCursorSchema = ObservationCursorSchema;
+export type AcceptedCursor = ObservationCursor;
+
+export const SessionObservationsSchema = Schema.TaggedStruct("SessionObservations", {
+  sessionId: SessionIdSchema,
+  afterCursor: Schema.Natural,
+  observations: Schema.Array(SessionObservationSchema),
+  nextCursor: Schema.Natural,
+});
+export type SessionObservations = typeof SessionObservationsSchema.Type;
+
+export const SessionCompletedResultSchema = Schema.TaggedStruct("CompletedResult", {
+  sessionId: SessionIdSchema,
+  projectId: ProjectIdSchema,
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+  profileDigest: Sha256DigestSchema,
+  repository: RepositoryIdentitySchema,
+  baseCommit: CommitShaSchema,
+  candidateCommit: CommitShaSchema,
+  candidateBranch: NonEmptyStringSchema,
+  candidateUrl: NonEmptyStringSchema,
+  changedPaths: Schema.Array(PathPatternSchema),
+  commitMetadata: CommitMetadataSchema,
+  commands: Schema.Array(CommandObservationSchema),
+  artifacts: Schema.Array(ArtifactDigestSchema),
+  startedAt: TimestampSchema,
+  completedAt: TimestampSchema,
+  publishedAt: TimestampSchema,
+  unresolvedBlockers: StringArraySchema,
+});
+export type SessionCompletedResult = typeof SessionCompletedResultSchema.Type;
+export type SessionResultPayload = SessionCompletedResult;
+
+export const SessionPendingResultSchema = Schema.TaggedStruct("Pending", {
+  sessionId: SessionIdSchema,
+});
+export type SessionPendingResult = typeof SessionPendingResultSchema.Type;
+
+export const SessionFailedResultSchema = Schema.TaggedStruct("Failed", {
+  sessionId: SessionIdSchema,
+  reason: NonEmptyStringSchema,
+  completedAt: optional(TimestampSchema),
+});
+export type SessionFailedResult = typeof SessionFailedResultSchema.Type;
+
+export const SessionCancelledResultSchema = Schema.TaggedStruct("Cancelled", {
+  sessionId: SessionIdSchema,
+  reason: NonEmptyStringSchema,
+  completedAt: optional(TimestampSchema),
+});
+export type SessionCancelledResult = typeof SessionCancelledResultSchema.Type;
+
+export const SessionCompletedResultEnvelopeSchema = Schema.TaggedStruct("Completed", {
+  sessionId: SessionIdSchema,
+  result: SessionCompletedResultSchema,
+});
+export type SessionCompletedResultEnvelope = typeof SessionCompletedResultEnvelopeSchema.Type;
+
+export const SessionResultSchema = Schema.Union([
+  SessionPendingResultSchema,
+  SessionFailedResultSchema,
+  SessionCancelledResultSchema,
+  SessionCompletedResultEnvelopeSchema,
+]);
+export type SessionResult = typeof SessionResultSchema.Type;
+
+export const SpawnCloudTaskRequestSchema = Schema.TaggedStruct("Spawn", {
+  sessionId: SessionIdSchema,
+  task: CloudTaskSchema,
+});
+export type SpawnCloudTaskRequest = typeof SpawnCloudTaskRequestSchema.Type;
+export const CloudTaskSpawnRequestSchema = SpawnCloudTaskRequestSchema;
+export type CloudTaskSpawnRequest = SpawnCloudTaskRequest;
+
+export const SendCloudTaskRequestSchema = Schema.TaggedStruct("Send", {
+  sessionId: SessionIdSchema,
+  messageId: MessageIdSchema,
+  message: Schema.Json,
+});
+export type SendCloudTaskRequest = typeof SendCloudTaskRequestSchema.Type;
+export const CloudTaskSendRequestSchema = SendCloudTaskRequestSchema;
+export type CloudTaskSendRequest = SendCloudTaskRequest;
+
+export const ObserveCloudTaskRequestSchema = Schema.TaggedStruct("Observe", {
+  sessionId: SessionIdSchema,
+  afterCursor: Schema.Natural,
+});
+export type ObserveCloudTaskRequest = typeof ObserveCloudTaskRequestSchema.Type;
+export const CloudTaskObserveRequestSchema = ObserveCloudTaskRequestSchema;
+export type CloudTaskObserveRequest = ObserveCloudTaskRequest;
+
+export const CancelCloudTaskRequestSchema = Schema.TaggedStruct("Cancel", {
+  sessionId: SessionIdSchema,
+  reason: NonEmptyStringSchema,
+});
+export type CancelCloudTaskRequest = typeof CancelCloudTaskRequestSchema.Type;
+export const CloudTaskCancelRequestSchema = CancelCloudTaskRequestSchema;
+export type CloudTaskCancelRequest = CancelCloudTaskRequest;
+
+export const ResultCloudTaskRequestSchema = Schema.TaggedStruct("Result", {
+  sessionId: SessionIdSchema,
+});
+export type ResultCloudTaskRequest = typeof ResultCloudTaskRequestSchema.Type;
+export const CloudTaskResultRequestSchema = ResultCloudTaskRequestSchema;
+export type CloudTaskResultRequest = ResultCloudTaskRequest;
+
+export const CloudTaskRequestSchema = Schema.Union([
+  SpawnCloudTaskRequestSchema,
+  SendCloudTaskRequestSchema,
+  ObserveCloudTaskRequestSchema,
+  CancelCloudTaskRequestSchema,
+  ResultCloudTaskRequestSchema,
+]);
+export type CloudTaskRequest = typeof CloudTaskRequestSchema.Type;
+
+export const SpawnCloudTaskResponseSchema = Schema.TaggedStruct("Spawned", {
+  admission: SessionAdmissionSchema,
+});
+export type SpawnCloudTaskResponse = typeof SpawnCloudTaskResponseSchema.Type;
+export const CloudTaskSpawnResponseSchema = SpawnCloudTaskResponseSchema;
+export type CloudTaskSpawnResponse = SpawnCloudTaskResponse;
+
+export const SendCloudTaskResponseSchema = Schema.TaggedStruct("Accepted", {
+  acceptedCursor: AcceptedCursorSchema,
+});
+export type SendCloudTaskResponse = typeof SendCloudTaskResponseSchema.Type;
+export const CloudTaskSendResponseSchema = SendCloudTaskResponseSchema;
+export type CloudTaskSendResponse = SendCloudTaskResponse;
+
+export const ObserveCloudTaskResponseSchema = Schema.TaggedStruct("Observed", {
+  observations: Schema.Array(SessionObservationSchema),
+});
+export type ObserveCloudTaskResponse = typeof ObserveCloudTaskResponseSchema.Type;
+export const CloudTaskObserveResponseSchema = ObserveCloudTaskResponseSchema;
+export type CloudTaskObserveResponse = ObserveCloudTaskResponse;
+
+export const CancelCloudTaskResponseSchema = Schema.TaggedStruct("Cancelled", {
+  observation: SessionObservationSchema,
+});
+export type CancelCloudTaskResponse = typeof CancelCloudTaskResponseSchema.Type;
+export const CloudTaskCancelResponseSchema = CancelCloudTaskResponseSchema;
+export type CloudTaskCancelResponse = CancelCloudTaskResponse;
+
+export const ResultCloudTaskResponseSchema = Schema.TaggedStruct("Result", {
+  result: SessionResultSchema,
+});
+export type ResultCloudTaskResponse = typeof ResultCloudTaskResponseSchema.Type;
+export const CloudTaskResultResponseSchema = ResultCloudTaskResponseSchema;
+export type CloudTaskResultResponse = ResultCloudTaskResponse;
+
+export const CloudTaskResponseSchema = Schema.Union([
+  SpawnCloudTaskResponseSchema,
+  SendCloudTaskResponseSchema,
+  ObserveCloudTaskResponseSchema,
+  CancelCloudTaskResponseSchema,
+  ResultCloudTaskResponseSchema,
+]);
+export type CloudTaskResponse = typeof CloudTaskResponseSchema.Type;
+
+export const ProjectMemoryProvenanceSchema = Schema.TaggedStruct("ProjectMemoryProvenance", {
+  source: NonEmptyStringSchema,
+  observedAt: TimestampSchema,
+  artifactDigests: optional(Schema.Array(Sha256DigestSchema)),
+});
+export type ProjectMemoryProvenance = typeof ProjectMemoryProvenanceSchema.Type;
+export type MemoryProvenance = ProjectMemoryProvenance;
+
+export const ProjectMemoryFactSchema = Schema.TaggedStruct("ProjectMemoryFact", {
+  factId: NonEmptyStringSchema,
+  claim: NonEmptyStringSchema,
+  provenance: ProjectMemoryProvenanceSchema,
+  acceptedAt: optional(TimestampSchema),
+});
+export type ProjectMemoryFact = typeof ProjectMemoryFactSchema.Type;
+export const MemoryFactSchema = ProjectMemoryFactSchema;
+export type MemoryFact = ProjectMemoryFact;
+
+export const ProjectMemoryProposalSchema = Schema.TaggedStruct("ProjectMemoryProposal", {
+  proposalId: MemoryProposalIdSchema,
+  expectedRevision: MemoryRevisionSchema,
+  claim: NonEmptyStringSchema,
+  provenance: ProjectMemoryProvenanceSchema,
+  proposedAt: TimestampSchema,
+});
+export type ProjectMemoryProposal = typeof ProjectMemoryProposalSchema.Type;
+export const MemoryProposalSchema = ProjectMemoryProposalSchema;
+export type MemoryProposal = ProjectMemoryProposal;
+
+export const ProjectMemoryRevisionSchema = Schema.TaggedStruct("ProjectMemoryRevision", {
+  projectId: ProjectIdSchema,
+  memoryRevision: MemoryRevisionSchema,
+  previousRevision: optional(MemoryRevisionSchema),
+  facts: Schema.Array(ProjectMemoryFactSchema),
+  acceptedProposalId: optional(MemoryProposalIdSchema),
+  acceptedAt: TimestampSchema,
+}).pipe(
+  Schema.filter(
+    (revision) =>
+      revision.previousRevision === undefined ||
+      revision.memoryRevision > revision.previousRevision ||
+      "memoryRevision must advance beyond previousRevision",
+  ),
+);
+export type ProjectMemoryRevision = typeof ProjectMemoryRevisionSchema.Type;
+export const MemoryRevisionRecordSchema = ProjectMemoryRevisionSchema;
+export type MemoryRevisionRecord = ProjectMemoryRevision;
+
+export const RepositoryRefSchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^(?!refs\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/)),
+);
+export type RepositoryRef = typeof RepositoryRefSchema.Type;
+
+export const RepositoryGrantSchema = Schema.TaggedStruct("RepositoryGrant", {
   grantId: GrantIdSchema,
-  candidateDigest: Sha256DigestSchema,
-});
-export type MergeProposal = typeof MergeProposalSchema.Type;
-
-export const AcquireWorkspaceLeaseSchema = Schema.TaggedStruct("AcquireWorkspaceLease", {
-  lease: WorkspaceLeaseSchema,
-});
-export type AcquireWorkspaceLease = typeof AcquireWorkspaceLeaseSchema.Type;
-
-export const RenewWorkspaceLeaseSchema = Schema.TaggedStruct("RenewWorkspaceLease", {
-  resourceId: ResourceIdSchema,
   sessionId: SessionIdSchema,
+  projectId: ProjectIdSchema,
+  repository: RepositoryIdentitySchema,
+  baseCommit: CommitShaSchema,
+  writablePaths: Schema.Array(PathPatternSchema),
+  wipRef: RepositoryRefSchema,
+  candidateRef: RepositoryRefSchema,
   expiresAt: TimestampSchema,
-});
-export type RenewWorkspaceLease = typeof RenewWorkspaceLeaseSchema.Type;
+  issuedAt: TimestampSchema,
+}).pipe(
+  Schema.filter(
+    (grant) => grant.wipRef !== grant.candidateRef || "wipRef and candidateRef must differ",
+  ),
+);
+export type RepositoryGrant = typeof RepositoryGrantSchema.Type;
 
-export const ReleaseWorkspaceLeaseSchema = Schema.TaggedStruct("ReleaseWorkspaceLease", {
-  resourceId: ResourceIdSchema,
+export const VerifiedWorkspaceSchema = Schema.TaggedStruct("VerifiedWorkspace", {
+  grantId: GrantIdSchema,
   sessionId: SessionIdSchema,
+  commit: CommitShaSchema,
+  workspaceRoot: NonEmptyStringSchema,
+  verifiedAt: TimestampSchema,
 });
-export type ReleaseWorkspaceLease = typeof ReleaseWorkspaceLeaseSchema.Type;
+export type VerifiedWorkspace = typeof VerifiedWorkspaceSchema.Type;
 
-export const ProjectCommandSchema = Schema.Union([
-  CreateProjectSchema,
-  SubmitWorkSchema,
-  OpenManagerSessionSchema,
-  StartWorkerSessionSchema,
-  CancelSessionSchema,
-  ReportSessionStartedSchema,
-  ReportSessionTerminalSchema,
-  RecordHandoffSchema,
-  RecordEvidenceSchema,
-  SubmitProposalSchema,
-  ApproveProposalSchema,
-  RejectProposalSchema,
-  MergeProposalSchema,
-  AcquireWorkspaceLeaseSchema,
-  RenewWorkspaceLeaseSchema,
-  ReleaseWorkspaceLeaseSchema,
-]);
-export type ProjectCommand = typeof ProjectCommandSchema.Type;
-
-export const CreateProjectRequestSchema = Schema.Struct({
-  schemaVersion: SchemaVersionSchema,
-  commandId: CommandIdSchema,
-  command: CreateProjectSchema,
+export const CheckpointReceiptSchema = Schema.TaggedStruct("CheckpointReceipt", {
+  grantId: GrantIdSchema,
+  sessionId: SessionIdSchema,
+  commit: CommitShaSchema,
+  wipRef: RepositoryRefSchema,
+  expectedRemoteCommit: CommitShaSchema,
+  acknowledgedAt: TimestampSchema,
 });
-export type CreateProjectRequest = typeof CreateProjectRequestSchema.Type;
+export type CheckpointReceipt = typeof CheckpointReceiptSchema.Type;
+export const RepositoryCheckpointReceiptSchema = CheckpointReceiptSchema;
+export type RepositoryCheckpointReceipt = CheckpointReceipt;
 
-export const CommandEnvelopeSchema = Schema.Struct({
-  schemaVersion: SchemaVersionSchema,
-  commandId: CommandIdSchema,
+export const CandidateReceiptSchema = Schema.TaggedStruct("CandidateReceipt", {
+  grantId: GrantIdSchema,
+  sessionId: SessionIdSchema,
+  candidateCommit: CommitShaSchema,
+  candidateRef: RepositoryRefSchema,
+  candidateBranch: NonEmptyStringSchema,
+  candidateUrl: NonEmptyStringSchema,
+  publishedAt: TimestampSchema,
+});
+export type CandidateReceipt = typeof CandidateReceiptSchema.Type;
+export const RepositoryCandidateReceiptSchema = CandidateReceiptSchema;
+export type RepositoryCandidateReceipt = CandidateReceipt;
+
+export const DependencyCacheManifestSchema = Schema.TaggedStruct("DependencyCacheManifest", {
+  cacheKey: NonEmptyStringSchema,
+  runtimeDigest: Sha256DigestSchema,
+  platformDigest: Sha256DigestSchema,
+  imageDigest: Sha256DigestSchema,
+  repositoryDigest: Sha256DigestSchema,
+  lockfileDigest: Sha256DigestSchema,
+  payloadDigest: Sha256DigestSchema,
+  createdAt: TimestampSchema,
+});
+export type DependencyCacheManifest = typeof DependencyCacheManifestSchema.Type;
+
+export const DependencyCacheRestoreSchema = Schema.TaggedStruct("DependencyCacheRestore", {
+  manifest: DependencyCacheManifestSchema,
+  restored: Schema.Boolean,
+  payloadDigest: Sha256DigestSchema,
+  verifiedAt: TimestampSchema,
+  workspacePath: NonEmptyStringSchema,
+});
+export type DependencyCacheRestore = typeof DependencyCacheRestoreSchema.Type;
+
+export const TrialArmSchema = Schema.Struct({
+  model: NonEmptyStringSchema,
+  budget: Schema.Json,
+  baseCommit: CommitShaSchema,
+  cacheManifest: DependencyCacheManifestSchema,
+  verificationCommands: StringArraySchema,
+  capabilities: StringArraySchema,
+});
+export type TrialArm = typeof TrialArmSchema.Type;
+
+export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
+  trialId: NonEmptyStringSchema,
+  taskId: TaskIdSchema,
   projectId: ProjectIdSchema,
-  expectedRevision: EventRevisionSchema,
-  actor: AuthenticatedActorSchema,
-  command: ProjectCommandSchema,
+  objective: NonEmptyStringSchema,
+  writablePaths: Schema.Array(PathPatternSchema),
+  baseline: TrialArmSchema,
+  treatment: TrialArmSchema,
+}).pipe(
+  Schema.filter((manifest) => {
+    const { baseline, treatment } = manifest;
+    const sameBudget = JSON.stringify(baseline.budget) === JSON.stringify(treatment.budget);
+    const sameCache = JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
+    const sameCommands =
+      JSON.stringify(baseline.verificationCommands) === JSON.stringify(treatment.verificationCommands);
+    return (
+      baseline.model === treatment.model &&
+      baseline.baseCommit === treatment.baseCommit &&
+      sameBudget &&
+      sameCache &&
+      sameCommands
+    ) || "paired trial arms must share model, budget, base commit, cache, and verification commands";
+  }),
+);
+export type TrialManifest = typeof TrialManifestSchema.Type;
+
+export const TrialArmNameSchema = Schema.Literals(["baseline", "treatment"] as const);
+export type TrialArmName = typeof TrialArmNameSchema.Type;
+
+export const TrialRecordSchema = Schema.TaggedStruct("TrialRecord", {
+  trialId: NonEmptyStringSchema,
+  arm: TrialArmNameSchema,
+  runId: NonEmptyStringSchema,
+  sessionId: SessionIdSchema,
+  result: SessionResultSchema,
+  measures: JsonRecordSchema,
+  recordedAt: TimestampSchema,
 });
-export type CommandEnvelope = typeof CommandEnvelopeSchema.Type;
+export type TrialRecord = typeof TrialRecordSchema.Type;
 
-export const AcceptedReceiptSchema = Schema.TaggedStruct("Accepted", {
-  eventRevision: EventRevisionSchema,
-  eventIds: Schema.Array(CommandIdSchema),
-  effectRequests: Schema.Array(EffectRequestSchema),
+export const ProductDecisionSchema = Schema.Literals(["expand", "collapse", "reject"] as const);
+export type ProductDecision = typeof ProductDecisionSchema.Type;
+
+export const ProductDecisionReportSchema = Schema.TaggedStruct("ProductDecisionReport", {
+  decision: ProductDecisionSchema,
+  reasons: StringArraySchema,
+  thresholdResults: JsonRecordSchema,
+  records: Schema.Array(TrialRecordSchema),
 });
-export type AcceptedReceipt = typeof AcceptedReceiptSchema.Type;
-
-export const RejectedReceiptSchema = Schema.TaggedStruct("Rejected", {
-  eventRevision: EventRevisionSchema,
-  code: RejectionCodeSchema,
-  details: JsonRecordSchema,
-});
-export type RejectedReceipt = typeof RejectedReceiptSchema.Type;
-
-export const CommandReceiptSchema = Schema.Union([AcceptedReceiptSchema, RejectedReceiptSchema]);
-export type CommandReceipt = typeof CommandReceiptSchema.Type;
-
-export const AlreadyAppliedSchema = Schema.TaggedStruct("AlreadyApplied", {
-  originalReceipt: CommandReceiptSchema,
-});
-export type AlreadyApplied = typeof AlreadyAppliedSchema.Type;
-
-export const CommandResultSchema = Schema.Union([
-  AcceptedReceiptSchema,
-  RejectedReceiptSchema,
-  AlreadyAppliedSchema,
-]);
-export type CommandResult = typeof CommandResultSchema.Type;
-
-export const ProjectEventSchema = Schema.Union([
-  Schema.TaggedStruct("ProjectCreated", {
-    projectId: ProjectIdSchema,
-    policy: PolicySchema,
-    grants: Schema.Array(GrantSchema),
-  }),
-  Schema.TaggedStruct("WorkSubmitted", { work: WorkSchema }),
-  Schema.TaggedStruct("SessionRequested", { session: SessionSchema, effect: EffectRequestSchema }),
-  Schema.TaggedStruct("SessionStarted", {
-    sessionId: SessionIdSchema,
-    workspaceViewId: WorkspaceViewIdSchema,
-    startedAt: TimestampSchema,
-  }),
-  Schema.TaggedStruct("SessionCancellationRequested", {
-    sessionId: SessionIdSchema,
-    effect: EffectRequestSchema,
-  }),
-  Schema.TaggedStruct("SessionInterrupted", {
-    sessionId: SessionIdSchema,
-    reason: NonEmptyStringSchema,
-    terminalAt: TimestampSchema,
-  }),
-  Schema.TaggedStruct("SessionFailed", {
-    sessionId: SessionIdSchema,
-    reason: NonEmptyStringSchema,
-    terminalAt: TimestampSchema,
-  }),
-  Schema.TaggedStruct("SessionCompleted", {
-    sessionId: SessionIdSchema,
-    terminalAt: TimestampSchema,
-  }),
-  Schema.TaggedStruct("HandoffRecorded", { handoff: HandoffSchema }),
-  Schema.TaggedStruct("EvidenceRecorded", { evidence: EvidenceSchema }),
-  Schema.TaggedStruct("ProposalSubmitted", { proposal: ProposalSchema }),
-  Schema.TaggedStruct("ApprovalRecorded", {
-    proposalId: ProposalIdSchema,
-    evidence: EvidenceSchema,
-  }),
-  Schema.TaggedStruct("ProposalRejected", {
-    proposalId: ProposalIdSchema,
-    reason: NonEmptyStringSchema,
-  }),
-  Schema.TaggedStruct("GatesEvaluated", {
-    proposalId: ProposalIdSchema,
-    policyId: PolicyIdSchema,
-    policyRevision: EventRevisionSchema,
-    gateKeys: Schema.Array(GateKeySchema),
-    satisfied: Schema.Boolean,
-    evidenceIds: Schema.Array(EvidenceIdSchema),
-  }),
-  Schema.TaggedStruct("ProposalMerged", { receipt: MergeReceiptSchema }),
-  Schema.TaggedStruct("WorkspaceLeaseAcquired", { lease: WorkspaceLeaseSchema }),
-  Schema.TaggedStruct("WorkspaceLeaseRenewed", {
-    resourceId: ResourceIdSchema,
-    sessionId: SessionIdSchema,
-    expiresAt: TimestampSchema,
-  }),
-  Schema.TaggedStruct("WorkspaceLeaseReleased", {
-    resourceId: ResourceIdSchema,
-    sessionId: SessionIdSchema,
-  }),
-]);
-export type ProjectEvent = typeof ProjectEventSchema.Type;
-
-export const EventEnvelopeSchema = Schema.TaggedStruct("EventEnvelope", {
-  eventRevision: EventRevisionSchema,
-  eventIndex: Schema.Natural,
-  commandId: CommandIdSchema,
-  event: ProjectEventSchema,
-});
-export type EventEnvelope = typeof EventEnvelopeSchema.Type;
-
-export const ProjectObservationSchema = Schema.TaggedStruct("ProjectObservation", {
-  projectId: ProjectIdSchema,
-  eventRevision: EventRevisionSchema,
-  contentRevision: ContentRevisionSchema,
-  policy: PolicySchema,
-  canonicalContent: optional(ContentManifestSchema),
-  history: Schema.Array(EventEnvelopeSchema),
-  activeWorkIds: Schema.Array(WorkIdSchema),
-  activeSessionIds: Schema.Array(SessionIdSchema),
-  sourceDigest: Sha256DigestSchema,
-});
-export type ProjectObservation = typeof ProjectObservationSchema.Type;
+export type ProductDecisionReport = typeof ProductDecisionReportSchema.Type;
 
 export const decodeUnknownStrict = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   input: unknown,
 ): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
 
-export const decodeCommand = (input: unknown): ProjectCommand =>
-  decodeUnknownStrict(ProjectCommandSchema, input);
-export const decodeCommandEnvelope = (input: unknown): CommandEnvelope =>
-  decodeUnknownStrict(CommandEnvelopeSchema, input);
-export const decodeCreateProjectRequest = (input: unknown): CreateProjectRequest =>
-  decodeUnknownStrict(CreateProjectRequestSchema, input);
-export const decodeCommandResult = (input: unknown): CommandResult =>
-  decodeUnknownStrict(CommandResultSchema, input);
-export const decodeProjectObservation = (input: unknown): ProjectObservation =>
-  decodeUnknownStrict(ProjectObservationSchema, input);
-export const decodeProjectEvent = (input: unknown): ProjectEvent =>
-  decodeUnknownStrict(ProjectEventSchema, input);
+export const encodeUnknownStrict = <S extends Schema.Top>(schema: S, input: unknown): unknown =>
+  Schema.encodeSync(schema)(input);
+
+export const decodeCloudTaskRequest = (input: unknown): CloudTaskRequest =>
+  decodeUnknownStrict(CloudTaskRequestSchema, input);
+export const decodeCloudTaskResponse = (input: unknown): CloudTaskResponse =>
+  decodeUnknownStrict(CloudTaskResponseSchema, input);
+export const decodeProfile = (input: unknown): Profile => decodeUnknownStrict(ProfileSchema, input);
+export const decodeCloudTask = (input: unknown): CloudTask =>
+  decodeUnknownStrict(CloudTaskSchema, input);
+export const decodeSessionAdmission = (input: unknown): SessionAdmission =>
+  decodeUnknownStrict(SessionAdmissionSchema, input);
+export const decodeSessionObservation = (input: unknown): SessionObservation =>
+  decodeUnknownStrict(SessionObservationSchema, input);
+export const decodeSessionResult = (input: unknown): SessionResult =>
+  decodeUnknownStrict(SessionResultSchema, input);
+export const decodeRepositoryGrant = (input: unknown): RepositoryGrant =>
+  decodeUnknownStrict(RepositoryGrantSchema, input);
+export const decodeTrialManifest = (input: unknown): TrialManifest =>
+  decodeUnknownStrict(TrialManifestSchema, input);
