@@ -479,6 +479,10 @@
       "owner": "design-contract"
     },
     {
+      "path": "design-specs/0005-effect-v4-application-language.md",
+      "owner": "design-contract"
+    },
+    {
       "path": ".reef/scaffold.json",
       "owner": "scaffold-contract"
     },
@@ -571,7 +575,8 @@
         "design-specs/0001-cloud-herdr-omp-tracer.md",
         "design-specs/0002-cloud-flue-session-workers.md",
         "design-specs/0003-cloudflare-t3code-environments.md",
-        "design-specs/0004-encrypted-deployment-config.md"
+        "design-specs/0004-encrypted-deployment-config.md",
+        "design-specs/0005-effect-v4-application-language.md"
       ],
       "done_when": "The active tracer contract records operator approval, prior contracts retain explicit historical status, and founding claims remain bound to exact source hashes."
     },
