@@ -1,4 +1,5 @@
 import {
+  EnvironmentCheckpointRequestSchema,
   EnvironmentCreateRequestSchema,
   EnvironmentDestroyRequestSchema,
   EnvironmentPairingSchema,
@@ -64,9 +65,13 @@ const digestText = async (value: string): Promise<`sha256:${string}`> => {
 
 const plusMilliseconds = (timestamp: string, milliseconds: number): string =>
   new Date(new Date(timestamp).getTime() + milliseconds).toISOString();
-
-const snapshot = (value: unknown): EnvironmentSnapshot =>
-  decodeUnknownStrict(EnvironmentSnapshotSchema, value);
+const snapshot = (value: unknown): EnvironmentSnapshot => {
+  try {
+    return decodeUnknownStrict(EnvironmentSnapshotSchema, value);
+  } catch {
+    throw new InvalidRequestError("Persisted Environment snapshot is invalid");
+  }
+};
 
 const pairing = (value: unknown): EnvironmentPairing =>
   decodeUnknownStrict(EnvironmentPairingSchema, value);
@@ -75,7 +80,7 @@ export class InMemoryEnvironmentStore implements EnvironmentStore {
   #snapshot: EnvironmentSnapshot | undefined;
 
   async load(): Promise<EnvironmentSnapshot | undefined> {
-    return this.#snapshot;
+    return this.#snapshot === undefined ? undefined : snapshot(this.#snapshot);
   }
 
   async save(value: EnvironmentSnapshot): Promise<void> {
@@ -200,7 +205,7 @@ export class EnvironmentCoordinator {
               requestDigest,
               result: {
                 _tag: "EnvironmentCreateFailed",
-                reason: cause instanceof Error ? cause.message : "Unknown creation failure",
+                reason: "Environment creation failed",
               },
               acceptedAt: failedAt,
             },
@@ -214,8 +219,33 @@ export class EnvironmentCoordinator {
   async inspect(): Promise<EnvironmentSnapshot | undefined> {
     return this.#options.store.load();
   }
-  async checkpoint(): Promise<EnvironmentSnapshot> {
+  async checkpoint(input?: unknown): Promise<EnvironmentSnapshot> {
     const current = await this.#requireSnapshot();
+    const request = decodeUnknownStrict(
+      EnvironmentCheckpointRequestSchema,
+      input === undefined
+        ? {
+            _tag: "CheckpointEnvironment",
+            commandId: `checkpoint-${crypto.randomUUID()}`,
+            environmentId: current.environmentId,
+          }
+        : input,
+    );
+    if (current.environmentId !== request.environmentId) {
+      throw new InvalidRequestError("Environment identifier does not match this coordinator");
+    }
+    const requestDigest = await digestText(JSON.stringify(request));
+    const existingReceipt = current.commandReceipts.find(
+      (receipt) => receipt.commandId === request.commandId,
+    );
+    if (existingReceipt !== undefined) {
+      if (existingReceipt.requestDigest !== requestDigest) {
+        throw new InvalidRequestError(
+          "Checkpoint command identifier was reused with different input",
+        );
+      }
+      return current;
+    }
     if (current.lifecycle !== "Ready") {
       throw new InvalidRequestError("Only a Ready Environment can checkpoint");
     }
@@ -242,6 +272,7 @@ export class EnvironmentCoordinator {
       ];
       const retainedCheckpoints = distinct.slice(-2);
       const superseded = distinct.slice(0, -2);
+      const acceptedAt = this.#options.now();
       const ready = snapshot({
         ...checkpointing,
         lifecycle: "Ready",
@@ -250,7 +281,20 @@ export class EnvironmentCoordinator {
         dataLossWarning: false,
         checkpointFailures: 0,
         checkpointRetryAt: null,
-        lastActivityAt: this.#options.now(),
+        commandReceipts: [
+          ...current.commandReceipts,
+          {
+            commandId: request.commandId,
+            requestDigest,
+            result: {
+              _tag: "EnvironmentCheckpointed",
+              lifecycle: "Ready",
+              checkpoint: acceptedCheckpoint,
+            },
+            acceptedAt,
+          },
+        ],
+        lastActivityAt: acceptedAt,
       });
       await this.#options.store.save(ready);
       await Promise.all(
@@ -393,6 +437,7 @@ export class EnvironmentCoordinator {
 
     let cleanup = snapshot({ ...current, lifecycle: "Destroying" });
     await this.#options.store.save(cleanup);
+    let finalCheckpointFailed = false;
     if (current.lifecycle === "Ready") {
       try {
         const acceptedCheckpoint = await this.#options.runtime.checkpoint(cleanup, {
@@ -401,38 +446,86 @@ export class EnvironmentCoordinator {
         cleanup = snapshot({ ...cleanup, acceptedCheckpoint });
         await this.#options.store.save(cleanup);
       } catch {
-        cleanup = snapshot({ ...cleanup, lifecycle: "Failed" });
+        finalCheckpointFailed = true;
+        const failedAt = this.#options.now();
+        cleanup = snapshot({
+          ...cleanup,
+          lifecycle: "Failed",
+          dataLossWarning: true,
+          checkpointRetryAt: null,
+          inactivityDeadline: failedAt,
+          commandReceipts: [
+            ...current.commandReceipts,
+            {
+              commandId: request.commandId,
+              requestDigest,
+              result: {
+                _tag: "EnvironmentDestroyFailed",
+                lifecycle: "Failed",
+                reason: "Final checkpoint failed",
+                dataLossWarning: true,
+              },
+              acceptedAt: failedAt,
+            },
+          ],
+        });
         await this.#options.store.save(cleanup);
       }
     }
     try {
       await this.#options.runtime.destroy(cleanup);
-      const acceptedAt = this.#options.now();
-      const destroyed = snapshot({
+    } catch (cause) {
+      if (finalCheckpointFailed) {
+        await this.#options.store.save(cleanup);
+        return cleanup;
+      }
+      const failedAt = this.#options.now();
+      const failed = snapshot({
         ...cleanup,
-        lifecycle: "Destroyed",
-        generation: null,
-        acceptedCheckpoint: null,
-        retiredGenerationIds:
-          current.generation === null
-            ? current.retiredGenerationIds
-            : [...current.retiredGenerationIds, current.generation.id],
+        lifecycle: "Failed",
+        dataLossWarning: true,
+        inactivityDeadline: failedAt,
         commandReceipts: [
           ...current.commandReceipts,
           {
             commandId: request.commandId,
             requestDigest,
-            result: { lifecycle: "Destroyed" },
-            acceptedAt,
+            result: {
+              _tag: "EnvironmentDestroyFailed",
+              lifecycle: "Failed",
+              reason: "Environment cleanup failed",
+              dataLossWarning: true,
+            },
+            acceptedAt: failedAt,
           },
         ],
       });
-      await this.#options.store.save(destroyed);
-      return destroyed;
-    } catch (cause) {
-      await this.#options.store.save(snapshot({ ...cleanup, lifecycle: "Failed" }));
+      await this.#options.store.save(failed);
       throw cause;
     }
+    if (finalCheckpointFailed) return cleanup;
+    const acceptedAt = this.#options.now();
+    const destroyed = snapshot({
+      ...cleanup,
+      lifecycle: "Destroyed",
+      generation: null,
+      acceptedCheckpoint: null,
+      retiredGenerationIds:
+        current.generation === null
+          ? current.retiredGenerationIds
+          : [...current.retiredGenerationIds, current.generation.id],
+      commandReceipts: [
+        ...current.commandReceipts,
+        {
+          commandId: request.commandId,
+          requestDigest,
+          result: { lifecycle: "Destroyed" },
+          acceptedAt,
+        },
+      ],
+    });
+    await this.#options.store.save(destroyed);
+    return destroyed;
   }
 
   async #requireSnapshot(): Promise<EnvironmentSnapshot> {

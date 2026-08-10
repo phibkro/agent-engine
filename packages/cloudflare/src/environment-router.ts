@@ -1,5 +1,10 @@
 import { Schema } from "effect";
-import { EnvironmentIdSchema, decodeUnknownStrict } from "@work-engine/protocol";
+import {
+  EnvironmentCommandRequestSchema,
+  EnvironmentIdSchema,
+  decodeUnknownStrict,
+  type EnvironmentCommandRequest,
+} from "@work-engine/protocol";
 import type { CloudflareRuntimeEnv } from "./env.ts";
 import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
 
@@ -15,7 +20,7 @@ const failureResponse = (cause: unknown): Response => {
   return Response.json(
     {
       _tag: "EnvironmentRouterFailure",
-      reason: cause instanceof Error ? cause.message : "Unknown failure",
+      reason: "Environment routing failed",
     },
     { status: 500 },
   );
@@ -28,19 +33,19 @@ const requireOperator = (request: Request, expected: string | undefined): void =
   }
 };
 
-const commandEnvironmentId = (body: string): string => {
+const commandBody = (body: string): EnvironmentCommandRequest => {
   let value: unknown;
   try {
     value = decodeUnknownStrict(Schema.UnknownFromJsonString, body);
   } catch {
     throw new InvalidRequestError("Environment command body must be JSON");
   }
-  if (typeof value !== "object" || value === null || !("environmentId" in value)) {
-    throw new InvalidRequestError("Environment command must include environmentId");
+  try {
+    return decodeUnknownStrict(EnvironmentCommandRequestSchema, value);
+  } catch {
+    throw new InvalidRequestError("Environment command body is invalid");
   }
-  return decodeUnknownStrict(EnvironmentIdSchema, value.environmentId);
 };
-
 export class EnvironmentRouter {
   readonly #env: CloudflareRuntimeEnv;
 
@@ -52,7 +57,12 @@ export class EnvironmentRouter {
     try {
       const match = ENVIRONMENT_PATH.exec(new URL(request.url).pathname);
       if (match === null) throw new InvalidRequestError("Environment route does not exist");
-      const environmentId = decodeUnknownStrict(EnvironmentIdSchema, match[1]);
+      let environmentId: string;
+      try {
+        environmentId = decodeUnknownStrict(EnvironmentIdSchema, match[1]);
+      } catch {
+        throw new InvalidRequestError("Environment route identifier is invalid");
+      }
       const connect = match[2] !== undefined;
       if (!connect) requireOperator(request, this.#env.CLOUD_TASK_AUTH_TOKEN);
 
@@ -61,13 +71,14 @@ export class EnvironmentRouter {
       if (namespace === undefined || secret === undefined) {
         throw new Error("Environment routing bindings are incomplete");
       }
-
       let body: string | undefined;
       if (!connect && request.method !== "GET") {
-        body = await request.text();
-        if (commandEnvironmentId(body) !== environmentId) {
+        const rawBody = await request.text();
+        const command = commandBody(rawBody);
+        if (command.environmentId !== environmentId) {
           throw new InvalidRequestError("Route and command Environment identifiers differ");
         }
+        body = JSON.stringify(command);
       }
 
       if (connect) {

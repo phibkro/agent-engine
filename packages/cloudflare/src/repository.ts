@@ -1,15 +1,21 @@
 import {
+  CandidateReceiptSchema,
+  CheckpointReceiptSchema,
+  CommitShaSchema,
   RepositoryGrantSchema,
+  VerifiedWorkspaceSchema,
   decode,
   nowIso,
-  record,
-  requiredString,
   type CandidateReceipt,
   type CheckpointReceipt,
   type RepositoryGrant,
   type RepositoryIdentity,
   type VerifiedWorkspace,
 } from "./contract.ts";
+import {
+  RepositoryCandidateVerificationSchema,
+  RepositoryRefStateSchema,
+} from "@work-engine/protocol";
 import {
   ProviderUnavailableError,
   RepositoryAncestryViolationError,
@@ -52,7 +58,6 @@ export interface SessionRefs {
   readonly candidate: string;
 }
 
-const asGrantRecord = (grant: RepositoryGrant): Record<string, unknown> => record(grant);
 
 const pathMatches = (path: string, pattern: string): boolean => {
   const normalizedPath = path.replace(/^\/+/, "");
@@ -125,35 +130,14 @@ export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGran
   });
 };
 
-const grantIsValid = (grant: RepositoryGrant, sessionId: string, now: string): boolean => {
-  const value = asGrantRecord(grant);
-  return (
-    value["sessionId"] === sessionId &&
-    typeof value["expiresAt"] === "string" &&
-    String(value["expiresAt"]) >= now
-  );
-};
+const grantIsValid = (grant: RepositoryGrant, sessionId: string, now: string): boolean =>
+  grant.sessionId === sessionId && grant.expiresAt >= now;
 
-const scopeOf = (grant: RepositoryGrant): readonly string[] => {
-  const value = asGrantRecord(grant);
-  const paths = value["writablePaths"];
-  if (!Array.isArray(paths) || !paths.every((path): path is string => typeof path === "string")) {
-    throw new RepositoryGrantInvalidError("Repository grant has no valid writable path scope");
-  }
-  return paths;
-};
+const scopeOf = (grant: RepositoryGrant): readonly string[] => grant.writablePaths;
 
-const repositoryOf = (grant: RepositoryGrant): RepositoryIdentity => {
-  const value = asGrantRecord(grant)["repository"];
-  const repository = record(value);
-  return {
-    owner: requiredString(repository["owner"], "grant.repository.owner"),
-    name: requiredString(repository["name"], "grant.repository.name"),
-  } as RepositoryIdentity;
-};
+const repositoryOf = (grant: RepositoryGrant): RepositoryIdentity => grant.repository;
 
-const baseOf = (grant: RepositoryGrant): string =>
-  requiredString(asGrantRecord(grant)["baseCommit"], "grant.baseCommit");
+const baseOf = (grant: RepositoryGrant): string => grant.baseCommit;
 
 /** Trusted publisher. All refs are derived from the grant; callers cannot select arbitrary refs. */
 export class TrustedRepositoryPublisher {
@@ -176,23 +160,22 @@ export class TrustedRepositoryPublisher {
     return this.#transport;
   }
 
-  #validateGrant(grant: RepositoryGrant, sessionId: string): Record<string, unknown> {
+  #validateGrant(grant: RepositoryGrant, sessionId: string): RepositoryGrant {
     const decoded = decode(RepositoryGrantSchema, grant);
-    const value = asGrantRecord(decoded);
     if (!grantIsValid(decoded, sessionId, this.#now())) {
       throw new RepositoryGrantInvalidError(
         "Repository grant is expired or belongs to another Session",
       );
     }
-    const refs = sessionRefs(requiredString(value["projectId"], "grant.projectId"), sessionId);
+    const refs = sessionRefs(decoded.projectId, sessionId);
     if (
-      value["wipRef"] !== refs.wip ||
-      value["candidateRef"] !== refs.candidate ||
+      decoded.wipRef !== refs.wip ||
+      decoded.candidateRef !== refs.candidate ||
       !refsAreDistinct(refs)
     ) {
       throw new RepositoryGrantInvalidError("Repository refs are not trusted derivations");
     }
-    return value;
+    return decoded;
   }
 
   async checkout(
@@ -201,23 +184,23 @@ export class TrustedRepositoryPublisher {
     baseOrCheckpointCommit?: string,
   ): Promise<VerifiedWorkspace> {
     const value = this.#validateGrant(grant, sessionId);
-    const commit = baseOrCheckpointCommit ?? baseOf(grant);
+    const commit = decode(CommitShaSchema, baseOrCheckpointCommit ?? baseOf(value));
     const transport = this.#requireTransport();
     const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(grant),
+      baseCommit: baseOf(value),
       candidateCommit: commit,
-      repository: repositoryOf(grant),
+      repository: repositoryOf(value),
     });
     if (!verification.descendedFromBase)
-      throw new RepositoryAncestryViolationError(commit, baseOf(grant));
-    return {
+      throw new RepositoryAncestryViolationError(commit, baseOf(value));
+    return decode(VerifiedWorkspaceSchema, {
       _tag: "VerifiedWorkspace",
-      grantId: value["grantId"],
+      grantId: value.grantId,
       sessionId,
       commit,
       workspaceRoot: "/workspace",
       verifiedAt: this.#now(),
-    } as VerifiedWorkspace;
+    });
   }
 
   async checkpoint(
@@ -227,49 +210,49 @@ export class TrustedRepositoryPublisher {
     expectedRemoteCommit: string,
   ): Promise<CheckpointReceipt> {
     const value = this.#validateGrant(grant, sessionId);
-    const key = `${requiredString(value["grantId"], "grant.grantId")}\u0000${commit}\u0000${expectedRemoteCommit}`;
+    const nextCommit = decode(CommitShaSchema, commit);
+    const expectedCommit = decode(CommitShaSchema, expectedRemoteCommit);
+    const key = `${value.grantId}\u0000${nextCommit}\u0000${expectedCommit}`;
     const existing = this.#checkpoints.get(key);
     if (existing !== undefined) return existing;
     const transport = this.#requireTransport();
     const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(grant),
-      candidateCommit: commit,
-      repository: repositoryOf(grant),
+      baseCommit: baseOf(value),
+      candidateCommit: nextCommit,
+      repository: repositoryOf(value),
     });
     if (!verification.descendedFromBase)
-      throw new RepositoryAncestryViolationError(commit, baseOf(grant));
+      throw new RepositoryAncestryViolationError(nextCommit, baseOf(value));
     const outOfScope = verification.changedPaths.filter(
-      (path) => !allowedPath(path, scopeOf(grant)),
+      (path) => !allowedPath(path, scopeOf(value)),
     );
     if (outOfScope.length > 0) throw new RepositoryScopeViolationError(outOfScope);
-    const wipRef = requiredString(value["wipRef"], "grant.wipRef");
+    const wipRef = value.wipRef;
     const observed = await transport.readRef(wipRef);
     const expectedObserved =
-      observed.sha === undefined && expectedRemoteCommit === baseOf(grant)
-        ? undefined
-        : expectedRemoteCommit;
+      observed.sha === undefined && expectedCommit === baseOf(value) ? undefined : expectedCommit;
     if (observed.sha !== expectedObserved) {
       throw new RepositoryConflictError(
-        `WIP ref changed from ${expectedRemoteCommit} to ${observed.sha ?? "<absent>"}`,
+        `WIP ref changed from ${expectedCommit} to ${observed.sha ?? "<absent>"}`,
       );
     }
     const updated = await transport.updateRef({
       ref: wipRef,
       expectedSha: observed.sha,
-      nextSha: commit,
+      nextSha: nextCommit,
       force: false,
     });
-    const receipt = {
-      _tag: "CheckpointReceipt",
-      grantId: value["grantId"],
-      sessionId,
-      commit,
-      wipRef,
-      expectedRemoteCommit,
-      acknowledgedAt: this.#now(),
-    } as CheckpointReceipt;
-    if (updated.sha !== commit)
+    if (updated.sha !== nextCommit)
       throw new RepositoryConflictError("GitHub did not acknowledge the checkpoint commit");
+    const receipt = decode(CheckpointReceiptSchema, {
+      _tag: "CheckpointReceipt",
+      grantId: value.grantId,
+      sessionId,
+      commit: nextCommit,
+      wipRef,
+      expectedRemoteCommit: expectedCommit,
+      acknowledgedAt: this.#now(),
+    });
     this.#checkpoints.set(key, receipt);
     return receipt;
   }
@@ -280,51 +263,52 @@ export class TrustedRepositoryPublisher {
     candidateCommit: string,
   ): Promise<CandidateReceipt> {
     const value = this.#validateGrant(grant, sessionId);
-    const grantId = requiredString(value["grantId"], "grant.grantId");
-    const existing = this.#published.get(`${grantId}\u0000${candidateCommit}`);
+    const nextCommit = decode(CommitShaSchema, candidateCommit);
+    const key = `${value.grantId}\u0000${nextCommit}`;
+    const existing = this.#published.get(key);
     if (existing !== undefined) return existing;
     const transport = this.#requireTransport();
-    const repository = repositoryOf(grant);
+    const repository = repositoryOf(value);
     const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(grant),
-      candidateCommit,
+      baseCommit: baseOf(value),
+      candidateCommit: nextCommit,
       repository,
     });
     if (!verification.descendedFromBase)
-      throw new RepositoryAncestryViolationError(candidateCommit, baseOf(grant));
+      throw new RepositoryAncestryViolationError(nextCommit, baseOf(value));
     const outOfScope = verification.changedPaths.filter(
-      (path) => !allowedPath(path, scopeOf(grant)),
+      (path) => !allowedPath(path, scopeOf(value)),
     );
     if (outOfScope.length > 0) throw new RepositoryScopeViolationError(outOfScope);
-    const candidateRef = requiredString(value["candidateRef"], "grant.candidateRef");
+    const candidateRef = value.candidateRef;
     const observed = await transport.readRef(candidateRef);
-    if (observed.sha !== undefined && observed.sha !== candidateCommit) {
+    if (observed.sha !== undefined && observed.sha !== nextCommit) {
       throw new RepositoryConflictError(`Candidate ref already points to ${observed.sha}`);
     }
     const updated =
-      observed.sha === candidateCommit
+      observed.sha === nextCommit
         ? observed
         : await transport.updateRef({
             ref: candidateRef,
             expectedSha: observed.sha,
-            nextSha: candidateCommit,
+            nextSha: nextCommit,
             force: false,
           });
-    if (updated.sha !== candidateCommit)
+    if (updated.sha !== nextCommit)
       throw new RepositoryConflictError("GitHub did not acknowledge candidate commit");
     const candidateBranch = candidateRef;
     const candidateUrl = `https://github.com/${repository.owner}/${repository.name}/tree/${candidateRef}`;
-    const receipt = {
+    const receipt = decode(CandidateReceiptSchema, {
       _tag: "CandidateReceipt",
-      grantId,
+      grantId: value.grantId,
       sessionId,
-      candidateCommit,
+      candidateCommit: nextCommit,
       candidateRef,
       candidateBranch,
       candidateUrl,
       publishedAt: this.#now(),
-    } as CandidateReceipt;
-    this.#published.set(`${grantId}\u0000${candidateCommit}`, receipt);
+    });
+    this.#published.set(key, receipt);
     return receipt;
   }
 }
@@ -364,27 +348,53 @@ export class CloudflareRepositoryPublisher {
   }
 }
 
+const providerResponseFailure = (operation: string): ProviderUnavailableError =>
+  new ProviderUnavailableError(
+    "GitHub repository transport",
+    `Outbound Worker returned an invalid ${operation} response`,
+  );
+
+const decodeRefState = (value: unknown): GitRefState => {
+  try {
+    const decoded = decode(RepositoryRefStateSchema, value);
+    return { sha: decoded.sha };
+  } catch {
+    throw providerResponseFailure("ref state");
+  }
+};
+
+const decodeCandidateVerification = (value: unknown): GitCandidateVerification => {
+  try {
+    return decode(RepositoryCandidateVerificationSchema, value);
+  } catch {
+    throw providerResponseFailure("candidate verification");
+  }
+};
+
 class FetcherRepositoryTransport implements RepositoryTransport {
   #binding: Fetcher;
   constructor(binding: Fetcher) {
     this.#binding = binding;
   }
 
-  async #call(path: string, payload: unknown): Promise<Record<string, unknown>> {
-    const response = await this.#binding.fetch(`https://outbound-git${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body: unknown = await response.json();
-    if (!response.ok)
-      throw new RepositoryConflictError(`Outbound Worker returned ${response.status}`);
-    return record(body);
+  async #call(path: string, payload: unknown): Promise<unknown> {
+    try {
+      const response = await this.#binding.fetch(`https://outbound-git${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok)
+        throw new RepositoryConflictError(`Outbound Worker returned ${response.status}`);
+      return await response.json();
+    } catch (cause) {
+      if (cause instanceof RepositoryConflictError) throw cause;
+      throw new ProviderUnavailableError("GitHub repository transport");
+    }
   }
 
   async readRef(ref: string): Promise<GitRefState> {
-    const body = await this.#call("/read-ref", { ref });
-    return { sha: typeof body["sha"] === "string" ? body["sha"] : undefined };
+    return decodeRefState(await this.#call("/read-ref", { ref }));
   }
 
   async verifyCandidate(input: {
@@ -392,18 +402,7 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly candidateCommit: string;
     readonly repository: RepositoryIdentity;
   }): Promise<GitCandidateVerification> {
-    const body = await this.#call("/verify", input);
-    const paths = body["changedPaths"];
-    return {
-      descendedFromBase: body["descendedFromBase"] === true,
-      changedPaths: Array.isArray(paths)
-        ? paths.filter((path): path is string => typeof path === "string")
-        : [],
-      commitMetadata:
-        typeof body["commitMetadata"] === "object" && body["commitMetadata"] !== null
-          ? (body["commitMetadata"] as Record<string, unknown>)
-          : {},
-    };
+    return decodeCandidateVerification(await this.#call("/verify", input));
   }
 
   async updateRef(input: {
@@ -412,8 +411,9 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly nextSha: string;
     readonly force: false;
   }): Promise<GitRefState> {
-    const body = await this.#call("/update-ref", input);
-    return { sha: typeof body["sha"] === "string" ? body["sha"] : input.nextSha };
+    const state = decodeRefState(await this.#call("/update-ref", input));
+    if (state.sha === undefined) throw providerResponseFailure("ref update");
+    return state;
   }
 }
 

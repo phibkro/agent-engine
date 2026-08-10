@@ -1,7 +1,9 @@
 import {
+  EnvironmentCommandRequestSchema,
   EnvironmentSnapshotSchema,
   RuntimeVersionTupleSchema,
   decodeUnknownStrict,
+  type EnvironmentCommandRequest,
   type EnvironmentSnapshot,
 } from "@work-engine/protocol";
 import type { EnvironmentStore } from "./environment.ts";
@@ -12,7 +14,13 @@ import type { CloudflareRuntimeEnv } from "./env.ts";
 import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
 
 const SNAPSHOT_KEY = "environment";
-const MAX_CONNECTIONS = 10;
+const persistedSnapshot = (value: unknown): EnvironmentSnapshot => {
+  try {
+    return decodeUnknownStrict(EnvironmentSnapshotSchema, value);
+  } catch {
+    throw new InvalidRequestError("Persisted Environment snapshot is invalid");
+  }
+};
 
 class DurableEnvironmentStore implements EnvironmentStore {
   readonly #storage: DurableObjectStorage;
@@ -23,22 +31,26 @@ class DurableEnvironmentStore implements EnvironmentStore {
 
   async load(): Promise<EnvironmentSnapshot | undefined> {
     const stored = await this.#storage.get<unknown>(SNAPSHOT_KEY);
-    return stored === undefined
-      ? undefined
-      : decodeUnknownStrict(EnvironmentSnapshotSchema, stored);
+    return stored === undefined ? undefined : persistedSnapshot(stored);
   }
 
-  async save(snapshot: EnvironmentSnapshot): Promise<void> {
-    await this.#storage.put(SNAPSHOT_KEY, snapshot);
+  async save(value: EnvironmentSnapshot): Promise<void> {
+    await this.#storage.put(SNAPSHOT_KEY, persistedSnapshot(value));
   }
 }
 
-const requestPayload = async (request: Request): Promise<Record<string, unknown>> => {
-  const value: unknown = await request.json();
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new InvalidRequestError("Environment command body must be an object");
+const requestPayload = async (request: Request): Promise<EnvironmentCommandRequest> => {
+  let value: unknown;
+  try {
+    value = await request.json();
+  } catch {
+    throw new InvalidRequestError("Environment command body must be JSON");
   }
-  return value as Record<string, unknown>;
+  try {
+    return decodeUnknownStrict(EnvironmentCommandRequestSchema, value);
+  } catch {
+    throw new InvalidRequestError("Environment command body is invalid");
+  }
 };
 
 const publicSnapshot = (snapshot: EnvironmentSnapshot | undefined): unknown =>
@@ -69,7 +81,7 @@ const jsonError = (cause: unknown): Response => {
   return Response.json(
     {
       _tag: "EnvironmentRuntimeFailure",
-      reason: cause instanceof Error ? cause.message : "Unknown failure",
+      reason: "Environment runtime failed",
     },
     { status: 500 },
   );
@@ -257,7 +269,7 @@ export class EnvironmentDurableObject implements DurableObject {
         });
       }
       const payload = await requestPayload(request);
-      const tag = payload["_tag"];
+      const tag = payload._tag;
       if (tag === "CreateEnvironment") {
         const created = await coordinator.create(payload);
         await this.#schedule(created.snapshot);
@@ -287,7 +299,7 @@ export class EnvironmentDurableObject implements DurableObject {
         });
       }
       if (tag === "CheckpointEnvironment") {
-        const checkpointed = await coordinator.checkpoint();
+        const checkpointed = await coordinator.checkpoint(payload);
         await this.#schedule(checkpointed);
         return Response.json({
           _tag: "EnvironmentCheckpointed",
@@ -296,8 +308,12 @@ export class EnvironmentDurableObject implements DurableObject {
       }
       throw new InvalidRequestError("Unsupported Environment operation");
     } catch (cause) {
-      const current = await this.#coordinator().coordinator.inspect();
-      if (current !== undefined) await this.#schedule(current);
+      try {
+        const current = await this.#coordinator().coordinator.inspect();
+        if (current !== undefined) await this.#schedule(current);
+      } catch {
+        // Preserve the original typed failure when persisted state cannot be read.
+      }
       return jsonError(cause);
     }
   }
