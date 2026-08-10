@@ -49,9 +49,12 @@ export const runCli = (
       writeStdout(renderJson(envelope));
       return exitCodeFor(parsed);
     }
-    const config = yield* (dependencies.loadConfig ?? loadOperatorConfig).pipe(
-      Effect.mapError(unexpectedFailure),
-    );
+    const configResult = yield* (dependencies.loadConfig ?? loadOperatorConfig).pipe(Effect.either);
+    if (configResult._tag === "Left") {
+      writeStdout(renderJson(failureEnvelope("result", configResult.left)));
+      return exitCodeFor(configResult.left);
+    }
+    const config = configResult.right;
     const client = (dependencies.makeClient ?? makeCloudTaskClient)(config);
     const result = yield* executeInvocation(parsed, client).pipe(Effect.either);
     if (result._tag === "Left") {
