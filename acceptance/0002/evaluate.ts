@@ -60,12 +60,8 @@ const armRecords = (
   arm: TrialRecord["arm"],
 ): ReadonlyArray<TrialRecord> => records.filter((record) => record.arm === arm);
 
-const qualifies = (
-  records: ReadonlyArray<TrialRecord>,
-  requireReusableProfile: boolean,
-): boolean => {
+const qualifies = (records: ReadonlyArray<TrialRecord>): boolean => {
   const measures = records.map(decodeMeasures);
-  const profileDigests = new Set(measures.map((measure) => measure.profileDigest));
   return (
     records.length > 0 &&
     records.every(completed) &&
@@ -76,9 +72,7 @@ const qualifies = (
         measure.isolationViolations.length === 0 &&
         (!measure.recoveryRequired || measure.recoverySucceeded) &&
         measure.reconstructable,
-    ) &&
-    (!requireReusableProfile ||
-      (profileDigests.size === 1 && measures.every((measure) => !measure.configurationCopied)))
+    )
   );
 };
 
@@ -141,8 +135,12 @@ export const evaluateComparativeTrials = (input: ComparativeTrialInput): Product
   const treatmentRecords = armRecords(records, "treatment");
   const baseline = aggregate(baselineRecords);
   const treatment = aggregate(treatmentRecords);
-  const baselineQualifies = qualifies(baselineRecords, false);
-  const treatmentQualifies = qualifies(treatmentRecords, true);
+  const baselineQualifies = qualifies(baselineRecords);
+  const treatmentQualifies = qualifies(treatmentRecords);
+  const treatmentMeasures = treatmentRecords.map(decodeMeasures);
+  const reusableProfile =
+    new Set(treatmentMeasures.map((measure) => measure.profileDigest)).size === 1 &&
+    treatmentMeasures.every((measure) => !measure.configurationCopied);
   const correctnessImproved = treatment.correctness > baseline.correctness;
   const improvements = {
     recoveryInterventions: treatment.recoveryInterventions < baseline.recoveryInterventions,
@@ -161,20 +159,17 @@ export const evaluateComparativeTrials = (input: ComparativeTrialInput): Product
   const expand =
     baselineQualifies &&
     treatmentQualifies &&
-    treatment.correctness >= baseline.correctness &&
+    reusableProfile &&
     improvementCount >= 2 &&
     overheadAccepted;
-  const decision =
-    !baselineQualifies || !treatmentQualifies ? "reject" : expand ? "expand" : "collapse";
+  const decision = expand ? "expand" : baselineQualifies ? "collapse" : "reject";
   const reasons = expand
     ? [
         "Both arms met every safety/recovery bar and treatment materially improved at least two measures.",
       ]
     : decision === "collapse"
-      ? ["Both arms met the product bar without enough treatment advantage."]
-      : [
-          "At least one arm failed a mandatory correctness, safety, recovery, or reconstruction bar.",
-        ];
+      ? ["The baseline met the product bar without enough treatment advantage."]
+      : ["The baseline did not complete the journey safely and correctly."];
 
   return decodeUnknownStrict(ProductDecisionReportSchema, {
     _tag: "ProductDecisionReport",

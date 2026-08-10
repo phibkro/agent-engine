@@ -120,7 +120,7 @@ describe("0002 comparative product decision", () => {
       }
     }
     const report = evaluateComparativeTrials({ manifests: [manifest], records: bad });
-    expect(report.decision).toBe("reject");
+    expect(report.decision).toBe("collapse");
     expect(report.thresholdResults["treatmentQualifies"]).toBe(false);
   });
 

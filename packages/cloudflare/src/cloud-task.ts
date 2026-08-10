@@ -23,6 +23,7 @@ import {
   SessionNotFoundError,
   UnauthorizedError,
 } from "./errors.ts";
+import { resolveCatalogProfile } from "./profiles.ts";
 import { SessionState, type SessionSnapshot } from "./session.ts";
 
 export interface CloudTaskCaller {
@@ -126,6 +127,13 @@ export class SessionDurableObject implements DurableObject {
       const payload = await payloadBody(request);
       const tag = wireTag(payload);
       const task = tag === "Spawn" ? taskFromPayload(payload) : undefined;
+      if (task !== undefined) {
+        const deadline = requiredString(record(task)["deadline"], "task.deadline");
+        if (Date.parse(deadline) <= Date.now()) {
+          throw new InvalidRequestError("CloudTask deadline has expired");
+        }
+        await resolveCatalogProfile(this.#env.PROFILE_CATALOG, task);
+      }
       const session = await this.#load(task);
       if (tag === "Spawn") {
         const admission = session.spawn(task as CloudTask);

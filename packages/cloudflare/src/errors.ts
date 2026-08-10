@@ -133,8 +133,8 @@ export class RepositoryAncestryViolationError extends CloudRuntimeError {
 }
 
 export class CacheMissError extends CloudRuntimeError {
-  constructor(reason: string) {
-    super("CacheMiss", reason);
+  constructor(cacheKey: string, reason = `Dependency cache ${cacheKey} is unavailable`) {
+    super("CacheMiss", reason, { cacheKey });
   }
 }
 

@@ -203,9 +203,15 @@ export const RepositoryPublisher = Context.Service<RepositoryPublisher>(
   "work-engine/RepositoryPublisher",
 );
 
+export type DependencyCacheExpectation = Pick<
+  DependencyCacheManifest,
+  "runtimeDigest" | "platformDigest" | "imageDigest" | "repositoryDigest" | "lockfileDigest"
+>;
+
 export interface DependencyCache {
   readonly restore: (
     manifest: DependencyCacheManifest,
+    expectation: DependencyCacheExpectation,
   ) => Effect.Effect<DependencyCacheRestore, DependencyCacheError>;
 }
 export const DependencyCache = Context.Service<DependencyCache>("work-engine/DependencyCache");

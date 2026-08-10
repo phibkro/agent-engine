@@ -20,6 +20,47 @@ export type ProfileClassName =
 const profileKey = (profileId: string, revision: unknown): string =>
   `${profileId}\u0000${String(revision)}`;
 
+export const profileCatalogKey = (profileId: string, revision: unknown): string =>
+  `profiles/${profileId}/revisions/${String(revision)}`;
+
+const verifyProfileDigest = async (profile: Profile): Promise<Profile> => {
+  const value = record(profile);
+  const declaredDigest = requiredString(value["profileDigest"], "profile.profileDigest");
+  const profileContent = Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== "profileDigest"),
+  );
+  const computedDigest = await digestCanonical(profileContent as CanonicalJsonValue);
+  if (declaredDigest !== computedDigest) {
+    throw new InvalidRequestError(
+      "Profile digest does not match the canonical registered Profile content",
+    );
+  }
+  return profile;
+};
+
+export const resolveCatalogProfile = async (
+  catalog: KVNamespace | undefined,
+  task: CloudTask,
+): Promise<Profile> => {
+  if (catalog === undefined) throw new InvalidRequestError("Profile catalog binding is required");
+  const taskValue = record(task);
+  const profileId = requiredString(taskValue["profileId"], "task.profileId");
+  const revision = taskValue["profileRevision"];
+  const stored = await catalog.get(profileCatalogKey(profileId, revision), "json");
+  if (stored === null)
+    throw new InvalidRequestError("Requested Profile revision is not registered");
+  const profile = await verifyProfileDigest(decode(ProfileSchema, stored));
+  const profileValue = record(profile);
+  if (
+    profileValue["profileId"] !== profileId ||
+    profileValue["profileRevision"] !== revision ||
+    profileValue["profileDigest"] !== taskValue["profileDigest"]
+  ) {
+    throw new InvalidRequestError("Task Profile identity does not match the catalog revision");
+  }
+  return profile;
+};
+
 const profileClassFor = (profile: Profile): ProfileClassName => {
   const role = String(record(profile)["role"] ?? "");
   if (role === "reviewer") return "IndependentReviewerSession";
@@ -36,15 +77,7 @@ export class ProfileRegistry {
     const profileId = requiredString(value["profileId"], "profile.profileId");
     const revision = value["profileRevision"];
     const declaredDigest = requiredString(value["profileDigest"], "profile.profileDigest");
-    const profileContent = Object.fromEntries(
-      Object.entries(value).filter(([key]) => key !== "profileDigest"),
-    );
-    const computedDigest = await digestCanonical(profileContent as CanonicalJsonValue);
-    if (declaredDigest !== computedDigest) {
-      throw new InvalidRequestError(
-        "Profile digest does not match the canonical registered Profile content",
-      );
-    }
+    await verifyProfileDigest(decoded);
     const key = profileKey(profileId, revision);
     const previous = this.#profiles.get(key);
     if (previous !== undefined) {

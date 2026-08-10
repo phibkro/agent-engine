@@ -30,12 +30,12 @@ import {
   type SessionId,
 } from "./contract.ts";
 import { record, requiredString, nowIso } from "./contract.ts";
-import { CacheDigestMismatchError, CloudRuntimeError } from "./errors.ts";
+import { CacheDigestMismatchError, CacheMissError, CloudRuntimeError } from "./errors.ts";
 import { R2DependencyCache, type CacheExpectation } from "./cache.ts";
 import { CloudflareCloudTaskClient } from "./cloud-task.ts";
 import { CloudflareProjectMemory } from "./project-memory.ts";
 import { CloudflareRepositoryPublisher } from "./repository.ts";
-import { ProfileRegistry as LocalProfileRegistry } from "./profiles.ts";
+import type { ProfileRegistry as LocalProfileRegistry } from "./profiles.ts";
 
 const cloudTaskFailure = (cause: unknown): CloudTaskError => {
   if (cause instanceof CloudRuntimeError) {
@@ -115,6 +115,12 @@ const cacheFailure = (cause: unknown): DependencyCacheError => {
       expected: expected as never,
       observed: observed as never,
     };
+  }
+  if (cause instanceof CacheMissError) {
+    return {
+      _tag: "DependencyCacheMissing",
+      cacheKey: String(cause.details["cacheKey"] ?? "unknown"),
+    } as DependencyCacheError;
   }
   return {
     _tag: "DependencyCacheUnavailable",
@@ -269,24 +275,17 @@ export const RepositoryPublisherLive = (
 export const DependencyCacheLive = (bucket: R2Bucket | undefined): Layer.Layer<DependencyCache> => {
   const adapter = new R2DependencyCache(bucket);
   const service: DependencyCache = {
-    restore: (manifest: DependencyCacheManifest) =>
+    restore: (manifest: DependencyCacheManifest, expectation) =>
       Effect.tryPromise({
         try: async () => {
-          const values = record(manifest);
-          const expectation: CacheExpectation = {
-            runtimeDigest: requiredString(values["runtimeDigest"], "manifest.runtimeDigest"),
-            platformDigest: requiredString(values["platformDigest"], "manifest.platformDigest"),
-            imageDigest: requiredString(values["imageDigest"], "manifest.imageDigest"),
-            repositoryDigest: requiredString(
-              values["repositoryDigest"],
-              "manifest.repositoryDigest",
-            ),
-            lockfileDigest: requiredString(values["lockfileDigest"], "manifest.lockfileDigest"),
-          };
-          const restored = await adapter.restore(manifest, expectation);
-          if (restored.kind === "miss") throw new Error(restored.reason);
+          const restored = await adapter.restore(manifest, expectation as CacheExpectation);
+          if (restored.kind === "miss") {
+            throw new CacheMissError(
+              requiredString(record(manifest)["cacheKey"], "manifest.cacheKey"),
+              restored.reason,
+            );
+          }
           return {
-            _tag: "DependencyCacheRestore",
             manifest: restored.manifest,
             restored: true,
             payloadDigest: restored.payloadDigest,
@@ -299,9 +298,8 @@ export const DependencyCacheLive = (bucket: R2Bucket | undefined): Layer.Layer<D
   };
   return Layer.succeed(DependencyCacheService, service);
 };
-
 export const ProfileRegistryLive = (
-  registry = new LocalProfileRegistry(),
+  registry: LocalProfileRegistry,
 ): Layer.Layer<ProfileRegistry> => {
   const service: ProfileRegistry = {
     resolve: (profileId, profileRevision, profileDigest) =>
