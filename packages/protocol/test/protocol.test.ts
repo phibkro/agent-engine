@@ -68,6 +68,36 @@ test("rejects malformed identifiers and SHA-256 digests", () => {
   ).toThrow();
 });
 
+test("rejects impossible UTC timestamps", () => {
+  expect(() =>
+    decodeUnknownStrict(CloudTaskSchema, {
+      ...task,
+      deadline: "2026-02-30T00:00:00.000Z",
+    }),
+  ).toThrow();
+});
+
+test("accepts paired trial JSON values with reordered object keys", () => {
+  const decoded = decodeUnknownStrict(TrialManifestSchema, {
+    _tag: "TrialManifest",
+    trialId: "trial-1",
+    taskId,
+    projectId,
+    objective: "paired task",
+    writablePaths: ["src/**"],
+    baseline: arm,
+    treatment: {
+      ...arm,
+      budget: {
+        maxToolCalls: 10,
+        maxOutputBytes: 100_000,
+      },
+    },
+  });
+
+  expect(decoded.trialId).toBe("trial-1");
+});
+
 test("accepts terminal results and rejects an unknown terminal state", () => {
   const completed = {
     _tag: "Completed",
