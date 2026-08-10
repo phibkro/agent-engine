@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import * as Redacted from "effect/Redacted";
 import {
   AcceptedCursorSchema,
   CloudTaskRequestSchema,
@@ -88,9 +89,9 @@ const headersFor = (config: OperatorConfig): Headers =>
   new Headers({
     Accept: "application/json",
     "Content-Type": "application/json",
-    Authorization: `Bearer ${config.cloudTaskToken}`,
-    [AccessHeader.clientId]: config.accessClientId,
-    [AccessHeader.clientSecret]: config.accessClientSecret,
+    Authorization: `Bearer ${Redacted.value(config.cloudTaskToken)}`,
+    [AccessHeader.clientId]: Redacted.value(config.accessClientId),
+    [AccessHeader.clientSecret]: Redacted.value(config.accessClientSecret),
   });
 
 const request = <S extends Schema.ConstraintDecoder<unknown>>(

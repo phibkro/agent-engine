@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import type * as Redacted from "effect/Redacted";
 import {
   currentUid,
   environment as bunEnvironment,
@@ -16,17 +17,26 @@ export const OperatorEnvironmentSchema = Schema.Struct({
 export type OperatorEnvironment = typeof OperatorEnvironmentSchema.Type;
 
 export const OperatorCredentialFileSchema = Schema.Struct({
-  accessClientId: NonEmptyStringSchema,
-  accessClientSecret: NonEmptyStringSchema,
-  cloudTaskToken: NonEmptyStringSchema,
+  accessClientId: Schema.RedactedFromValue(NonEmptyStringSchema, {
+    label: "accessClientId",
+    disallowEncode: true,
+  }),
+  accessClientSecret: Schema.RedactedFromValue(NonEmptyStringSchema, {
+    label: "accessClientSecret",
+    disallowEncode: true,
+  }),
+  cloudTaskToken: Schema.RedactedFromValue(NonEmptyStringSchema, {
+    label: "cloudTaskToken",
+    disallowEncode: true,
+  }),
 });
 export type OperatorCredentialFile = typeof OperatorCredentialFileSchema.Type;
 
 export interface OperatorConfig {
   readonly baseUrl: string;
-  readonly accessClientId: string;
-  readonly accessClientSecret: string;
-  readonly cloudTaskToken: string;
+  readonly accessClientId: Redacted.Redacted<string>;
+  readonly accessClientSecret: Redacted.Redacted<string>;
+  readonly cloudTaskToken: Redacted.Redacted<string>;
   readonly actorId?: string;
 }
 

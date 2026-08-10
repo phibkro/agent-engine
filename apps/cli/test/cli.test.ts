@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Schema } from "effect";
+import * as Redacted from "effect/Redacted";
 import { makeCloudTaskClient, type CloudTaskClientError } from "../src/client.ts";
-import { decodeOperatorConfig, type ConfigFileSystem } from "../src/config.ts";
+import {
+  decodeOperatorConfig,
+  OperatorCredentialFileSchema,
+  type ConfigFileSystem,
+} from "../src/config.ts";
 import { handleMcpRequest, runMcp } from "../src/mcp.ts";
 import { parseInvocation } from "../src/commands.ts";
 import { exitCodeFor, failureEnvelope, renderJson } from "../src/output.ts";
@@ -10,9 +15,9 @@ import type { CloudTaskClient } from "@work-engine/runtime";
 
 const config = {
   baseUrl: "https://work.example",
-  accessClientId: "access-client",
-  accessClientSecret: "access-secret",
-  cloudTaskToken: "cloud-task-token",
+  accessClientId: Redacted.make("access-client"),
+  accessClientSecret: Redacted.make("access-secret"),
+  cloudTaskToken: Redacted.make("cloud-task-token"),
 } as const;
 
 const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000001");
@@ -159,6 +164,34 @@ describe("0002 CLI public interface", () => {
     expect(nonPrivate._tag).toBe("Failure");
     if (nonPrivate._tag === "Failure")
       expect(String(nonPrivate.cause)).toContain("ConfigPermissions");
+  });
+
+  test("keeps decoded credentials redacted and non-encodable", async () => {
+    const credentialText = JSON.stringify({
+      accessClientId: "access-client",
+      accessClientSecret: "access-secret",
+      cloudTaskToken: "cloud-task-token",
+    });
+    const loaded = await Effect.runPromise(
+      decodeOperatorConfig(
+        {
+          WORK_ENGINE_BASE_URL: "https://work.example",
+          WORK_ENGINE_CREDENTIAL_FILE: "/run/user/1000/work-engine.json",
+        },
+        fakeFiles({ "/run/user/1000/work-engine.json": credentialText }),
+      ),
+    );
+
+    expect(String(loaded.accessClientId)).not.toContain("access-client");
+    expect(String(loaded.accessClientSecret)).not.toContain("access-secret");
+    expect(String(loaded.cloudTaskToken)).not.toContain("cloud-task-token");
+    expect(() =>
+      Schema.encodeSync(OperatorCredentialFileSchema)({
+        accessClientId: loaded.accessClientId,
+        accessClientSecret: loaded.accessClientSecret,
+        cloudTaskToken: loaded.cloudTaskToken,
+      }),
+    ).toThrow();
   });
 
   test("preserves structured JSON through MCP Send and loops in one Effect", async () => {
