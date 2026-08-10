@@ -4,6 +4,7 @@ import {
   CloudflareProjectMemory,
   InMemoryCloudTaskDirectory,
   MemoryRevisionSchema,
+  ProjectMemoryDurableObject,
   ProjectMemoryState,
   SessionState,
   TrustedRepositoryPublisher,
@@ -12,7 +13,7 @@ import {
   sessionRefs,
   verifyDependencyCache,
 } from "../src/index.ts";
-import type { CloudTask, DependencyCacheManifest } from "../src/index.ts";
+import type { CloudTask, SessionSnapshot } from "../src/index.ts";
 
 const uuid = "00000000-0000-4000-8000-000000000001";
 const digest = (hex: string): string => `sha256:${hex.repeat(64 / hex.length)}`;
@@ -43,6 +44,36 @@ const request = (payload: Record<string, unknown>, token = "test-token"): Reques
     },
     body: JSON.stringify(payload),
   });
+const sendAndObserve = async (
+  directory: InMemoryCloudTaskDirectory,
+  message: unknown,
+  messageId: string,
+): Promise<unknown> => {
+  await directory.fetch(
+    request({ _tag: "Spawn", sessionId: task().sessionId, task: task() }),
+  );
+  const accepted = await directory.fetch(
+    request({
+      _tag: "Send",
+      sessionId: task().sessionId,
+      messageId,
+      message,
+    }),
+  );
+  expect(accepted.status).toBe(200);
+  const observed = await directory.fetch(
+    request({
+      _tag: "Observe",
+      sessionId: task().sessionId,
+      afterCursor: 0,
+    }),
+  );
+  expect(observed.status).toBe(200);
+  const body = (await observed.json()) as {
+    readonly observations: readonly { readonly message?: unknown }[];
+  };
+  return body.observations[0]?.message;
+};
 
 describe("authenticated CloudTask routing", () => {
   it("deduplicates spawn and send by caller-minted identities", async () => {
@@ -87,6 +118,42 @@ describe("authenticated CloudTask routing", () => {
     expect(await response.json()).toMatchObject({ _tag: "InvalidRequest" });
   });
 });
+describe("CloudTask Send JSON values", () => {
+  it("round-trips object values through request and observe", async () => {
+    const value = { nested: { enabled: true }, values: [1, null] };
+    await expect(
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_object`),
+    ).resolves.toEqual(value);
+  });
+
+  it("round-trips array values through request and observe", async () => {
+    const value = ["alpha", false, { count: 2 }];
+    await expect(
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_array`),
+    ).resolves.toEqual(value);
+  });
+
+  it("round-trips boolean values through request and observe", async () => {
+    const value = false;
+    await expect(
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_boolean`),
+    ).resolves.toBe(value);
+  });
+
+  it("round-trips number values through request and observe", async () => {
+    const value = 42.5;
+    await expect(
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_number`),
+    ).resolves.toBe(value);
+  });
+
+  it("round-trips null values through request and observe", async () => {
+    await expect(
+      sendAndObserve(new InMemoryCloudTaskDirectory(), null, `msg_${uuid}_null`),
+    ).resolves.toBeNull();
+  });
+});
+
 
 describe("Project Memory authority", () => {
   it("rejects stale acceptance while preserving pinned reads", () => {
@@ -134,6 +201,74 @@ describe("Project Memory authority", () => {
       }),
     ).toThrow(/cannot accept Project Memory proposals/iu);
   });
+  it("does not advance the cached revision after persistence fails", async () => {
+    let persisted: unknown;
+    let failWrites = false;
+    const fakeState = {
+      storage: {
+        get: async () => persisted,
+        put: async (_key: string, value: unknown) => {
+          if (failWrites) throw new Error("storage unavailable");
+          persisted = value;
+        },
+      },
+    } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
+    const memory = new ProjectMemoryDurableObject(fakeState, {});
+    const identity = {
+      "content-type": "application/json",
+      "X-Project-Identity": task().projectId,
+    };
+    const proposalResponse = await memory.fetch(
+      new Request("https://project-memory/propose", {
+        method: "POST",
+        headers: {
+          ...identity,
+          "X-Cloud-Task-Session": task().sessionId,
+        },
+        body: JSON.stringify({
+          expectedRevision: 0,
+          claim: "persisted claim",
+          provenance: {
+            _tag: "ProjectMemoryProvenance",
+            source: "worker",
+            observedAt: "2026-08-10T00:00:00.000Z",
+          },
+        }),
+      }),
+    );
+    expect(proposalResponse.status).toBe(200);
+    const proposal = (await proposalResponse.json()) as { readonly proposalId: string };
+
+    failWrites = true;
+    const failedAcceptance = await memory.fetch(
+      new Request("https://project-memory/accept", {
+        method: "POST",
+        headers: {
+          ...identity,
+          "X-Project-Memory-Coordinator": "coordinator-secret",
+        },
+        body: JSON.stringify({
+          proposalId: proposal.proposalId,
+          expectedRevision: 0,
+        }),
+      }),
+    );
+    expect(failedAcceptance.ok).toBe(false);
+
+    failWrites = false;
+    const readAfterFailure = await memory.fetch(
+      new Request("https://project-memory/read", {
+        method: "POST",
+        headers: identity,
+        body: JSON.stringify({ atRevision: 1 }),
+      }),
+    );
+    expect(readAfterFailure.status).toBe(409);
+    expect(await readAfterFailure.json()).toMatchObject({
+      _tag: "MemoryRevisionUnavailable",
+    });
+  });
+
 });
 
 describe("Session terminal and repository refs", () => {
@@ -155,6 +290,26 @@ describe("Session terminal and repository refs", () => {
     expect(refs.wip.endsWith("/wip")).toBe(true);
     expect(refs.candidate.endsWith("/wip")).toBe(false);
   });
+  it("rejects a malformed terminal completion", () => {
+    const session = new SessionState(task());
+    session.start();
+    expect(() => session.complete({ _tag: "CompletedResult" })).toThrow();
+  });
+
+  it("rejects a persisted Session with a malformed terminal result", () => {
+    const persisted = new SessionState(task()).snapshot;
+    const malformed = {
+      ...persisted,
+      status: "completed",
+      terminalResult: {
+        _tag: "Completed",
+        sessionId: task().sessionId,
+        result: { _tag: "CompletedResult" },
+      },
+    } as unknown as SessionSnapshot;
+    expect(() => new SessionState(task(), malformed)).toThrow();
+  });
+
 });
 
 describe("Dependency cache", () => {
