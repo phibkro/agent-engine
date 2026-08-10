@@ -120,34 +120,34 @@ describe("CloudTask Send JSON values", () => {
   it("round-trips object values through request and observe", async () => {
     const value = { nested: { enabled: true }, values: [1, null] };
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_object`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
     ).resolves.toEqual(value);
   });
 
   it("round-trips array values through request and observe", async () => {
     const value = ["alpha", false, { count: 2 }];
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_array`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
     ).resolves.toEqual(value);
   });
 
   it("round-trips boolean values through request and observe", async () => {
     const value = false;
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_boolean`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
     ).resolves.toBe(value);
   });
 
   it("round-trips number values through request and observe", async () => {
     const value = 42.5;
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}_number`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
     ).resolves.toBe(value);
   });
 
   it("round-trips null values through request and observe", async () => {
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), null, `msg_${uuid}_null`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(), null, `msg_${uuid}`),
     ).resolves.toBeNull();
   });
 });
