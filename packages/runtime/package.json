@@ -1,0 +1,16 @@
+{
+  "name": "@work-engine/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@work-engine/protocol": "0.0.0",
+    "effect": "4.0.0-beta.102"
+  }
+}
