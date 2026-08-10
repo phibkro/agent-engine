@@ -61,7 +61,6 @@ export const EnvironmentCheckpointRequestSchema = Schema.TaggedStruct("Checkpoin
 });
 export type EnvironmentCheckpointRequest = typeof EnvironmentCheckpointRequestSchema.Type;
 
-
 export const EnvironmentCommandRequestSchema = Schema.Union([
   EnvironmentCreateRequestSchema,
   EnvironmentRecoverRequestSchema,

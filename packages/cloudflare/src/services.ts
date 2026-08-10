@@ -148,7 +148,7 @@ const cloudTaskLayerService = (adapter: CloudflareCloudTaskClient): CloudTaskCli
       },
       catch: cloudTaskFailure,
     }),
-  send: (sessionId: SessionId, messageId: MessageId, message: unknown) =>
+  send: (sessionId: SessionId, messageId: MessageId, message) =>
     Effect.tryPromise({
       try: async () => {
         const response = record(await adapter.send(sessionId, messageId, message));

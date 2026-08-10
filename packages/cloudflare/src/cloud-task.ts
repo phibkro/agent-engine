@@ -1,9 +1,6 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import type { Json } from "effect/Schema";
-import type {
-  CloudTaskRequest,
-  CloudTaskResponse,
-} from "@work-engine/protocol";
+import type { CloudTaskRequest, CloudTaskResponse } from "@work-engine/protocol";
 import {
   CloudTaskRequestSchema,
   CloudTaskResponseSchema,
@@ -201,11 +198,7 @@ export class CloudTaskRouter {
     return this.#env.SESSION;
   }
 
-  async #forward(
-    request: Request,
-    body: CloudTaskRequest,
-    sessionId: string,
-  ): Promise<Response> {
+  async #forward(request: Request, body: CloudTaskRequest, sessionId: string): Promise<Response> {
     const stub = this.#namespace().getByName(sessionId);
     const headers = new Headers(request.headers);
     headers.delete(CLOUD_TASK_AUTHORIZATION);
@@ -222,7 +215,6 @@ export class CloudTaskRouter {
     try {
       this.#authenticate(request);
       const payload = await payloadBody(request);
-      const tag = wireTag(payload);
       const task = payload._tag === "Spawn" ? taskFromPayload(payload) : undefined;
       const sessionId = sessionIdFromPayload(payload, task);
       const response = await this.#forward(request, payload, sessionId);
@@ -288,9 +280,7 @@ export class CloudflareCloudTaskClient {
     const value = decode(CloudTaskSchema, task);
     if (value.sessionId !== sessionId)
       throw new InvalidRequestError("sessionId does not match CloudTask");
-    return this.#request(
-      decode(CloudTaskRequestSchema, { _tag: "Spawn", sessionId, task: value }),
-    );
+    return this.#request(decode(CloudTaskRequestSchema, { _tag: "Spawn", sessionId, task: value }));
   }
 
   send(sessionId: SessionId, messageId: string, message: Json): Promise<CloudTaskResponse> {
@@ -306,9 +296,7 @@ export class CloudflareCloudTaskClient {
   }
 
   cancel(sessionId: SessionId, reason: string): Promise<CloudTaskResponse> {
-    return this.#request(
-      decode(CloudTaskRequestSchema, { _tag: "Cancel", sessionId, reason }),
-    );
+    return this.#request(decode(CloudTaskRequestSchema, { _tag: "Cancel", sessionId, reason }));
   }
 
   result(sessionId: SessionId): Promise<CloudTaskResponse> {

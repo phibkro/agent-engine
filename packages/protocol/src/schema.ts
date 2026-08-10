@@ -112,8 +112,7 @@ export const RepositoryCandidateVerificationSchema = Schema.Struct({
   changedPaths: Schema.Array(PathPatternSchema),
   commitMetadata: JsonRecordSchema,
 });
-export type RepositoryCandidateVerification =
-  typeof RepositoryCandidateVerificationSchema.Type;
+export type RepositoryCandidateVerification = typeof RepositoryCandidateVerificationSchema.Type;
 
 export const RepositoryRefStateSchema = Schema.Struct({
   sha: optional(CommitShaSchema),
@@ -451,7 +450,7 @@ export class ProjectMemoryProposalModel extends Model.Class<ProjectMemoryProposa
   claim: NonEmptyStringSchema,
   provenance: ProjectMemoryProvenanceSchema,
   proposedAt: TimestampSchema,
-  sessionId: Model.Sensitive(NonEmptyStringSchema),
+  sessionId: Model.Sensitive(SessionIdSchema),
 }) {}
 export const ProjectMemoryProposalSchema = ProjectMemoryProposalModel.json;
 export type ProjectMemoryProposal = typeof ProjectMemoryProposalSchema.Type;

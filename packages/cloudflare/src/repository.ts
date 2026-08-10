@@ -58,7 +58,6 @@ export interface SessionRefs {
   readonly candidate: string;
 }
 
-
 const pathMatches = (path: string, pattern: string): boolean => {
   const normalizedPath = path.replace(/^\/+/, "");
   const normalizedPattern = pattern.replace(/^\/+/, "");

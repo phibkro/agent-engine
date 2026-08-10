@@ -13,7 +13,7 @@ import {
   sessionRefs,
   verifyDependencyCache,
 } from "../src/index.ts";
-import type { CloudTask, SessionSnapshot } from "../src/index.ts";
+import type { CloudTask, DependencyCacheManifest, SessionSnapshot } from "../src/index.ts";
 
 const uuid = "00000000-0000-4000-8000-000000000001";
 const digest = (hex: string): string => `sha256:${hex.repeat(64 / hex.length)}`;

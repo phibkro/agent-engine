@@ -53,8 +53,7 @@ export const TimestampSchema = Schema.String.pipe(
     Schema.makeFilter((value) => {
       try {
         return (
-          new Date(value).toISOString() === value ||
-          "timestamp must be a canonical UTC instant"
+          new Date(value).toISOString() === value || "timestamp must be a canonical UTC instant"
         );
       } catch {
         return "timestamp must be a canonical UTC instant";

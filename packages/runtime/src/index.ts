@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type { Json } from "effect/Schema";
 import { Schema } from "effect";
 import {
   AcceptedCursorSchema,
@@ -153,7 +154,7 @@ export interface CloudTaskClient {
   readonly send: (
     sessionId: SessionId,
     messageId: MessageId,
-    message: unknown,
+    message: Json,
   ) => Effect.Effect<AcceptedCursor, CloudTaskError>;
   readonly observe: (
     sessionId: SessionId,

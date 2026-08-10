@@ -2,6 +2,8 @@ import { expect, test } from "vitest";
 import {
   CloudTaskSchema,
   ProjectMemoryRevisionSchema,
+  ProjectMemoryProposalModel,
+  ProjectMemoryProposalSchema,
   RepositoryGrantSchema,
   SessionResultSchema,
   TrialManifestSchema,
@@ -128,6 +130,32 @@ test("accepts terminal results and rejects an unknown terminal state", () => {
   expect(() =>
     decodeUnknownStrict(SessionResultSchema, { ...completed, _tag: "Running" }),
   ).toThrow();
+});
+
+test("keeps Session attribution out of the public Project Memory proposal", () => {
+  const proposal = {
+    _tag: "ProjectMemoryProposal",
+    proposalId: "mpp_00000000-0000-4000-8000-000000000001",
+    expectedRevision: 0,
+    claim: "retain the durable fact",
+    provenance: {
+      _tag: "ProjectMemoryProvenance",
+      source: "worker",
+      observedAt: now,
+    },
+    proposedAt: now,
+    sessionId,
+  };
+  const { sessionId: attributedSessionId, ...publicProposal } = proposal;
+
+  expect(attributedSessionId).toBe(sessionId);
+  expect(decodeUnknownStrict(ProjectMemoryProposalModel.select, proposal).sessionId).toBe(
+    sessionId,
+  );
+  expect(() => decodeUnknownStrict(ProjectMemoryProposalSchema, proposal)).toThrow();
+  expect(decodeUnknownStrict(ProjectMemoryProposalSchema, publicProposal)).not.toHaveProperty(
+    "sessionId",
+  );
 });
 
 test("rejects a stale Project Memory revision", () => {

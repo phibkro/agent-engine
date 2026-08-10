@@ -14,6 +14,7 @@ import type { CloudflareRuntimeEnv } from "./env.ts";
 import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
 
 const SNAPSHOT_KEY = "environment";
+const MAX_CONNECTIONS = 10;
 const persistedSnapshot = (value: unknown): EnvironmentSnapshot => {
   try {
     return decodeUnknownStrict(EnvironmentSnapshotSchema, value);

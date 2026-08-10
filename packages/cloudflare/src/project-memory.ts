@@ -39,7 +39,6 @@ const MemoryRevisionRecordSchema = Schema.Struct({
   facts: Schema.Array(ProjectMemoryFactSchema),
   acceptedAt: TimestampSchema,
 });
-type MemoryRevisionRecord = typeof MemoryRevisionRecordSchema.Type;
 
 const MemoryProposalRecordSchema = Schema.Struct({
   ...ProjectMemoryProposalSchema.fields,
@@ -66,7 +65,9 @@ export const ProjectMemorySnapshotSchema = Schema.Struct({
     for (const [index, revision] of snapshot.revisions.entries()) {
       if (revision.revision !== index) return "Project Memory revisions must be contiguous";
     }
-    if (snapshot.proposals.some((proposal) => proposal.expectedRevision > snapshot.currentRevision)) {
+    if (
+      snapshot.proposals.some((proposal) => proposal.expectedRevision > snapshot.currentRevision)
+    ) {
       return "Project Memory proposals cannot target a future revision";
     }
     return true;
@@ -95,13 +96,9 @@ const initialSnapshot = (projectId: string): ProjectMemorySnapshot =>
     proposals: [],
   });
 
-const revisionValue = (revision: unknown): MemoryRevision =>
-  decode(MemoryRevisionSchema, revision);
+const revisionValue = (revision: unknown): MemoryRevision => decode(MemoryRevisionSchema, revision);
 
-const makeFact = (
-  claim: string,
-  provenance: ProjectMemoryProvenance,
-): ProjectMemoryFact =>
+const makeFact = (claim: string, provenance: ProjectMemoryProvenance): ProjectMemoryFact =>
   decode(ProjectMemoryFactSchema, {
     _tag: "ProjectMemoryFact",
     factId: newId("fact_"),
@@ -175,8 +172,7 @@ export class ProjectMemoryState {
     if (revision === undefined) throw new MemoryRevisionUnavailableError(this.projectId, requested);
     const normalizedQuery = query.trim().toLowerCase();
     return revision.facts.filter(
-      (fact) =>
-        normalizedQuery.length === 0 || fact.claim.toLowerCase().includes(normalizedQuery),
+      (fact) => normalizedQuery.length === 0 || fact.claim.toLowerCase().includes(normalizedQuery),
     );
   }
 
@@ -233,7 +229,9 @@ export class ProjectMemoryState {
       acceptedAt: nowIso(),
     });
     const previousRevision =
-      nextRevision > 0 ? decode(MemoryRevisionSchema, nextRevision - 1) : undefined;
+      this.#snapshot.revisions.length > 1
+        ? decode(MemoryRevisionSchema, nextRevision - 1)
+        : undefined;
     const nextSnapshot = decode(ProjectMemorySnapshotSchema, {
       ...this.#snapshot,
       currentRevision: nextRevision,
@@ -301,8 +299,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
       return this.#memory;
     }
     const stored: unknown = await this.#state.storage.get("memory");
-    const snapshot =
-      stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
+    const snapshot = stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
     this.#memory = new ProjectMemoryState(decodedProjectId, snapshot);
     return this.#memory;
   }

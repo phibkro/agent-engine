@@ -51,9 +51,7 @@ export type SessionSideEffect = typeof SessionSideEffectSchema.Type;
 const terminal = (status: SessionLifecycle): status is SessionTerminalLifecycle =>
   status === "cancelled" || status === "failed" || status === "completed";
 
-const terminalResultTag = (
-  status: SessionLifecycle,
-): SessionResult["_tag"] | undefined => {
+const terminalResultTag = (status: SessionLifecycle): SessionResult["_tag"] | undefined => {
   if (status === "cancelled") return "Cancelled";
   if (status === "failed") return "Failed";
   if (status === "completed") return "Completed";
@@ -353,9 +351,9 @@ export class SessionState {
       ...this.#snapshot,
       terminalResult: result(this.sessionId, "cancelled", decodedReason),
     };
-    const observation = this.#snapshot.observations[this.#snapshot.observations.length - 1];
-    if (observation === undefined) throw new SessionTerminalError();
-    return observation;
+    const finalObservation = this.#snapshot.observations[this.#snapshot.observations.length - 1];
+    if (finalObservation === undefined) throw new SessionTerminalError();
+    return finalObservation;
   }
 
   fail(reason: string): SessionResult {
@@ -393,10 +391,7 @@ export class SessionState {
     return nextResult;
   }
 
-  recordSideEffect(
-    kind: SessionSideEffect["kind"],
-    details: Readonly<Record<string, Json>>,
-  ): void {
+  recordSideEffect(kind: SessionSideEffect["kind"], details: Readonly<Record<string, Json>>): void {
     const effect: SessionSideEffect = {
       kind,
       at: decode(TimestampSchema, nowIso()),
