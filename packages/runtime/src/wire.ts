@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import {
+  CommandResultSchema,
   ProjectIdSchema,
   SessionHostReceiptSchema,
   SessionIdSchema,
@@ -58,6 +59,19 @@ export const AttachResolutionSchema = Schema.TaggedStruct("AttachResolution", {
   expiresAt: TimestampSchema,
 });
 export type AttachResolution = typeof AttachResolutionSchema.Type;
+
+export const ProjectCreateResultSchema = Schema.TaggedStruct("ProjectCreateResult", {
+  projectId: ProjectIdSchema,
+  result: CommandResultSchema,
+});
+export type ProjectCreateResult = typeof ProjectCreateResultSchema.Type;
+
+export const WorkEngineHeader = {
+  accessClientId: "CF-Access-Client-Id",
+  accessClientSecret: "CF-Access-Client-Secret",
+  actorId: "X-Work-Engine-Actor-Id",
+  grantIds: "X-Work-Engine-Grant-Ids",
+} as const;
 
 export const ApiFailureSchema = Schema.TaggedStruct("ApiFailure", {
   code: NonEmptyStringSchema,
