@@ -18,7 +18,7 @@ export type EnvironmentId = typeof EnvironmentIdSchema.Type;
 export const EnvironmentCommandIdSchema = Schema.String.pipe(
   Schema.check(
     Schema.isPattern(
-      /^(?:create|recover|destroy)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      /^(?:create|recover|destroy|checkpoint)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
     ),
   ),
   Schema.brand("EnvironmentCommandId"),
@@ -55,10 +55,18 @@ export const EnvironmentDestroyRequestSchema = Schema.TaggedStruct("DestroyEnvir
 });
 export type EnvironmentDestroyRequest = typeof EnvironmentDestroyRequestSchema.Type;
 
+export const EnvironmentCheckpointRequestSchema = Schema.TaggedStruct("CheckpointEnvironment", {
+  commandId: EnvironmentCommandIdSchema,
+  environmentId: EnvironmentIdSchema,
+});
+export type EnvironmentCheckpointRequest = typeof EnvironmentCheckpointRequestSchema.Type;
+
+
 export const EnvironmentCommandRequestSchema = Schema.Union([
   EnvironmentCreateRequestSchema,
   EnvironmentRecoverRequestSchema,
   EnvironmentDestroyRequestSchema,
+  EnvironmentCheckpointRequestSchema,
 ]);
 export type EnvironmentCommandRequest = typeof EnvironmentCommandRequestSchema.Type;
 

@@ -49,6 +49,18 @@ export type Sha256Digest = typeof Sha256DigestSchema.Type;
 
 export const TimestampSchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)),
+  Schema.check(
+    Schema.makeFilter((value) => {
+      try {
+        return (
+          new Date(value).toISOString() === value ||
+          "timestamp must be a canonical UTC instant"
+        );
+      } catch {
+        return "timestamp must be a canonical UTC instant";
+      }
+    }),
+  ),
   Schema.brand("Timestamp"),
 );
 export type Timestamp = typeof TimestampSchema.Type;

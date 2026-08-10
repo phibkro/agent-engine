@@ -1,4 +1,7 @@
 import { Schema } from "effect";
+import { Model } from "effect/unstable/schema";
+import { canonicalize } from "./canonical.ts";
+
 import {
   CommitShaSchema,
   GrantIdSchema,
@@ -103,6 +106,19 @@ export const RepositoryIdentitySchema = Schema.Struct({
   name: NonEmptyStringSchema,
 });
 export type RepositoryIdentity = typeof RepositoryIdentitySchema.Type;
+
+export const RepositoryCandidateVerificationSchema = Schema.Struct({
+  descendedFromBase: Schema.Boolean,
+  changedPaths: Schema.Array(PathPatternSchema),
+  commitMetadata: JsonRecordSchema,
+});
+export type RepositoryCandidateVerification =
+  typeof RepositoryCandidateVerificationSchema.Type;
+
+export const RepositoryRefStateSchema = Schema.Struct({
+  sha: optional(CommitShaSchema),
+});
+export type RepositoryRefState = typeof RepositoryRefStateSchema.Type;
 
 export const CommitMetadataSchema = Schema.Struct({
   sha: CommitShaSchema,
@@ -426,13 +442,18 @@ export type ProjectMemoryFact = typeof ProjectMemoryFactSchema.Type;
 export const MemoryFactSchema = ProjectMemoryFactSchema;
 export type MemoryFact = ProjectMemoryFact;
 
-export const ProjectMemoryProposalSchema = Schema.TaggedStruct("ProjectMemoryProposal", {
+export class ProjectMemoryProposalModel extends Model.Class<ProjectMemoryProposalModel>(
+  "ProjectMemoryProposal",
+)({
+  _tag: Schema.Literal("ProjectMemoryProposal"),
   proposalId: MemoryProposalIdSchema,
   expectedRevision: MemoryRevisionSchema,
   claim: NonEmptyStringSchema,
   provenance: ProjectMemoryProvenanceSchema,
   proposedAt: TimestampSchema,
-});
+  sessionId: Model.Sensitive(NonEmptyStringSchema),
+}) {}
+export const ProjectMemoryProposalSchema = ProjectMemoryProposalModel.json;
 export type ProjectMemoryProposal = typeof ProjectMemoryProposalSchema.Type;
 export const MemoryProposalSchema = ProjectMemoryProposalSchema;
 export type MemoryProposal = ProjectMemoryProposal;
@@ -555,7 +576,7 @@ export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
 }).check(
   Schema.makeFilter((manifest) => {
     const { baseline, treatment } = manifest;
-    const sameBudget = JSON.stringify(baseline.budget) === JSON.stringify(treatment.budget);
+    const sameBudget = canonicalize(baseline.budget) === canonicalize(treatment.budget);
     const sameCache =
       JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
     const sameCommands =
