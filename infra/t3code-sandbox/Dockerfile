@@ -5,6 +5,3 @@ RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates fuse3 git sqlite3 squashfs-tools \
   && rm -rf /var/lib/apt/lists/* \
   && npm install --global t3@0.0.33
-RUN cp /etc/cloudflare/certs/cloudflare-containers-ca.crt \
-    /usr/local/share/ca-certificates/cloudflare-containers-ca.crt \
-  && update-ca-certificates

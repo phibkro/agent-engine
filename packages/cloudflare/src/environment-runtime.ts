@@ -115,6 +115,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
+      NODE_EXTRA_CA_CERTS: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
       ...(input.provider === "claude"
         ? {
             ANTHROPIC_API_KEY: lease.generationToken,
@@ -302,6 +303,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
+      NODE_EXTRA_CA_CERTS: "/etc/cloudflare/certs/cloudflare-containers-ca.crt",
       ...(input.snapshot.provider === "claude"
         ? {
             ANTHROPIC_API_KEY: lease.generationToken,
