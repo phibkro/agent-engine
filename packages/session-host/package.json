@@ -1,0 +1,21 @@
+{
+  "name": "@work-engine/session-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@work-engine/protocol": "0.0.0",
+    "@work-engine/runtime": "0.0.0",
+    "effect": "4.0.0-beta.102",
+    "json-canonicalize": "2.0.0"
+  },
+  "devDependencies": {
+    "vitest": "4.1.0"
+  }
+}
