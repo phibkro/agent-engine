@@ -489,6 +489,10 @@
       "owner": "design-contract"
     },
     {
+      "path": "design-specs/0002-cloud-flue-session-workers.md",
+      "owner": "design-contract"
+    },
+    {
       "path": ".reef/scaffold.json",
       "owner": "scaffold-contract"
     },
@@ -605,8 +609,11 @@
     {
       "id": "design-contract",
       "depends_on": [],
-      "owns": ["design-specs/0001-cloud-herdr-omp-tracer.md"],
-      "done_when": "The approved tracer contract is frozen and bound to exact founding-source hashes."
+      "owns": [
+        "design-specs/0001-cloud-herdr-omp-tracer.md",
+        "design-specs/0002-cloud-flue-session-workers.md"
+      ],
+      "done_when": "The active approved tracer contract is frozen, prior contracts retain explicit historical status, and founding claims remain bound to exact source hashes."
     },
     {
       "id": "scaffold-contract",

@@ -1,11 +1,12 @@
 ---
 summary: Terminal-first Cloudflare tracer proving governed Work through disposable OMP Sessions and an authoritative Project.
-status: frozen
+status: superseded
 approved_design: 2026-08-10
 frozen: 2026-08-10
-revision: 2
-implementation: not-started
-change_policy: Semantic changes require an explicit revision to this specification.
+revision: 3
+implementation: partially-built-not-accepted
+superseded_by: design-specs/0002-cloud-flue-session-workers.md
+change_policy: Historical contract; do not implement further. Continue from the superseding specification.
 ---
 
 # 0001 — Cloudflare Herdr + OMP tracer
