@@ -17,9 +17,14 @@ type Technology = {
   readonly disposition?: unknown;
 };
 
+type ScaffoldBoundary = {
+  readonly id?: unknown;
+  readonly owner?: unknown;
+};
 type Scaffold = {
   readonly runtimes: { readonly package_and_tasks?: unknown } | undefined;
   readonly technologies: readonly Technology[] | undefined;
+  readonly boundaries: readonly ScaffoldBoundary[] | undefined;
 };
 
 const parseJson = async (path: string): Promise<unknown> =>
@@ -53,6 +58,9 @@ const scaffoldManifest = (value: unknown): Scaffold => {
     technologies: Array.isArray(object["technologies"])
       ? (object["technologies"] as readonly Technology[])
       : undefined,
+    boundaries: Array.isArray(object["boundaries"])
+      ? (object["boundaries"] as readonly ScaffoldBoundary[])
+      : undefined,
   };
 };
 
@@ -76,6 +84,37 @@ const requiredPackageNames: Readonly<Record<string, string>> = {
   "bun-types": "@types/bun",
   typescript: "typescript",
 };
+
+const requiredEffectRules: Readonly<Record<string, readonly string[]>> = {
+  protocol: ["effect/no-cross-runtime", "effect/no-raw-json-parse", "effect/no-untyped-throw"],
+  runtime: [
+    "effect/no-ambient-authority",
+    "effect/no-cross-runtime",
+    "effect/no-premature-execution",
+    "effect/no-native-promise-control-flow",
+    "effect/no-untyped-throw",
+  ],
+  "cloud-runtime": [
+    "effect/no-cross-runtime",
+    "effect/no-premature-execution",
+    "effect/no-raw-json-parse",
+  ],
+  "control-plane": [
+    "effect/no-cross-runtime",
+    "effect/no-premature-execution",
+    "effect/no-raw-json-parse",
+    "effect/no-untyped-throw",
+  ],
+  "terminal-client": [
+    "effect/no-cross-runtime",
+    "effect/no-premature-execution",
+    "effect/no-raw-json-parse",
+    "effect/no-untyped-throw",
+  ],
+};
+
+const ruleEnabled = (value: unknown): boolean =>
+  value !== undefined && value !== "off" && (!Array.isArray(value) || value[0] !== "off");
 
 const expectedScripts: Readonly<Record<string, string>> = {
   prepare: "bun run hooks:install",
@@ -195,6 +234,47 @@ const run = async (): Promise<void> => {
         return candidate.specifier === "@phibkro/oxlint-effect-plugin";
       });
     if (!pluginLoaded) errors.push(".oxlintrc.json must load @phibkro/oxlint-effect-plugin");
+
+    const declaredBoundaries = (scaffold.boundaries ?? []).flatMap((boundary) =>
+      typeof boundary.id === "string" && typeof boundary.owner === "string"
+        ? [{ id: boundary.id, owner: boundary.owner }]
+        : [],
+    );
+    const declaredOwners = new Set(declaredBoundaries.map(({ owner }) => owner));
+    const overrides = Array.isArray(oxlint["overrides"]) ? oxlint["overrides"] : [];
+    for (const { id, owner } of declaredBoundaries) {
+      if (!existsSync(resolve(ROOT, owner))) {
+        errors.push(`scaffold boundary ${id} owns missing path ${owner}`);
+      }
+      const override = overrides.find((candidate) => {
+        if (typeof candidate !== "object" || candidate === null) return false;
+        const files = Reflect.get(candidate, "files");
+        return Array.isArray(files) && files.includes(`${owner}/**/*.ts`);
+      });
+      if (override === undefined) {
+        errors.push(`.oxlintrc.json is missing the generated boundary override for ${owner}`);
+        continue;
+      }
+      const rules = asRecord(Reflect.get(override, "rules"));
+      for (const rule of requiredEffectRules[id] ?? []) {
+        if (!ruleEnabled(rules[rule])) {
+          errors.push(`${owner} must enable ${rule}`);
+        }
+      }
+    }
+    for (const candidate of overrides) {
+      if (typeof candidate !== "object" || candidate === null) continue;
+      const files = Reflect.get(candidate, "files");
+      if (!Array.isArray(files)) continue;
+      for (const file of files) {
+        if (typeof file !== "string") continue;
+        const match = /^((?:apps|packages)\/[^/*]+)\/\*\*\//u.exec(file);
+        const owner = match?.[1];
+        if (owner !== undefined && !file.includes("**/__tests__/") && !declaredOwners.has(owner)) {
+          errors.push(`.oxlintrc.json targets undeclared boundary ${owner}`);
+        }
+      }
+    }
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "unable to inspect .oxlintrc.json");
   }

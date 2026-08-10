@@ -1,13 +1,6 @@
 import { ROOT, fail, repositoryFiles } from "./toolchain.ts";
 
-type BoundaryName =
-  | "kernel"
-  | "protocol"
-  | "runtime"
-  | "cloudflare"
-  | "session-host"
-  | "control-plane"
-  | "cli";
+type BoundaryName = "protocol" | "runtime" | "cloudflare" | "control-plane" | "cli";
 
 type Boundary = {
   readonly name: BoundaryName;
@@ -17,21 +10,6 @@ type Boundary = {
 };
 
 const boundaries: readonly Boundary[] = [
-  {
-    name: "kernel",
-    pathPrefix: "packages/kernel/",
-    forbidden: [
-      "node:",
-      "bun:",
-      "cloudflare:",
-      "@cloudflare/",
-      "@effect/",
-      "effect",
-      "alchemy",
-      "wrangler",
-    ],
-    dependencies: ["protocol"],
-  },
   {
     name: "protocol",
     pathPrefix: "packages/protocol/",
@@ -61,36 +39,29 @@ const boundaries: readonly Boundary[] = [
       "omp",
       "wrangler",
     ],
-    dependencies: ["kernel", "protocol"],
+    dependencies: ["protocol"],
   },
   {
     name: "cloudflare",
     pathPrefix: "packages/cloudflare/",
     forbidden: ["node:", "bun:", "@effect/platform-bun", "@effect/platform-node", "herdr", "omp"],
-    dependencies: ["kernel", "protocol", "runtime"],
-  },
-  {
-    name: "session-host",
-    pathPrefix: "packages/session-host/",
-    forbidden: ["cloudflare:", "@cloudflare/", "alchemy", "wrangler"],
-    dependencies: ["kernel", "protocol", "runtime"],
+    dependencies: ["protocol", "runtime"],
   },
   {
     name: "control-plane",
     pathPrefix: "apps/control-plane/",
     forbidden: ["node:", "bun:", "@effect/platform-bun", "@effect/platform-node", "herdr", "omp"],
-    dependencies: ["kernel", "protocol", "runtime", "cloudflare"],
+    dependencies: ["protocol", "runtime", "cloudflare"],
   },
   {
     name: "cli",
     pathPrefix: "apps/cli/",
     forbidden: [],
-    dependencies: ["kernel", "protocol", "runtime", "session-host"],
+    dependencies: ["protocol", "runtime"],
   },
 ];
 
-const internalPackage =
-  /^@work-engine\/(kernel|protocol|runtime|cloudflare|session-host|control-plane|cli)(?:$|\/)/u;
+const internalPackage = /^@work-engine\/(protocol|runtime|cloudflare|control-plane|cli)(?:$|\/)/u;
 
 const boundaryFor = (path: string): Boundary | undefined =>
   boundaries.find((boundary) => path.startsWith(boundary.pathPrefix));
@@ -128,6 +99,9 @@ const run = async (): Promise<void> => {
   );
   let checkedImports = 0;
   for (const { file, boundary, source } of checkedSources) {
+    if (/oxlint-disable(?:-next-line)?\s+effect\//u.test(source)) {
+      errors.push(`${file} suppresses an Effect rule; fix the boundary instead`);
+    }
     for (const specifier of importsIn(file, source)) {
       checkedImports += 1;
       const blocked = forbidden(specifier, boundary.forbidden);

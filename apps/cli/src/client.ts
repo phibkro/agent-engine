@@ -62,10 +62,10 @@ const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
   field: string,
   schema: S,
 ): S["Type"] => {
-  if (typeof response !== "object" || response === null || !(field in response)) {
-    throw new Error(`cloud-task response does not contain ${field}`);
-  }
-  const value = Reflect.get(response, field);
+  const value =
+    typeof response === "object" && response !== null && field in response
+      ? Reflect.get(response, field)
+      : undefined;
   return decodeStrict(schema, value);
 };
 

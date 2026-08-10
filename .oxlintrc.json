@@ -25,58 +25,6 @@
   },
   "overrides": [
     {
-      "files": ["packages/kernel/**/*.ts", "packages/kernel/**/*.tsx"],
-      "rules": {
-        "effect/no-ambient-authority": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "pure-library",
-            "platform": "portable"
-          }
-        ],
-        "effect/no-cross-runtime": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "pure-library",
-            "platform": "portable"
-          }
-        ],
-        "effect/no-premature-execution": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "pure-library",
-            "platform": "portable"
-          }
-        ],
-        "effect/no-untyped-throw": [
-          "error",
-          {
-            "technology": "effect-v4",
-            "role": "pure-library",
-            "platform": "portable"
-          }
-        ],
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              "node:*",
-              "bun:*",
-              "cloudflare:*",
-              "@cloudflare/*",
-              "@effect/*",
-              "alchemy",
-              "effect",
-              "wrangler"
-            ]
-          }
-        ]
-      }
-    },
-    {
       "files": ["packages/protocol/**/*.ts", "packages/protocol/**/*.tsx"],
       "rules": {
         "effect/no-cross-runtime": [
@@ -226,36 +174,25 @@
       }
     },
     {
-      "files": ["packages/session-host/**/*.ts", "packages/session-host/**/*.tsx"],
+      "files": ["apps/control-plane/**/*.ts", "apps/control-plane/**/*.tsx"],
       "rules": {
         "effect/no-cross-runtime": [
           "error",
           {
             "technology": "effect-v4",
-            "role": "runtime-adapter",
-            "platform": "bun"
+            "role": "composition-root",
+            "platform": "web-worker"
           }
         ],
         "effect/no-premature-execution": [
           "error",
           {
             "technology": "effect-v4",
-            "role": "runtime-adapter",
-            "platform": "bun"
+            "role": "composition-root",
+            "platform": "web-worker"
           }
         ],
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": ["cloudflare:*", "@cloudflare/*", "alchemy", "wrangler"]
-          }
-        ]
-      }
-    },
-    {
-      "files": ["apps/control-plane/**/*.ts", "apps/control-plane/**/*.tsx"],
-      "rules": {
-        "effect/no-cross-runtime": [
+        "effect/no-untyped-throw": [
           "error",
           {
             "technology": "effect-v4",
@@ -291,6 +228,31 @@
       "files": ["apps/cli/**/*.ts", "apps/cli/**/*.tsx"],
       "rules": {
         "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-raw-json-parse": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun",
+            "boundaries": ["external-data"]
+          }
+        ],
+        "effect/no-untyped-throw": [
           "error",
           {
             "technology": "effect-v4",

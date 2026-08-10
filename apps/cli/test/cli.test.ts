@@ -118,7 +118,9 @@ describe("0002 CLI public interface", () => {
     expect(headers.get("CF-Access-Client-Secret")).toBe("access-secret");
     expect(headers.get("Authorization")).toBe("Bearer cloud-task-token");
     expect(headers.get("Content-Type")).toBe("application/json");
-    expect(JSON.parse(String(requests[0]?.init.body))).toEqual({
+    expect(
+      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(String(requests[0]?.init.body)),
+    ).toEqual({
       _tag: "Send",
       sessionId,
       messageId,
@@ -255,7 +257,9 @@ describe("0002 CLI public interface", () => {
     };
     const envelope = failureEnvelope("result", failure);
     expect(envelope.failure).toEqual(failure);
-    expect(JSON.parse(renderJson(envelope))).toMatchObject({ ok: false, failure });
+    expect(
+      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(renderJson(envelope)),
+    ).toMatchObject({ ok: false, failure });
     expect(exitCodeFor(failure)).toBeGreaterThan(0);
   });
 });

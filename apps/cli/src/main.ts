@@ -74,14 +74,13 @@ export const runCli = (
     }),
   );
 
-export const main = async (): Promise<void> => {
-  const exit = await Effect.runPromise(runCli(Bun.argv.slice(2)));
-  // oxlint-disable-next-line effect/no-cross-runtime -- Bun exposes process.exitCode; setting it preserves flushed JSON output.
-  if (exit !== 0) process.exitCode = exit;
-};
+export const main = (argv: ReadonlyArray<string> = Bun.argv.slice(2)): Effect.Effect<void> =>
+  runCli(argv).pipe(
+    Effect.flatMap((exit) => (exit === 0 ? Effect.void : Effect.sync(() => Bun.exit(exit)))),
+  );
 
 if (import.meta.main) {
-  await main();
+  await Effect.runPromise(main());
 }
 
 export type CliExit = Exit.Exit<number, never>;
