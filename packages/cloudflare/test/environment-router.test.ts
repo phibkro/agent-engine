@@ -71,6 +71,25 @@ describe("EnvironmentRouter", () => {
     );
     expect(mismatched.status).toBe(400);
   });
+  it("rejects a public checkpoint without command identity before forwarding", async () => {
+    const { env, requests } = makeEnv();
+    const response = await new EnvironmentRouter(env).fetch(
+      new Request("https://work.example/v1/environments/demo-environment", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer operator-token",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          _tag: "CheckpointEnvironment",
+          environmentId: "demo-environment",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(requests).toHaveLength(0);
+  });
 
   it("keeps the connect address public while rate-limiting by source and environment", async () => {
     const { env, keys, requests } = makeEnv();

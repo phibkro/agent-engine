@@ -270,7 +270,7 @@ describe("Environment creation", () => {
     expect(failed?.acceptedCheckpoint?.backup.id).toBe(checkpointed.acceptedCheckpoint?.backup.id);
   });
 
-  it("continues destruction when the required final checkpoint fails", async () => {
+  it("retains a Failed tombstone after final checkpoint failure and cleans up the runtime", async () => {
     const runtime = new RecordingRuntime();
     const coordinator = new EnvironmentCoordinator({
       store: new InMemoryEnvironmentStore(),
@@ -281,7 +281,7 @@ describe("Environment creation", () => {
     await coordinator.create(request);
     runtime.failCheckpoint = true;
 
-    const destroyed = await coordinator.destroy(
+    const failed = await coordinator.destroy(
       decodeUnknownStrict(EnvironmentDestroyRequestSchema, {
         _tag: "DestroyEnvironment",
         commandId: "destroy-00000000-0000-4000-8000-000000000002",
@@ -289,7 +289,8 @@ describe("Environment creation", () => {
       }),
     );
 
-    expect(destroyed.lifecycle).toBe("Destroyed");
+    expect(failed.lifecycle).toBe("Failed");
+    expect(failed.generation?.id).toBe("sandbox-1");
     expect(runtime.finalCheckpoint).toBe(true);
     expect(runtime.destroys).toBe(1);
   });
