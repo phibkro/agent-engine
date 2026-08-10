@@ -1,8 +1,4 @@
-import {
-  ContentRevisionSchema,
-  EventRevisionSchema,
-  PolicyIdSchema,
-} from "@work-engine/protocol";
+import { ContentRevisionSchema, EventRevisionSchema, PolicyIdSchema } from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfile,

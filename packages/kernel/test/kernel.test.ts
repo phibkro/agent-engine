@@ -235,6 +235,7 @@ describe("protocol and kernel contracts", () => {
   test("folding the same event history is deterministic and Merge alone changes content", () => {
     const state = emptyProjectState(PROJECT_ID);
     const event = {
+      _tag: "EventEnvelope" as const,
       eventRevision: 1 as EventRevision,
       commandId: COMMAND_ID,
       event: { _tag: "ProjectCreated" as const, projectId: PROJECT_ID, policy: tracerPolicy() },

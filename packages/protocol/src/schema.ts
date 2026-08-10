@@ -114,6 +114,7 @@ export type ActorKind = typeof ActorKindSchema.Type;
 
 export const AuthenticatedActorSchema = Schema.TaggedStruct("AuthenticatedActor", {
   actorId: ActorIdSchema,
+  sessionId: optional(SessionIdSchema),
   kind: ActorKindSchema,
   presentedGrants: Schema.Array(GrantIdSchema),
 });

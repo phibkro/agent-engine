@@ -43,7 +43,8 @@ const utf8PathCompare = (left: string, right: string): number => {
 
 export const sortManifestEntries = <Entry extends { readonly path: string }>(
   entries: readonly Entry[],
-): readonly Entry[] => entries.slice().sort((left, right) => utf8PathCompare(left.path, right.path));
+): readonly Entry[] =>
+  entries.slice().sort((left, right) => utf8PathCompare(left.path, right.path));
 
 export const digestManifest = async (
   entries: readonly {

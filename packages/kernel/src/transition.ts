@@ -1,8 +1,4 @@
-import {
-  ActorIdSchema,
-  ContentRevisionSchema,
-  EventRevisionSchema,
-} from "@work-engine/protocol";
+import { ActorIdSchema, ContentRevisionSchema, EventRevisionSchema } from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfileId,
@@ -23,6 +19,7 @@ import type {
   Grant,
   ProjectCommand,
   ProjectEvent,
+  ProjectId,
   ProposalId,
   RejectedReceipt,
   RejectionCode,
@@ -92,7 +89,12 @@ const accepted = (
   effectRequests: readonly EffectRequest[] = [],
 ): TransitionOutcome => {
   const nextRevision = eventRevision(state.eventRevision + 1);
-  const envelope: EventEnvelope = { eventRevision: nextRevision, commandId, event };
+  const envelope: EventEnvelope = {
+    _tag: "EventEnvelope",
+    eventRevision: nextRevision,
+    commandId,
+    event,
+  };
   const receipt: AcceptedReceipt = {
     _tag: "Accepted",
     eventRevision: nextRevision,
@@ -885,12 +887,7 @@ const dispatchCommand = (
         proposalId: proposal.proposalId,
       });
       if (grant === undefined) {
-        return reject(
-          state,
-          envelope.commandId,
-          "unauthorized",
-          "actor lacks proposal.merge",
-        );
+        return reject(state, envelope.commandId, "unauthorized", "actor lacks proposal.merge");
       }
       if (proposal.basisContentRevision !== state.contentRevision) {
         return reject(
@@ -912,7 +909,7 @@ const dispatchCommand = (
           "Merge candidate digest differs from Proposal",
         );
       }
-      if (actor.actorId === proposal.proposerSessionId) {
+      if (actor.sessionId === proposal.proposerSessionId) {
         return reject(
           state,
           envelope.commandId,
@@ -1079,7 +1076,6 @@ export const createProject = (
   projectId: ProjectId,
   actor?: AuthenticatedActor,
 ): TransitionOutcome => {
-  const context: TransitionContext =
-    actor === undefined ? { projectId } : { projectId, actor };
+  const context: TransitionContext = actor === undefined ? { projectId } : { projectId, actor };
   return transition(undefined, request, context);
 };

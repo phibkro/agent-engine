@@ -3,7 +3,9 @@ import { Schema } from "effect";
 const UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const uuidId = (prefix: string, semanticSuffixes: readonly string[] = []) => {
   const semantic = semanticSuffixes.length === 0 ? "" : `|(?:${semanticSuffixes.join("|")})`;
-  return Schema.String.pipe(Schema.check(Schema.isPattern(new RegExp(`^${prefix}(?:${UUID_V4}${semantic})$`))));
+  return Schema.String.pipe(
+    Schema.check(Schema.isPattern(new RegExp(`^${prefix}(?:${UUID_V4}${semantic})$`))),
+  );
 };
 
 export const ProjectIdSchema = uuidId("prj_").pipe(Schema.brand("ProjectId"));

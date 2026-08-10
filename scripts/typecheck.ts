@@ -15,7 +15,7 @@ const compilerPathResult = run(["bun", "--bun", "effect-tsgo", "get-exe-path"], 
 if (compilerPathResult.exitCode !== 0)
   fail(["unable to resolve the pinned Effect TypeScript compiler"]);
 
-const compilerPath = compilerPathResult.stdout.toString().trim();
+const compilerPath = compilerPathResult.stdout?.toString().trim() ?? "";
 const compilerRoot = resolve(ROOT, "node_modules");
 const compilerRelativePath = relative(compilerRoot, compilerPath);
 if (
