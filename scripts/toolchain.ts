@@ -10,18 +10,18 @@ export type CommandResult = {
 
 export const runCommand = (
   command: readonly string[],
-  options: { readonly cwd?: string } = {}
+  options: { readonly cwd?: string } = {},
 ): CommandResult => {
   const result = Bun.spawnSync({
     cmd: [...command],
     cwd: options.cwd ?? ROOT,
     stdout: "pipe",
-    stderr: "pipe"
+    stderr: "pipe",
   });
   return {
     exitCode: result.exitCode ?? 1,
     stdout: result.stdout.toString(),
-    stderr: result.stderr.toString()
+    stderr: result.stderr.toString(),
   };
 };
 

@@ -28,9 +28,9 @@ const boundaries: readonly Boundary[] = [
       "@effect/",
       "effect",
       "alchemy",
-      "wrangler"
+      "wrangler",
     ],
-    dependencies: []
+    dependencies: [],
   },
   {
     name: "protocol",
@@ -42,9 +42,9 @@ const boundaries: readonly Boundary[] = [
       "@cloudflare/",
       "@effect/platform",
       "alchemy",
-      "wrangler"
+      "wrangler",
     ],
-    dependencies: []
+    dependencies: [],
   },
   {
     name: "runtime",
@@ -59,47 +59,41 @@ const boundaries: readonly Boundary[] = [
       "alchemy",
       "herdr",
       "omp",
-      "wrangler"
+      "wrangler",
     ],
-    dependencies: ["kernel", "protocol"]
+    dependencies: ["kernel", "protocol"],
   },
   {
     name: "cloudflare",
     pathPrefix: "packages/cloudflare/",
     forbidden: [],
-    dependencies: ["kernel", "protocol", "runtime"]
+    dependencies: ["kernel", "protocol", "runtime"],
   },
   {
     name: "session-host",
     pathPrefix: "packages/session-host/",
     forbidden: ["cloudflare:", "@cloudflare/", "alchemy", "wrangler"],
-    dependencies: ["kernel", "protocol", "runtime"]
+    dependencies: ["kernel", "protocol", "runtime"],
   },
   {
     name: "control-plane",
     pathPrefix: "apps/control-plane/",
-    forbidden: [
-      "node:",
-      "bun:",
-      "@effect/platform-bun",
-      "@effect/platform-node",
-      "herdr",
-      "omp"
-    ],
-    dependencies: ["kernel", "protocol", "runtime", "cloudflare"]
+    forbidden: ["node:", "bun:", "@effect/platform-bun", "@effect/platform-node", "herdr", "omp"],
+    dependencies: ["kernel", "protocol", "runtime", "cloudflare"],
   },
   {
     name: "cli",
     pathPrefix: "apps/cli/",
     forbidden: [],
-    dependencies: ["kernel", "protocol", "runtime", "session-host"]
-  }
+    dependencies: ["kernel", "protocol", "runtime", "session-host"],
+  },
 ];
 
 const importFrom = /\b(?:import|export)\s+(?:type\s+)?[^"'`\n;]*?\sfrom\s*["']([^"']+)["']/gu;
 const sideEffectImport = /\bimport\s*["']([^"']+)["']/gu;
 const dynamicImport = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu;
-const internalPackage = /^@work-engine\/(kernel|protocol|runtime|cloudflare|session-host|control-plane|cli)(?:$|\/)/u;
+const internalPackage =
+  /^@work-engine\/(kernel|protocol|runtime|cloudflare|session-host|control-plane|cli)(?:$|\/)/u;
 
 const boundaryFor = (path: string): Boundary | undefined =>
   boundaries.find((boundary) => path.startsWith(boundary.pathPrefix));
@@ -121,20 +115,21 @@ const forbidden = (specifier: string, prefixes: readonly string[]): string | und
 
 const run = async (): Promise<void> => {
   const errors: string[] = [];
-  let files: readonly string[];
-  try {
-    files = repositoryFiles();
-  } catch (error) {
-    fail([error instanceof Error ? error.message : "unable to enumerate repository files"]);
-  }
+  const files = repositoryFiles();
 
-  let checkedFiles = 0;
+  const checkedSources = await Promise.all(
+    files.flatMap((file) => {
+      const boundary = boundaryFor(file);
+      if (boundary === undefined || !/\.(?:cts|js|jsx|mjs|mts|ts|tsx)$/u.test(file)) return [];
+      return [
+        Bun.file(`${ROOT}/${file}`)
+          .text()
+          .then((source) => ({ file, boundary, source })),
+      ];
+    }),
+  );
   let checkedImports = 0;
-  for (const file of files) {
-    const boundary = boundaryFor(file);
-    if (boundary === undefined || !/\.(?:cts|js|jsx|mjs|mts|ts|tsx)$/u.test(file)) continue;
-    checkedFiles += 1;
-    const source = await Bun.file(`${ROOT}/${file}`).text();
+  for (const { file, boundary, source } of checkedSources) {
     for (const specifier of importsIn(source)) {
       checkedImports += 1;
       const blocked = forbidden(specifier, boundary.forbidden);
@@ -148,14 +143,18 @@ const run = async (): Promise<void> => {
       if (internal !== null) {
         const dependency = internal[1] as BoundaryName;
         if (!boundary.dependencies.includes(dependency)) {
-          errors.push(`${file} imports ${specifier}; ${boundary.name} cannot depend on ${dependency}`);
+          errors.push(
+            `${file} imports ${specifier}; ${boundary.name} cannot depend on ${dependency}`,
+          );
         }
       }
     }
   }
 
   if (errors.length > 0) fail(errors);
-  console.log(`Architecture import audit passed for ${checkedFiles} source files and ${checkedImports} imports.`);
+  console.log(
+    `Architecture import audit passed for ${checkedSources.length} source files and ${checkedImports} imports.`,
+  );
 };
 
 await run();

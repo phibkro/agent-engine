@@ -84,7 +84,7 @@
             "technology": "effect-v4",
             "role": "effect-library",
             "platform": "portable",
-            "boundary": "external-data"
+            "boundaries": ["external-data"]
           }
         ],
         "effect/no-untyped-throw": [
@@ -198,7 +198,7 @@
             "technology": "effect-v4",
             "role": "runtime-adapter",
             "platform": "web-worker",
-            "boundary": "external-data"
+            "boundaries": ["external-data"]
           }
         ]
       }
@@ -233,12 +233,7 @@
         "no-restricted-imports": [
           "error",
           {
-            "patterns": [
-              "cloudflare:*",
-              "@cloudflare/*",
-              "alchemy",
-              "wrangler"
-            ]
+            "patterns": ["cloudflare:*", "@cloudflare/*", "alchemy", "wrangler"]
           }
         ]
       }
@@ -268,7 +263,7 @@
             "technology": "effect-v4",
             "role": "composition-root",
             "platform": "web-worker",
-            "boundary": "external-data"
+            "boundaries": ["external-data"]
           }
         ],
         "no-restricted-imports": [

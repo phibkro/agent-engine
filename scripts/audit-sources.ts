@@ -18,18 +18,18 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
 const readManifest = (value: unknown): SourceManifest => {
-  if (!isRecord(value) || value.schemaVersion !== "work-engine/founding-sources/v1") {
+  if (!isRecord(value) || value["schemaVersion"] !== "work-engine/founding-sources/v1") {
     throw new Error("docs/founding/SOURCES.json has an unsupported schemaVersion");
   }
-  if (!Array.isArray(value.sources) || value.sources.length === 0) {
+  if (!Array.isArray(value["sources"]) || value["sources"].length === 0) {
     throw new Error("docs/founding/SOURCES.json must contain at least one source");
   }
   const sources: SourceEntry[] = [];
-  for (const [index, candidate] of value.sources.entries()) {
+  for (const [index, candidate] of value["sources"].entries()) {
     if (!isRecord(candidate)) throw new Error(`source entry ${index} is not an object`);
-    const role = candidate.role;
-    const repositoryPath = candidate.repositoryPath;
-    const sha256 = candidate.sha256;
+    const role = candidate["role"];
+    const repositoryPath = candidate["repositoryPath"];
+    const sha256 = candidate["sha256"];
     if (
       typeof role !== "string" ||
       typeof repositoryPath !== "string" ||
@@ -40,7 +40,7 @@ const readManifest = (value: unknown): SourceManifest => {
     }
     sources.push({ role, repositoryPath, sha256 });
   }
-  return { schemaVersion: value.schemaVersion, sources };
+  return { schemaVersion: value["schemaVersion"], sources };
 };
 
 const digest = async (path: string): Promise<string> =>
@@ -56,15 +56,16 @@ const run = async (): Promise<void> => {
   const manifestPath = resolve(ROOT, "docs/founding/SOURCES.json");
   if (!existsSync(manifestPath)) fail(["missing docs/founding/SOURCES.json"]);
 
-  let manifest: SourceManifest;
-  try {
-    manifest = readManifest(JSON.parse(await Bun.file(manifestPath).text()) as unknown);
-  } catch (error) {
-    fail([error instanceof Error ? error.message : "unable to parse SOURCES.json"]);
-  }
+  const manifest = await Bun.file(manifestPath)
+    .text()
+    .then((text) => readManifest(JSON.parse(text) as unknown))
+    .catch((error: unknown) =>
+      fail([error instanceof Error ? error.message : "unable to parse SOURCES.json"]),
+    );
 
   const errors: string[] = [];
   const seenPaths = new Set<string>();
+  const digestTargets: Array<{ readonly source: SourceEntry; readonly path: string }> = [];
   for (const source of manifest.sources) {
     const path = resolve(ROOT, source.repositoryPath);
     const normalized = relative(ROOT, path);
@@ -81,7 +82,12 @@ const run = async (): Promise<void> => {
       errors.push(`${source.role} is missing: ${source.repositoryPath}`);
       continue;
     }
-    const actual = await digest(path);
+    digestTargets.push({ source, path });
+  }
+  const digestResults = await Promise.all(
+    digestTargets.map(async ({ source, path }) => ({ source, actual: await digest(path) })),
+  );
+  for (const { source, actual } of digestResults) {
     if (actual !== source.sha256) {
       errors.push(`${source.repositoryPath} sha256 ${actual} does not match ${source.sha256}`);
     }
@@ -94,26 +100,28 @@ const run = async (): Promise<void> => {
     errors.push(error instanceof Error ? error.message : "unable to enumerate repository files");
   }
 
-  let scanned = 0;
-  for (const file of files) {
-    if (
-      !sourceLike.test(file) ||
-      (!file.startsWith("packages/") &&
-        !file.startsWith("apps/") &&
-        !file.startsWith("infra/") &&
-        !file.startsWith("fixtures/"))
-    ) {
-      continue;
-    }
-    if (file === "scripts/audit-sources.ts") continue;
-    scanned += 1;
-    const text = await Bun.file(resolve(ROOT, file)).text();
+  const scannableFiles = files.filter(
+    (file) =>
+      sourceLike.test(file) &&
+      (file.startsWith("packages/") ||
+        file.startsWith("apps/") ||
+        file.startsWith("infra/") ||
+        file.startsWith("fixtures/")) &&
+      file !== "scripts/audit-sources.ts",
+  );
+  const scannedFiles = await Promise.all(
+    scannableFiles.map(async (file) => ({
+      file,
+      text: await Bun.file(resolve(ROOT, file)).text(),
+    })),
+  );
+  for (const { file, text } of scannedFiles) {
     if (workgraph.test(text)) {
       errors.push(`${file} contains Workgraph source or a Workgraph dependency`);
     }
     if (copiedOrAdapted.test(text)) {
       errors.push(
-        `${file} contains copied/adapted source without a resolved provenance entry in docs/founding/SOURCES.json`
+        `${file} contains copied/adapted source without a resolved provenance entry in docs/founding/SOURCES.json`,
       );
     }
   }
@@ -126,7 +134,7 @@ const run = async (): Promise<void> => {
 
   if (errors.length > 0) fail(errors);
   console.log(`Verified ${manifest.sources.length} founding source hashes.`);
-  console.log(`Workgraph source: absent (scanned ${scanned} product source files).`);
+  console.log(`Workgraph source: absent (scanned ${scannedFiles.length} product source files).`);
   console.log("Copied/adapted source provenance: no unresolved markers.");
 };
 

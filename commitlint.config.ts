@@ -22,8 +22,8 @@ export default {
         "research",
         "design",
         "governance",
-        "plans"
-      ]
-    ]
-  }
+        "plans",
+      ],
+    ],
+  },
 };

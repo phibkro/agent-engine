@@ -13,7 +13,7 @@ const inspect = Bun.spawnSync({
   cmd: ["git", "config", "--local", "--get-all", "core.hooksPath"],
   cwd: root,
   stdout: "pipe",
-  stderr: "pipe"
+  stderr: "pipe",
 });
 
 if (inspect.exitCode !== 0 && inspect.exitCode !== 1) {
@@ -34,7 +34,7 @@ const conflictingPath = configuredPaths.find((value) => resolve(root, value) !==
 
 if (conflictingPath !== undefined) {
   console.error(
-    `Refusing to overwrite core.hooksPath ${JSON.stringify(conflictingPath)}; configure ${hooksPath} explicitly first.`
+    `Refusing to overwrite core.hooksPath ${JSON.stringify(conflictingPath)}; configure ${hooksPath} explicitly first.`,
   );
   process.exit(1);
 }
@@ -44,7 +44,7 @@ const result = Bun.spawnSync({
   cwd: root,
   stdin: "inherit",
   stdout: "inherit",
-  stderr: "inherit"
+  stderr: "inherit",
 });
 
 if (result.exitCode !== 0) {

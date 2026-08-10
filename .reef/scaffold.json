@@ -419,31 +419,55 @@
     {
       "id": "kernel",
       "owner": "packages/kernel",
-      "owns": ["Project state", "admissible transitions", "semantic laws", "deterministic derivations"],
+      "owns": [
+        "Project state",
+        "admissible transitions",
+        "semantic laws",
+        "deterministic derivations"
+      ],
       "excludes": ["I/O", "Effect runtime execution", "platform imports", "encoded unknown data"]
     },
     {
       "id": "protocol",
       "owner": "packages/protocol",
-      "owns": ["persistent schemas", "command and observation envelopes", "canonical encoding", "domain identifiers"],
+      "owns": [
+        "persistent schemas",
+        "command and observation envelopes",
+        "canonical encoding",
+        "domain identifiers"
+      ],
       "excludes": ["storage", "transition decisions", "provider SDKs"]
     },
     {
       "id": "runtime",
       "owner": "packages/runtime",
-      "owns": ["Effect service contracts", "application orchestration", "typed operational failures"],
+      "owns": [
+        "Effect service contracts",
+        "application orchestration",
+        "typed operational failures"
+      ],
       "excludes": ["live Layer selection", "Cloudflare", "Herdr", "OMP"]
     },
     {
       "id": "project-authority",
       "owner": "packages/cloudflare",
-      "owns": ["Project Durable Object transaction", "D1, R2, Queue, and Workflow adapters", "Cloudflare auth and transport", "Container lifecycle adapter"],
+      "owns": [
+        "Project Durable Object transaction",
+        "D1, R2, Queue, and Workflow adapters",
+        "Cloudflare auth and transport",
+        "Container lifecycle adapter"
+      ],
       "excludes": ["new domain semantics", "terminal presentation"]
     },
     {
       "id": "session-host",
       "owner": "packages/session-host",
-      "owns": ["Herdr and OMP process integration", "worktree custody", "lifecycle observations", "Evidence capture"],
+      "owns": [
+        "Herdr and OMP process integration",
+        "worktree custody",
+        "lifecycle observations",
+        "Evidence capture"
+      ],
       "excludes": ["Project authority", "operator approval", "Merge policy"]
     },
     {
@@ -599,7 +623,16 @@
     {
       "id": "toolchain",
       "depends_on": ["scaffold-contract", "founding-import"],
-      "owns": ["package.json", "bun.lock", "tsconfig.json", ".oxfmtrc.json", ".oxlintrc.json", "commitlint.config.ts", ".githooks/", "scripts/"],
+      "owns": [
+        "package.json",
+        "bun.lock",
+        "tsconfig.json",
+        ".oxfmtrc.json",
+        ".oxlintrc.json",
+        "commitlint.config.ts",
+        ".githooks/",
+        "scripts/"
+      ],
       "done_when": "Exact dependencies install; generated configuration and source/license audits pass; hooks enforce path ownership; canonical deterministic commands resolve."
     },
     {

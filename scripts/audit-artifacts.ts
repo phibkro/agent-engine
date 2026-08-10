@@ -17,7 +17,8 @@ const isArtifact = (value: unknown): value is Artifact => {
 };
 
 const readScaffold = (value: unknown): Scaffold => {
-  if (typeof value !== "object" || value === null) throw new Error("scaffold manifest is not an object");
+  if (typeof value !== "object" || value === null)
+    throw new Error("scaffold manifest is not an object");
   const candidate = value as { readonly artifacts?: unknown };
   if (!Array.isArray(candidate.artifacts) || !candidate.artifacts.every(isArtifact)) {
     throw new Error("scaffold manifest artifacts must be an array of { path, owner }");
@@ -29,14 +30,12 @@ const matches = (path: string, artifact: Artifact): boolean =>
   artifact.path.endsWith("/") ? path.startsWith(artifact.path) : path === artifact.path;
 
 const run = async (): Promise<void> => {
-  let scaffold: Scaffold;
-  try {
-    scaffold = readScaffold(
-      JSON.parse(await Bun.file(resolve(ROOT, ".reef/scaffold.json")).text()) as unknown
+  const scaffold = await Bun.file(resolve(ROOT, ".reef/scaffold.json"))
+    .text()
+    .then((text) => readScaffold(JSON.parse(text) as unknown))
+    .catch((error: unknown) =>
+      fail([error instanceof Error ? error.message : "unable to read .reef/scaffold.json"]),
     );
-  } catch (error) {
-    fail([error instanceof Error ? error.message : "unable to read .reef/scaffold.json"]);
-  }
 
   const errors: string[] = [];
   const seen = new Set<string>();
@@ -57,12 +56,16 @@ const run = async (): Promise<void> => {
   } catch (error) {
     errors.push(error instanceof Error ? error.message : "unable to enumerate repository files");
   }
-  const unowned = files.filter((path) => !scaffold.artifacts.some((artifact) => matches(path, artifact)));
+  const unowned = files.filter(
+    (path) => !scaffold.artifacts.some((artifact) => matches(path, artifact)),
+  );
   for (const path of unowned) errors.push(`staged path has no scaffold owner: ${path}`);
 
   if (errors.length > 0) fail(errors);
   if (staged) {
-    console.log(`Artifact ownership verified for ${files.length} staged path${files.length === 1 ? "" : "s"}.`);
+    console.log(
+      `Artifact ownership verified for ${files.length} staged path${files.length === 1 ? "" : "s"}.`,
+    );
   } else {
     console.log(`Validated ${scaffold.artifacts.length} scaffold artifact ownership entries.`);
   }

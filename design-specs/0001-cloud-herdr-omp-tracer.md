@@ -20,10 +20,10 @@ Build one real software-change journey that proves Work Engine's semantic kernel
 
 ### Source inputs
 
-| Source | Role | SHA-256 |
-| --- | --- | --- |
-| `/home/nori/Downloads/Project Agent Runtime(1).md` | North-star vision and constitution | `4453ffe39c9345c2071514fcc2457291d796872cc794b96dd0665be8fb32ed89` |
-| `/home/nori/Downloads/Project Agent Runtime.md` | Draft v0.5 ontology and semantic laws | `fc8e68a5bf3279b404d8c477ece2f6d9c7f6efc8a596e84d93535f2c5b1bd049` |
+| Source                                             | Role                                  | SHA-256                                                            |
+| -------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| `/home/nori/Downloads/Project Agent Runtime(1).md` | North-star vision and constitution    | `4453ffe39c9345c2071514fcc2457291d796872cc794b96dd0665be8fb32ed89` |
+| `/home/nori/Downloads/Project Agent Runtime.md`    | Draft v0.5 ontology and semantic laws | `fc8e68a5bf3279b404d8c477ece2f6d9c7f6efc8a596e84d93535f2c5b1bd049` |
 
 The initial scaffold imports those exact inputs into the repository and records their provenance. The repository copies then become canonical; the download paths remain provenance only.
 
@@ -57,40 +57,40 @@ Prove the smallest complete path from intended Work to governed authoritative ch
 
 All enforcers are planned until implementation is accepted.
 
-| ID | Contract | Planned enforcer |
-| --- | --- | --- |
-| `WE-001` | One Project authority serializes accepted mutable Project facts. | Pure kernel transition API + Project Durable Object transaction tests |
-| `WE-002` | Work identity and lifecycle do not depend on Agent Profile or Session identity. | Kernel types and transition laws |
-| `WE-003` | A Session is one bounded attempt; every retry creates a new Session. | Session constructor + retry property tests |
-| `WE-004` | Handoffs, Evidence, artifacts, and Proposals are durable but not authoritative Project change. | Distinct protocol types; no transition path except Merge |
-| `WE-005` | Merge requires revision compatibility, satisfied Gates, applicable Policy, and a scoped Grant. | Total Merge decision function |
-| `WE-006` | Instructions and model-selected arguments never grant authority. | Actor-bound capability tokens outside agent input |
-| `WE-007` | Every derived view carries the canonical revision or source digest that warrants it. | Projection types + drift tests |
-| `WE-008` | Herdr metadata, panes, transcripts, and process state are disposable projections. | Dependency boundary; no Herdr import in kernel or Project storage |
-| `WE-009` | Container loss cannot erase accepted Project state or promote partial output. | Durable Object/R2 boundary + interruption acceptance test |
-| `WE-010` | Duplicate commands and deliveries are idempotent by stable identity. | Durable command receipts |
-| `WE-011` | Concurrent mutation uses distinct Workspace Views or explicit serialization. | Resource claims + admission policy |
-| `WE-012` | Human approval, check Evidence, and agent assertions remain different evidence kinds. | Disjoint schemas and Gate predicates |
-| `WE-013` | No unlicensed Workgraph source enters the repository. | Dependency/source audit |
+| ID       | Contract                                                                                       | Planned enforcer                                                      |
+| -------- | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `WE-001` | One Project authority serializes accepted mutable Project facts.                               | Pure kernel transition API + Project Durable Object transaction tests |
+| `WE-002` | Work identity and lifecycle do not depend on Agent Profile or Session identity.                | Kernel types and transition laws                                      |
+| `WE-003` | A Session is one bounded attempt; every retry creates a new Session.                           | Session constructor + retry property tests                            |
+| `WE-004` | Handoffs, Evidence, artifacts, and Proposals are durable but not authoritative Project change. | Distinct protocol types; no transition path except Merge              |
+| `WE-005` | Merge requires revision compatibility, satisfied Gates, applicable Policy, and a scoped Grant. | Total Merge decision function                                         |
+| `WE-006` | Instructions and model-selected arguments never grant authority.                               | Actor-bound capability tokens outside agent input                     |
+| `WE-007` | Every derived view carries the canonical revision or source digest that warrants it.           | Projection types + drift tests                                        |
+| `WE-008` | Herdr metadata, panes, transcripts, and process state are disposable projections.              | Dependency boundary; no Herdr import in kernel or Project storage     |
+| `WE-009` | Container loss cannot erase accepted Project state or promote partial output.                  | Durable Object/R2 boundary + interruption acceptance test             |
+| `WE-010` | Duplicate commands and deliveries are idempotent by stable identity.                           | Durable command receipts                                              |
+| `WE-011` | Concurrent mutation uses distinct Workspace Views or explicit serialization.                   | Resource claims + admission policy                                    |
+| `WE-012` | Human approval, check Evidence, and agent assertions remain different evidence kinds.          | Disjoint schemas and Gate predicates                                  |
+| `WE-013` | No unlicensed Workgraph source enters the repository.                                          | Dependency/source audit                                               |
 
 ### Minimal semantic inventory
 
-| Object | Required tracer identity and relations |
-| --- | --- |
-| Project | stable `projectId`, monotonic `eventRevision`, Merge-only `contentRevision`, current Policy reference |
-| Work | stable `workId`, Project, objective, Work Kind, Work Process, lifecycle |
-| Work Process | stable process identity, Work, dependencies, Resource requirements, required Gates |
-| Agent Profile | stable profile identity, role, OMP harness reference, instruction/skill references, model policy |
-| Session | unique `sessionId`, Work, Profile, attempt number, predecessor attempt, finite Context reference, deadline, status |
-| Workspace View | stable view identity, Project basis `contentRevision`, content manifest, writable scope, lease |
-| Resource Claim | Resource identity, read/write mode, owner Session, validity interval |
-| Handoff | producer and intended consumer, basis event/content revisions, payload reference, provenance |
-| Evidence | Evidence Kind/Role, exact subject, producer, observation time, payload digest, limitations |
-| Proposal | proposer, immutable submission event revision, basis content revision, candidate artifact/events, supporting Evidence |
-| Gate | deterministic predicate and required Evidence/approval roles; satisfaction is derived |
-| Grant | subject actor, capability, scope, validity, granting authority |
-| Policy | stable identity and revision, admission/transition/authority rules |
-| Merge Receipt | Proposal, actor, evaluated Policy/Gates/Grant, prior/resulting event and content revisions |
+| Object         | Required tracer identity and relations                                                                                |
+| -------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Project        | stable `projectId`, monotonic `eventRevision`, Merge-only `contentRevision`, current Policy reference                 |
+| Work           | stable `workId`, Project, objective, Work Kind, Work Process, lifecycle                                               |
+| Work Process   | stable process identity, Work, dependencies, Resource requirements, required Gates                                    |
+| Agent Profile  | stable profile identity, role, OMP harness reference, instruction/skill references, model policy                      |
+| Session        | unique `sessionId`, Work, Profile, attempt number, predecessor attempt, finite Context reference, deadline, status    |
+| Workspace View | stable view identity, Project basis `contentRevision`, content manifest, writable scope, lease                        |
+| Resource Claim | Resource identity, read/write mode, owner Session, validity interval                                                  |
+| Handoff        | producer and intended consumer, basis event/content revisions, payload reference, provenance                          |
+| Evidence       | Evidence Kind/Role, exact subject, producer, observation time, payload digest, limitations                            |
+| Proposal       | proposer, immutable submission event revision, basis content revision, candidate artifact/events, supporting Evidence |
+| Gate           | deterministic predicate and required Evidence/approval roles; satisfaction is derived                                 |
+| Grant          | subject actor, capability, scope, validity, granting authority                                                        |
+| Policy         | stable identity and revision, admission/transition/authority rules                                                    |
+| Merge Receipt  | Proposal, actor, evaluated Policy/Gates/Grant, prior/resulting event and content revisions                            |
 
 `History` and operator status are derived projections of accepted events. `Canonical State` is the logical composition of accepted authoritative facts, not a second stored entity with an independent writer.
 
@@ -138,18 +138,18 @@ flowchart LR
 
 ## Ownership and authority
 
-| Component | Owns | Must not own |
-| --- | --- | --- |
-| Pure kernel | admissible transitions and deterministic derivations | I/O, time, credentials, provider state |
+| Component                        | Owns                                                                                                                     | Must not own                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Pure kernel                      | admissible transitions and deterministic derivations                                                                     | I/O, time, credentials, provider state               |
 | Project Authority Durable Object | canonical Project event/content revisions, accepted events, Work, Resource claims, Policy, Gates, Grants, Merge receipts | artifact bytes, terminal process state, model memory |
-| R2 | content-addressed artifacts, Handoffs, Evidence payloads, workspace manifests, session exports | mutable Project authority |
-| D1 | cross-Project discovery and query projections | independently writable Project facts |
-| Queue and Session Workflow | at-least-once effect delivery, durable attempt supervision, bounded retries and waits | Project facts, Gate or Merge decisions |
-| Project workspace Container | disposable filesystem, Herdr server, OMP processes, local worktrees | accepted Project truth |
-| Herdr | terminal topology, lifecycle observations, display metadata | Work, Gate, Grant, Proposal, or Merge semantics |
-| OMP Project Manager | bounded coordination attempt through scoped capabilities | approval identity, Merge authority, hidden policy |
-| OMP worker | bounded implementation attempt in one Workspace View | Project authority or sibling Workspace mutation |
-| `work` CLI/MCP | decoded command/query transport with actor binding | policy decisions or local shadow state |
+| R2                               | content-addressed artifacts, Handoffs, Evidence payloads, workspace manifests, session exports                           | mutable Project authority                            |
+| D1                               | cross-Project discovery and query projections                                                                            | independently writable Project facts                 |
+| Queue and Session Workflow       | at-least-once effect delivery, durable attempt supervision, bounded retries and waits                                    | Project facts, Gate or Merge decisions               |
+| Project workspace Container      | disposable filesystem, Herdr server, OMP processes, local worktrees                                                      | accepted Project truth                               |
+| Herdr                            | terminal topology, lifecycle observations, display metadata                                                              | Work, Gate, Grant, Proposal, or Merge semantics      |
+| OMP Project Manager              | bounded coordination attempt through scoped capabilities                                                                 | approval identity, Merge authority, hidden policy    |
+| OMP worker                       | bounded implementation attempt in one Workspace View                                                                     | Project authority or sibling Workspace mutation      |
+| `work` CLI/MCP                   | decoded command/query transport with actor binding                                                                       | policy decisions or local shadow state               |
 
 Tracer 0001 deliberately places all accepted mutable Project facts in one Project Durable Object. This is a deployment specialization, not an ontology claim that every future Project must map to one runtime object. Artifact bytes remain under R2 custody; their accepted references remain Project facts. A future distributed authority layout must still assign exactly one authority to each mutable fact.
 
@@ -224,14 +224,14 @@ ProjectCreated
 
 ### Grants and Gates
 
-| Actor | Granted tracer capabilities | Explicitly absent |
-| --- | --- | --- |
-| operator | `project.create`, `work.submit`, `manager.open`, `session.cancel`, `proposal.read`, `proposal.approve`, `proposal.reject`, `proposal.merge` | infrastructure mutation and external Git/deploy effects |
-| Project Manager Session | `project.read`, `work.read`, `worker.start`, `session.cancel`, `evidence.read`, `proposal.read` | `proposal.approve`, `proposal.merge` |
-| worker Session | scoped `project.read`, `workspace.read`, `workspace.write`, and local `candidate.finalize` request for its own Session/Work | sibling Workspace access, Project command dispatch, Session creation, approval, Merge |
-| Session Workflow | `workspace.lease`, `session.dispatch`, `session.cancel.execute` for its accepted `effectId` | Proposal, Gate, Grant, Policy, or Merge mutation |
-| Session host | `session.started`, `session.terminal`, `artifact.put`, `evidence.record`, `proposal.submit`, `handoff.record`, `workspace.heartbeat` for hosted Sessions | Work creation, approval, Merge |
-Tracer Policy `pol_tracer_0001_v1` permits Merge only when the Proposal `basisContentRevision` equals the current Project `contentRevision`, the merger is not the Proposal-producing Session, the Merge Grant is valid for that Project/Proposal, and all five Gates are satisfied:
+| Actor                                                                                                                                                                                                                                                                                | Granted tracer capabilities                                                                                                                              | Explicitly absent                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| operator                                                                                                                                                                                                                                                                             | `project.create`, `work.submit`, `manager.open`, `session.cancel`, `proposal.read`, `proposal.approve`, `proposal.reject`, `proposal.merge`              | infrastructure mutation and external Git/deploy effects                               |
+| Project Manager Session                                                                                                                                                                                                                                                              | `project.read`, `work.read`, `worker.start`, `session.cancel`, `evidence.read`, `proposal.read`                                                          | `proposal.approve`, `proposal.merge`                                                  |
+| worker Session                                                                                                                                                                                                                                                                       | scoped `project.read`, `workspace.read`, `workspace.write`, and local `candidate.finalize` request for its own Session/Work                              | sibling Workspace access, Project command dispatch, Session creation, approval, Merge |
+| Session Workflow                                                                                                                                                                                                                                                                     | `workspace.lease`, `session.dispatch`, `session.cancel.execute` for its accepted `effectId`                                                              | Proposal, Gate, Grant, Policy, or Merge mutation                                      |
+| Session host                                                                                                                                                                                                                                                                         | `session.started`, `session.terminal`, `artifact.put`, `evidence.record`, `proposal.submit`, `handoff.record`, `workspace.heartbeat` for hosted Sessions | Work creation, approval, Merge                                                        |
+| Tracer Policy `pol_tracer_0001_v1` permits Merge only when the Proposal `basisContentRevision` equals the current Project `contentRevision`, the merger is not the Proposal-producing Session, the Merge Grant is valid for that Project/Proposal, and all five Gates are satisfied: |
 
 1. `gat_session_completed` — machine Session-terminal Evidence says `completed`.
 2. `gat_candidate_present` — the Proposal candidate digest resolves to an immutable R2 artifact manifest.
@@ -248,7 +248,10 @@ Gate satisfaction is a pure derivation. `GatesEvaluated` records the evaluated P
 ```ts
 interface ProjectAuthority {
   dispatch(command: CommandEnvelope): Effect<CommandResult, ProjectAuthorityError>;
-  observe(projectId: ProjectId, eventRevision?: EventRevision): Effect<ProjectObservation, ProjectAuthorityError>;
+  observe(
+    projectId: ProjectId,
+    eventRevision?: EventRevision,
+  ): Effect<ProjectObservation, ProjectAuthorityError>;
 }
 
 interface ArtifactStore {
@@ -298,19 +301,19 @@ The `cloud-runtime`, `session-host`, and `terminal-client` batches may begin in 
 
 ### Bounded defaults
 
-| Bound | Tracer value |
-| --- | --- |
-| manager Session deadline | 30 minutes |
-| worker Session deadline | 10 minutes |
-| worker attempts per Work | 2 total: initial plus one Policy-authorized retry |
-| worker model output budget | 32,000 generated tokens |
-| worker tool-call budget | 100 calls |
-| captured Session output | 10 MiB |
-| Queue deliveries | 3 total for one stable `effectId`; `max_retries = 2`, 10-second delay, then dead-letter Queue |
-| Workflow side-effect attempts | 3 total; 10-second initial delay and exponential backoff capped by Session deadline |
-| Session-host dispatch timeout | 30 seconds |
-| artifact upload/finalization | 60 seconds after worker termination |
-| reconciliation cadence | one minute |
+| Bound                         | Tracer value                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------- |
+| manager Session deadline      | 30 minutes                                                                                    |
+| worker Session deadline       | 10 minutes                                                                                    |
+| worker attempts per Work      | 2 total: initial plus one Policy-authorized retry                                             |
+| worker model output budget    | 32,000 generated tokens                                                                       |
+| worker tool-call budget       | 100 calls                                                                                     |
+| captured Session output       | 10 MiB                                                                                        |
+| Queue deliveries              | 3 total for one stable `effectId`; `max_retries = 2`, 10-second delay, then dead-letter Queue |
+| Workflow side-effect attempts | 3 total; 10-second initial delay and exponential backoff capped by Session deadline           |
+| Session-host dispatch timeout | 30 seconds                                                                                    |
+| artifact upload/finalization  | 60 seconds after worker termination                                                           |
+| reconciliation cadence        | one minute                                                                                    |
 
 A Queue consumer acknowledges only after the Session Workflow start receipt is stored. Dead-letter handling records `dispatch_exhausted` and leaves the effect/attempt identities inspectable.
 
@@ -348,23 +351,23 @@ There is no claimed distributed transaction across Durable Object storage, R2, D
 
 ## Failure behavior
 
-| Failure | Required observation | Forbidden outcome |
-| --- | --- | --- |
-| Duplicate command or delivery | Return original receipt | duplicate Session or Merge |
-| Stale expected event revision | Reject with observed/current event revisions | implicit command rebase or Merge |
-| Failed named check | Preserve Evidence; Gate remains false | agent assertion satisfies Gate |
-| Missing Merge Grant | Typed authority rejection | instruction treated as permission |
-| Container or OMP loss | SessionInterrupted/Failed; partial evidence retained when available | silent continuation of same Session |
-| Timeout or budget exhaustion | Typed terminal disposition | unbounded loop |
-| Workspace conflict | reject, serialize, or allocate isolated Workspace | concurrent mutation of same Resource |
-| Human rejection | historical Proposal remains; state unchanged | deletion or promotion |
-| D1/R2 projection lag | canonical revision remains queryable from Project authority | derived store becomes authoritative fallback |
-| Herdr state loss | reconstruct terminal projection from Project state | Project state reconstructed from terminal transcript |
-| Container readiness, version, or SSH probe failure | manager Session fails with specific reason; no attach resolution | attach to an unknown or stale instance |
-| Queue delivery exhaustion | Session fails as `dispatch_exhausted`; outbox/effect remains inspectable | dropped Work or unbounded retry |
-| Model proxy/provider failure | Session fails as `model_unavailable`; usage/error Evidence retained | fabricated model completion |
-| R2 upload or digest verification failure | Session fails as `artifact_unavailable`; no Proposal accepted | Proposal referring to missing bytes |
-| Cancel/complete race | first accepted terminal event wins; conflicting later event rejected | two terminal states |
+| Failure                                            | Required observation                                                     | Forbidden outcome                                    |
+| -------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------- |
+| Duplicate command or delivery                      | Return original receipt                                                  | duplicate Session or Merge                           |
+| Stale expected event revision                      | Reject with observed/current event revisions                             | implicit command rebase or Merge                     |
+| Failed named check                                 | Preserve Evidence; Gate remains false                                    | agent assertion satisfies Gate                       |
+| Missing Merge Grant                                | Typed authority rejection                                                | instruction treated as permission                    |
+| Container or OMP loss                              | SessionInterrupted/Failed; partial evidence retained when available      | silent continuation of same Session                  |
+| Timeout or budget exhaustion                       | Typed terminal disposition                                               | unbounded loop                                       |
+| Workspace conflict                                 | reject, serialize, or allocate isolated Workspace                        | concurrent mutation of same Resource                 |
+| Human rejection                                    | historical Proposal remains; state unchanged                             | deletion or promotion                                |
+| D1/R2 projection lag                               | canonical revision remains queryable from Project authority              | derived store becomes authoritative fallback         |
+| Herdr state loss                                   | reconstruct terminal projection from Project state                       | Project state reconstructed from terminal transcript |
+| Container readiness, version, or SSH probe failure | manager Session fails with specific reason; no attach resolution         | attach to an unknown or stale instance               |
+| Queue delivery exhaustion                          | Session fails as `dispatch_exhausted`; outbox/effect remains inspectable | dropped Work or unbounded retry                      |
+| Model proxy/provider failure                       | Session fails as `model_unavailable`; usage/error Evidence retained      | fabricated model completion                          |
+| R2 upload or digest verification failure           | Session fails as `artifact_unavailable`; no Proposal accepted            | Proposal referring to missing bytes                  |
+| Cancel/complete race                               | first accepted terminal event wins; conflicting later event rejected     | two terminal states                                  |
 
 ## Interface contract
 
@@ -408,10 +411,10 @@ Every command supports `--json`. In JSON mode stdout is one tagged result envelo
 
 The first Cloudflare Container target is Linux x86-64. The Docker build verifies release digests before installation:
 
-| Binary | Release asset | SHA-256 |
-| --- | --- | --- |
+| Binary        | Release asset                                                                   | SHA-256                                                            |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | Herdr `0.8.0` | `https://github.com/herdrdev/herdr/releases/download/v0.8.0/herdr-linux-x86_64` | `b872ea7e40fa2cb17e857ac9b62b1bf26db7b403c622f5d2f3f5b35f6e9acd28` |
-| OMP `17.2.3` | `https://github.com/can1357/oh-my-pi/releases/download/v17.2.3/omp-linux-x64` | `baa58664ed4e510ca04cb756e278d6b75d4bcce562e1474c0c9337f525c6b3fa` |
+| OMP `17.2.3`  | `https://github.com/can1357/oh-my-pi/releases/download/v17.2.3/omp-linux-x64`   | `baa58664ed4e510ca04cb756e278d6b75d4bcce562e1474c0c9337f525c6b3fa` |
 
 The image also pins Bun `1.3.13`, Git, CA certificates, OpenSSH server, the fixture's TypeScript tools, and the Herdr configuration in `infra/project-container/versions.json`. The build runs `herdr integration install omp`, records/asserts the exact `herdr integration status` result, and verifies `herdr --version`, `omp --version`, and `work --version`.
 
@@ -484,7 +487,6 @@ herdr --remote work-engine-<resolution-id> --session <project-id>
 ```
 
 Herdr includes the operator's SSH config in its managed temporary config, so this alias reaches the Cloudflare proxy. `work attach` removes its owned resolution file after Herdr exits or resolution expiry; it never installs keys, edits operator authentication, or accepts Herdr's runtime-download prompt.
-
 
 ## Security and capability boundaries
 
@@ -660,15 +662,15 @@ This design is rejected or explicitly revised if any of these becomes true:
 
 ## Deferred decisions
 
-| Decision | Reopen when |
-| --- | --- |
-| Flue Project Manager adapter | A channel-first Project journey is selected; use the Work Engine MCP boundary. |
-| T3Code client reuse | Its UI value justifies a compatibility fork without the T3 server authority. |
-| Hindsight | A memory-specific tracer defines redaction, provenance, replacement receipts, and bounded recall. |
-| Per-Session Cloudflare Sandbox | Work may execute arbitrary untrusted repositories or stronger egress isolation is required. |
-| Multi-Session concurrency | One complete Session-to-Merge journey is accepted. |
-| Browser Run | A Work kind requires browser interaction. |
-| External Git provider | A spec defines repository custody, credentials, push/PR authority, and reconciliation. |
+| Decision                       | Reopen when                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Flue Project Manager adapter   | A channel-first Project journey is selected; use the Work Engine MCP boundary.                    |
+| T3Code client reuse            | Its UI value justifies a compatibility fork without the T3 server authority.                      |
+| Hindsight                      | A memory-specific tracer defines redaction, provenance, replacement receipts, and bounded recall. |
+| Per-Session Cloudflare Sandbox | Work may execute arbitrary untrusted repositories or stronger egress isolation is required.       |
+| Multi-Session concurrency      | One complete Session-to-Merge journey is accepted.                                                |
+| Browser Run                    | A Work kind requires browser interaction.                                                         |
+| External Git provider          | A spec defines repository custody, credentials, push/PR authority, and reconciliation.            |
 
 ## Source evidence
 

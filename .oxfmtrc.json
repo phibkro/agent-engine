@@ -4,6 +4,7 @@
     "node_modules/**",
     "dist/**",
     "coverage/**",
+    "docs/founding/**",
     ".wrangler/**",
     ".alchemy/**",
     "fixtures/tracer-0001/.git/**"
