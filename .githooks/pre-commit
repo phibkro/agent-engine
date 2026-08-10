@@ -1,0 +1,26 @@
+#!/usr/bin/env bun
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+const commands: readonly (readonly string[])[] = [
+  ["bun", "scripts/audit-artifacts.ts", "--staged"],
+  ["bun", "run", "audit:sources"],
+  ["bun", "run", "audit:imports"],
+  ["bun", "run", "audit:config"],
+  ["bun", "run", "fmt:check"],
+  ["bun", "run", "lint"]
+];
+
+for (const command of commands) {
+  const result = Bun.spawnSync({
+    cmd: [...command],
+    cwd: root,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit"
+  });
+  if (result.exitCode !== 0) {
+    console.error(`pre-commit: ${command.join(" ")} failed.`);
+    process.exit(result.exitCode ?? 1);
+  }
+}

@@ -1,0 +1,329 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "plugins": ["typescript", "unicorn", "oxc", "import", "promise"],
+  "jsPlugins": [
+    {
+      "name": "effect",
+      "specifier": "@phibkro/oxlint-effect-plugin"
+    }
+  ],
+  "rules": {
+    "eqeqeq": "error",
+    "import/no-duplicates": "error",
+    "no-throw-literal": "error",
+    "promise/always-return": "off",
+    "promise/no-multiple-resolved": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-explicit-any": "error",
+    "unicorn/prefer-node-protocol": "error"
+  },
+  "overrides": [
+    {
+      "files": ["packages/kernel/**/*.ts", "packages/kernel/**/*.tsx"],
+      "rules": {
+        "effect/no-ambient-authority": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "pure-library",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "pure-library",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "pure-library",
+            "platform": "portable"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "node:*",
+              "bun:*",
+              "cloudflare:*",
+              "@cloudflare/*",
+              "@effect/*",
+              "alchemy",
+              "effect",
+              "wrangler"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/protocol/**/*.ts", "packages/protocol/**/*.tsx"],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "effect-library",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-raw-json-parse": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "effect-library",
+            "platform": "portable",
+            "boundary": "external-data"
+          }
+        ],
+        "effect/no-untyped-throw": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "effect-library",
+            "platform": "portable"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "node:*",
+              "bun:*",
+              "cloudflare:*",
+              "@cloudflare/*",
+              "@effect/platform-*",
+              "alchemy",
+              "wrangler"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/runtime/**/*.ts", "packages/runtime/**/*.tsx"],
+      "rules": {
+        "effect/no-ambient-authority": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "service",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "service",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "service",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-native-promise-control-flow": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "service",
+            "platform": "portable"
+          }
+        ],
+        "effect/no-untyped-throw": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "service",
+            "platform": "portable"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "node:*",
+              "bun:*",
+              "cloudflare:*",
+              "@cloudflare/*",
+              "@effect/platform-bun",
+              "@effect/platform-node",
+              "alchemy",
+              "herdr",
+              "omp",
+              "wrangler"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/cloudflare/**/*.ts", "packages/cloudflare/**/*.tsx"],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "web-worker"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "web-worker"
+          }
+        ],
+        "effect/no-raw-json-parse": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "web-worker",
+            "boundary": "external-data"
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/session-host/**/*.ts", "packages/session-host/**/*.tsx"],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-untyped-throw": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "runtime-adapter",
+            "platform": "bun"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "cloudflare:*",
+              "@cloudflare/*",
+              "alchemy",
+              "wrangler"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/control-plane/**/*.ts", "apps/control-plane/**/*.tsx"],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "web-worker"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "web-worker"
+          }
+        ],
+        "effect/no-raw-json-parse": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "web-worker",
+            "boundary": "external-data"
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              "node:*",
+              "bun:*",
+              "@effect/platform-bun",
+              "@effect/platform-node",
+              "herdr",
+              "omp"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/cli/**/*.ts", "apps/cli/**/*.tsx"],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun"
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/**/__tests__/**/*.ts",
+        "packages/**/*.test.ts",
+        "apps/**/__tests__/**/*.ts",
+        "apps/**/*.test.ts"
+      ],
+      "rules": {
+        "effect/no-cross-runtime": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "test",
+            "platform": "portable"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+#!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dirname, "..");
+const messageFile = Bun.argv[2];
+if (messageFile === undefined || messageFile.length === 0) {
+  console.error("commit-msg: Git did not provide a commit message file.");
+  process.exit(2);
+}
+
+const commitlint = resolve(root, "node_modules/.bin/commitlint");
+if (!existsSync(commitlint)) {
+  console.error("commit-msg: dependencies are missing; run 'bun install --frozen-lockfile'.");
+  process.exit(1);
+}
+
+const result = Bun.spawnSync({
+  cmd: [commitlint, "--edit", messageFile],
+  cwd: root,
+  stdin: "inherit",
+  stdout: "inherit",
+  stderr: "inherit"
+});
+process.exit(result.exitCode ?? 1);
