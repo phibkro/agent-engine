@@ -149,7 +149,7 @@ export class EnvironmentDurableObject implements DurableObject {
       return;
     }
     if (snapshot.lifecycle === "Failed") {
-      await this.#state.storage.setAlarm(Date.now() + 1_000);
+      await this.#state.storage.setAlarm(Date.now() + 60_000);
       return;
     }
     await this.#state.storage.setAlarm(
@@ -244,7 +244,7 @@ export class EnvironmentDurableObject implements DurableObject {
           throw new InvalidRequestError("Recovered Environment has no generation");
         }
         const response = await this.#proxy(request, runtime, current.generation.id);
-        if (response.status < 400) {
+        if (response.status === 101) {
           const active = await coordinator.recordActivity();
           await this.#schedule(active);
         }
@@ -303,10 +303,22 @@ export class EnvironmentDurableObject implements DurableObject {
   }
 
   async alarm(): Promise<void> {
-    const { coordinator } = this.#coordinator();
+    const { coordinator, runtime } = this.#coordinator();
     const current = await coordinator.inspect();
     if (current === undefined || current.lifecycle === "Destroyed") return;
     const now = Date.now();
+    await runtime.cleanupBackups(current).catch(() => undefined);
+    if (current.lifecycle === "Failed") {
+      const destroyed = await coordinator
+        .destroy({
+          _tag: "DestroyEnvironment",
+          commandId: "destroy-00000000-0000-4000-8000-000000000000",
+          environmentId: current.environmentId,
+        })
+        .catch(async () => (await coordinator.inspect()) ?? current);
+      await this.#schedule(destroyed);
+      return;
+    }
     if (
       current.lifecycle === "Ready" &&
       current.recoveryRetryAt !== null &&

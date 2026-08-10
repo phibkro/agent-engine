@@ -44,7 +44,9 @@ const requireSuccessfulExec = async (
 };
 
 const requireSafeGitSegment = (value: string, field: string): string => {
-  if (!SAFE_GIT_SEGMENT.test(value)) throw new InvalidRequestError(`${field} is not shell-safe`);
+  if (!SAFE_GIT_SEGMENT.test(value) || value === "." || value === "..") {
+    throw new InvalidRequestError(`${field} is not a safe repository path segment`);
+  }
   return value;
 };
 
@@ -109,7 +111,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       provider: input.provider,
     });
     const broker = new URL(lease.brokerOrigin);
-    await sandbox.setAllowedHosts([broker.hostname]);
+    await sandbox.setAllowedHosts([broker.hostname, "*.r2.cloudflarestorage.com"]);
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
@@ -215,7 +217,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     try {
       const checks = await requireSuccessfulExec(
         sandbox,
-        `sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
+        `test -s ${T3CODE_HOME}/userdata/state.sqlite && sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
       );
       const lines = checks.stdout.trim().split(/\s+/u);
       if (lines[0] !== "ok") throw new Error("T3Code SQLite integrity check failed");
@@ -274,7 +276,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   async #validateRestoredState(sandbox: Sandbox, checkpoint: EnvironmentCheckpoint): Promise<void> {
     const checks = await requireSuccessfulExec(
       sandbox,
-      `sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
+      `test -s ${T3CODE_HOME}/userdata/state.sqlite && sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
     );
     const lines = checks.stdout.trim().split(/\s+/u);
     if (lines[0] !== "ok" || lines.at(-1) !== checkpoint.head) {
@@ -296,7 +298,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       provider: input.snapshot.provider,
     });
     const broker = new URL(lease.brokerOrigin);
-    await sandbox.setAllowedHosts([broker.hostname]);
+    await sandbox.setAllowedHosts([broker.hostname, "*.r2.cloudflarestorage.com"]);
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
@@ -321,6 +323,33 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
 
   async deleteCheckpoint(checkpoint: EnvironmentCheckpoint): Promise<void> {
     await this.#options.backupBucket.delete(backupObjectKeys(checkpoint.backup.id));
+  }
+  async cleanupBackups(snapshot: EnvironmentSnapshot): Promise<void> {
+    const tracked = new Set([
+      ...snapshot.retainedCheckpoints.map((checkpoint) => checkpoint.backup.id),
+      ...(snapshot.acceptedCheckpoint === null ? [] : [snapshot.acceptedCheckpoint.backup.id]),
+    ]);
+    const cutoff = Date.parse(this.#options.now()) - 24 * 60 * 60 * 1_000;
+    const objects = await this.#listBackupObjects();
+    await Promise.all(
+      objects
+        .filter((object) => {
+          const match = /^backups\/([^/]+)\//u.exec(object.key);
+          return (
+            match !== null && !tracked.has(match[1] ?? "") && object.uploaded.getTime() <= cutoff
+          );
+        })
+        .map((object) => this.#options.backupBucket.delete(object.key)),
+    );
+  }
+
+  async #listBackupObjects(cursor?: string): Promise<R2Object[]> {
+    const page = await this.#options.backupBucket.list({
+      prefix: "backups/",
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    if (!page.truncated) return [...page.objects];
+    return [...page.objects, ...(await this.#listBackupObjects(page.cursor))];
   }
   async recover(input: {
     readonly snapshot: EnvironmentSnapshot;

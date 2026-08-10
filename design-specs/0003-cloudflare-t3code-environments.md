@@ -4,7 +4,7 @@ status: hardened-design
 approved_design: 2026-08-10
 hardened: 2026-08-10
 supersedes: design-specs/0002-cloud-flue-session-workers.md
-implementation: not-started
+implementation: implemented-awaiting-cloudflare-acceptance
 change_policy: Semantic changes require operator approval and an explicit specification revision.
 ---
 
@@ -157,7 +157,7 @@ stateDiagram-v2
 2. The operator selects a GitHub repository and an exact commit.
 3. The provisioning API creates the Environment record.
 4. The Environment Durable Object starts one Sandbox.
-5. The Sandbox restores state or initializes `/environment`.
+5. The Sandbox restores state or initializes `/workspace/environment`, the Sandbox SDK's required durable workspace root.
 6. The Sandbox starts `t3 serve --host 0.0.0.0` on port `3773`.
 7. The Durable Object verifies HTTP health and an authenticated `/ws` upgrade.
 8. The control plane consumes the owner bootstrap token inside its boundary.
@@ -204,9 +204,9 @@ Checkpoint capture uses this ordered protocol:
 2. Drain the current T3Code turn and Git operation.
 3. Stop the T3Code server cleanly.
 4. Run SQLite integrity checks against the stopped T3Code state.
-5. Verify that the backup process can read all of `/environment`; normalize owner-read permissions for non-secret workspace files.
+5. Verify that the backup process can read all of `/workspace/environment`; normalize owner-read permissions for non-secret workspace files.
 6. Record a candidate header with `state_capture: quiesced`, Git `HEAD`, the pinned version tuple, and generation.
-7. Call `createBackup({ dir: "/environment", name, useGitignore: false, ttl: 2_592_000 })` once and retain its `DirectoryBackup` handle.
+7. Call `createBackup({ dir: "/workspace/environment", name, gitignore: false, ttl: 2_592_000 })` once and retain its `DirectoryBackup` handle.
 8. Restart T3Code and return to `Ready`, unless this is the final pre-destroy checkpoint.
 9. If validation is required, restore the handle in an isolated validation Sandbox and verify T3Code startup, SQLite integrity, and Git `HEAD`.
 10. Atomically promote the candidate only if it remains the newest valid candidate and the generation already has a validated accepted handle or this candidate passed validation.
@@ -271,11 +271,11 @@ GitLab Workspaces and Bitbucket runners are outside this architecture. GitLab Wo
 | E8 | T3Code remains the only thread and agent orchestration authority. | Unmodified T3Code RPC boundary |
 | E9 | A failed checkpoint cannot replace the previous accepted checkpoint. | Candidate handle before atomic accepted-pointer advance |
 | E10 | Destroy revokes every revocable lease before runtime deletion. | Ordered destruction transition and real GitHub token revocation |
-| E11 | A delivered pairing token never has `access:write` or `relay:write`. | Scope assertion at mint time |
+| E11 | A delivered pairing token never has `access:write` or `relay:write`. | Pinned T3Code `AuthStandardClientScopes` pairing path |
 | E12 | Sandbox HTTP and WSS ports are reachable only through the lifecycle-gated Worker route. | Worker-fronted exposed port and `wsConnect`; tunnel denial |
 | E13 | Recovery cannot cross a runtime-image, T3Code-version, or Sandbox-SDK mismatch. | Pinned version tuple equality |
 | E14 | Create, recover, and destroy retries return one durable result. | Lifetime command receipts |
-| E15 | An accepted checkpoint contains the recorded commit and complete Git object database. | Whole-directory backup with `useGitignore: false` plus header `HEAD` check |
+| E15 | An accepted checkpoint contains the recorded commit and complete Git object database. | Whole-directory backup with `gitignore: false` plus header `HEAD` check |
 | E16 | An Environment cannot consume compute indefinitely. | Fixed instance type, maximum lifetime, inactivity deadline, and automatic destruction |
 | E17 | Backup restore TTL and R2 accepted-object retention agree. | Explicit 30-day `createBackup` TTL and lifecycle rule |
 | E18 | A restarted container cannot expose an absent recovery mount. | Persisted backup handle and restore-before-T3Code startup |
