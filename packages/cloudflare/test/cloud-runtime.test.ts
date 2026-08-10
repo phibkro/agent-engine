@@ -49,9 +49,7 @@ const sendAndObserve = async (
   message: unknown,
   messageId: string,
 ): Promise<unknown> => {
-  await directory.fetch(
-    request({ _tag: "Spawn", sessionId: task().sessionId, task: task() }),
-  );
+  await directory.fetch(request({ _tag: "Spawn", sessionId: task().sessionId, task: task() }));
   const accepted = await directory.fetch(
     request({
       _tag: "Send",
@@ -154,7 +152,6 @@ describe("CloudTask Send JSON values", () => {
   });
 });
 
-
 describe("Project Memory authority", () => {
   it("rejects stale acceptance while preserving pinned reads", () => {
     const memory = new ProjectMemoryState(task().projectId);
@@ -213,7 +210,9 @@ describe("Project Memory authority", () => {
         },
       },
     } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
-    const memory = new ProjectMemoryDurableObject(fakeState, {});
+    const memory = new ProjectMemoryDurableObject(fakeState, {
+      PROJECT_MEMORY_COORDINATOR_SECRET: "coordinator-secret",
+    });
     const identity = {
       "content-type": "application/json",
       "X-Project-Identity": task().projectId,
@@ -268,7 +267,6 @@ describe("Project Memory authority", () => {
       _tag: "MemoryRevisionUnavailable",
     });
   });
-
 });
 
 describe("Session terminal and repository refs", () => {
@@ -309,7 +307,6 @@ describe("Session terminal and repository refs", () => {
     } as unknown as SessionSnapshot;
     expect(() => new SessionState(task(), malformed)).toThrow();
   });
-
 });
 
 describe("Dependency cache", () => {
