@@ -53,7 +53,7 @@ export const digestManifest = async (
     readonly digest: Sha256Digest;
     readonly bytes: number;
   }[],
-): Promise<Sha256Digest> => digestCanonical({ entries: sortManifestEntries(entries) });
+): Promise<Sha256Digest> => digestCanonical(sortManifestEntries(entries));
 export const canonicalEncode = canonicalize;
 export const sha256Digest = sha256;
 export const canonicalJsonDigest = digestCanonical;

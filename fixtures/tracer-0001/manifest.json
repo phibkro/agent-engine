@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "work-engine/tracer-0001",
+  "objective": "Make `greeting(\"Ada\")` return `Hello, Ada!`. Modify only `src/greeting.ts`. Run `bun run check`.",
+  "check": "bun run check",
+  "writableScope": ["src/greeting.ts"],
+  "base": {
+    "digest": "sha256:2252f7bbc62ae73e1ffb46631fc4d2efc81b528b47b675587fbd451cc9255213",
+    "bytes": 369,
+    "entries": [
+      {
+        "path": "package.json",
+        "digest": "sha256:36cce29338b98abc3682a0a1b430d73079eb92ab4aad6438270282c5e6a0f2fb",
+        "bytes": 153
+      },
+      {
+        "path": "src/greeting.ts",
+        "digest": "sha256:9074d83b78f3d39d432efbc93b2e5be0a314dc9ebbc235e3991d39f84f1e8427",
+        "bytes": 67
+      },
+      {
+        "path": "test/greeting.test.ts",
+        "digest": "sha256:29ba3d641676b9c54638b34da6666a830e1ddec8c7fb2438bf92360a9fb3616b",
+        "bytes": 184
+      }
+    ]
+  },
+  "candidate": {
+    "digest": "sha256:a8a12e10c4244cf346bef1bdfb8656d2d0edc5a7e0bc307dd6af1d4ddb791fbd",
+    "bytes": 369,
+    "entries": [
+      {
+        "path": "package.json",
+        "digest": "sha256:36cce29338b98abc3682a0a1b430d73079eb92ab4aad6438270282c5e6a0f2fb",
+        "bytes": 153
+      },
+      {
+        "path": "src/greeting.ts",
+        "digest": "sha256:d3ec6bd65eac91e0348ff9c523a77b7e709da8521fb8b39afe3e5340691fc996",
+        "bytes": 69
+      },
+      {
+        "path": "test/greeting.test.ts",
+        "digest": "sha256:29ba3d641676b9c54638b34da6666a830e1ddec8c7fb2438bf92360a9fb3616b",
+        "bytes": 184
+      }
+    ]
+  },
+  "patch": {
+    "digest": "sha256:dc6ae9b78537032b40e73f6a5ee02a9404318dbf1a4ecc9296decb842411da78",
+    "bytes": 337
+  }
+}

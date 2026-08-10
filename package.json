@@ -24,10 +24,11 @@
     "test:kernel": "bun run --cwd packages/kernel test",
     "test:cloudflare": "bun run --cwd packages/cloudflare test",
     "test:session-host": "bun run --cwd packages/session-host test",
+    "test:acceptance": "vitest run acceptance/0001/acceptance.test.ts",
     "build": "bun run --cwd apps/cli build && bun run --cwd apps/control-plane build",
     "accept:0001:local": "bun acceptance/0001/local.ts",
     "accept:0001:cloud": "bun acceptance/0001/cloud.ts",
-    "check": "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:kernel && bun run test:cloudflare && bun run test:session-host && bun run build"
+    "check": "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:kernel && bun run test:cloudflare && bun run test:session-host && bun run test:acceptance && bun run build"
   },
   "dependencies": {
     "@cloudflare/containers": "0.3.7",

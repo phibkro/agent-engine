@@ -1,0 +1,8 @@
+{
+  "name": "work-engine-tracer-0001-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bun test test/greeting.test.ts"
+  }
+}

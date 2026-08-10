@@ -1,0 +1,19 @@
+{
+  "_tag": "TracerAcceptanceUnavailable",
+  "schemaVersion": "work-engine/tracer-0001-evidence",
+  "observedAt": "2026-08-10T10:22:15.000Z",
+  "reason": "The real local and deployed tracer journeys have not run because required operator-controlled and local runtime prerequisites are unavailable.",
+  "missingPrerequisites": [
+    "operator-authorized Cloudflare deployment and Access service token",
+    "WORK_ENGINE_ACTOR_FILE containing locally issued actor and Grant identities",
+    "WORK_ENGINE_ACCEPTANCE_CAPTURE from the real journey",
+    "Docker or Podman for the pinned Container image smoke test",
+    "Herdr 0.8.0 local client; observed local version is 0.7.5",
+    "configured OMP model gateway and Cloudflare Workers AI credentials"
+  ],
+  "completedChecks": [
+    "committed fixture files, base snapshot, candidate snapshot, and patch match manifest SHA-256 digests",
+    "observed OMP local version is 17.2.3",
+    "acceptance success schemas exclude unavailable evidence"
+  ]
+}
