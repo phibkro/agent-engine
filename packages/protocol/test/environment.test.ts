@@ -1,8 +1,11 @@
 import { expect, test } from "vitest";
 import {
   EnvironmentCommandRequestSchema,
+  EnvironmentCredentialLeaseSchema,
   EnvironmentCreateRequestSchema,
   EnvironmentPairingSchema,
+  EnvironmentPairingOutputSchema,
+  SandboxProcessStateSchema,
   EnvironmentSnapshotSchema,
   decodeUnknownStrict,
 } from "../src/index.ts";
@@ -77,6 +80,31 @@ test("decodes one durable ready environment with a generation-scoped checkpoint"
   };
 
   expect(decodeUnknownStrict(EnvironmentSnapshotSchema, snapshot).lifecycle).toBe("Ready");
+});
+
+test("keeps provider secrets and process status behind strict schemas", () => {
+  expect(
+    decodeUnknownStrict(EnvironmentCredentialLeaseSchema, {
+      generationToken: "generation-secret",
+      expiresAt: "2026-08-10T00:10:00.000Z",
+    }).generationToken,
+  ).toBe("generation-secret");
+  expect(() =>
+    decodeUnknownStrict(EnvironmentCredentialLeaseSchema, {
+      generationToken: "generation-secret",
+      expiresAt: "2026-08-10T00:10:00.000Z",
+      repositoryToken: "must-not-cross-boundary",
+    }),
+  ).toThrow();
+  expect(
+    decodeUnknownStrict(EnvironmentPairingOutputSchema, {
+      token: "pairing-secret",
+      expiresAt: "2026-08-10T00:10:00.000Z",
+    }).token,
+  ).toBe("pairing-secret");
+  expect(decodeUnknownStrict(SandboxProcessStateSchema, { status: "running" }).status).toBe(
+    "running",
+  );
 });
 
 test("accepts only bounded lifecycle commands and ordinary T3Code pairing scopes", () => {

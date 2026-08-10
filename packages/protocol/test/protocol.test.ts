@@ -2,6 +2,9 @@ import { expect, test } from "vitest";
 import {
   CloudTaskSchema,
   ProjectMemoryRevisionSchema,
+  ProjectMemoryAcceptRequestSchema,
+  ProjectMemoryProposeRequestSchema,
+  ProjectMemoryReadRequestSchema,
   ProjectMemoryProposalModel,
   ProjectMemoryProposalSchema,
   RepositoryGrantSchema,
@@ -169,6 +172,39 @@ test("rejects a stale Project Memory revision", () => {
       acceptedAt: now,
     }),
   ).toThrow();
+});
+
+test("strictly decodes Project Memory request boundaries", () => {
+  expect(
+    decodeUnknownStrict(ProjectMemoryReadRequestSchema, {
+      atRevision: 0,
+      query: "durable fact",
+    }),
+  ).toEqual({ atRevision: 0, query: "durable fact" });
+  expect(() =>
+    decodeUnknownStrict(ProjectMemoryReadRequestSchema, {
+      atRevision: 0,
+      query: "",
+      sessionId,
+    }),
+  ).toThrow();
+  expect(
+    decodeUnknownStrict(ProjectMemoryProposeRequestSchema, {
+      expectedRevision: 0,
+      claim: "durable fact",
+      provenance: {
+        _tag: "ProjectMemoryProvenance",
+        source: "worker",
+        observedAt: now,
+      },
+    }).claim,
+  ).toBe("durable fact");
+  expect(
+    decodeUnknownStrict(ProjectMemoryAcceptRequestSchema, {
+      proposalId: "mpp_00000000-0000-4000-8000-000000000001",
+      expectedRevision: 0,
+    }).expectedRevision,
+  ).toBe(0);
 });
 
 test("rejects a repository grant whose WIP and candidate refs collapse", () => {
