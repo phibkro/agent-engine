@@ -201,9 +201,12 @@ export class EnvironmentDurableObject implements DurableObject {
         if (current?.lifecycle !== "Ready" || current.generation === null) {
           throw new InvalidRequestError("Environment is not ready for connections");
         }
-        const active = await coordinator.recordActivity();
-        await this.#schedule(active);
-        return this.#proxy(request, runtime, active.generation?.id ?? current.generation.id);
+        const response = await this.#proxy(request, runtime, current.generation.id);
+        if (response.status < 400) {
+          const active = await coordinator.recordActivity();
+          await this.#schedule(active);
+        }
+        return response;
       }
       if (request.method === "GET") {
         return Response.json({
