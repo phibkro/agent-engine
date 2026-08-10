@@ -471,6 +471,10 @@
       "owner": "design-contract"
     },
     {
+      "path": "design-specs/0003-cloudflare-t3code-environments.md",
+      "owner": "design-contract"
+    },
+    {
       "path": ".reef/scaffold.json",
       "owner": "scaffold-contract"
     },
@@ -557,9 +561,10 @@
       "depends_on": [],
       "owns": [
         "design-specs/0001-cloud-herdr-omp-tracer.md",
-        "design-specs/0002-cloud-flue-session-workers.md"
+        "design-specs/0002-cloud-flue-session-workers.md",
+        "design-specs/0003-cloudflare-t3code-environments.md"
       ],
-      "done_when": "The active approved tracer contract is frozen, prior contracts retain explicit historical status, and founding claims remain bound to exact source hashes."
+      "done_when": "The active tracer contract records operator approval, prior contracts retain explicit historical status, and founding claims remain bound to exact source hashes."
     },
     {
       "id": "scaffold-contract",
