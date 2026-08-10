@@ -1,0 +1,24 @@
+{
+  "name": "@work-engine/cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@work-engine/kernel": "0.0.0",
+    "@work-engine/protocol": "0.0.0",
+    "@work-engine/runtime": "0.0.0",
+    "effect": "4.0.0-beta.102",
+    "json-canonicalize": "2.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.20.3",
+    "@cloudflare/workers-types": "5.20260801.1",
+    "vitest": "4.1.0"
+  }
+}
