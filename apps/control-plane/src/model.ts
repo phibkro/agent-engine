@@ -1,6 +1,9 @@
 import * as Schema from "effect/Schema";
 
-export const ModelNameSchema = Schema.Literals(["gpt-oss-120b", "work-engine/gpt-oss-120b"] as const);
+export const ModelNameSchema = Schema.Literals([
+  "gpt-oss-120b",
+  "work-engine/gpt-oss-120b",
+] as const);
 export type ModelName = typeof ModelNameSchema.Type;
 
 export const ModelMessageSchema = Schema.Struct({

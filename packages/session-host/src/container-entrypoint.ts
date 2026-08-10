@@ -1,18 +1,33 @@
 import type { SessionId, Timestamp, WorkspaceReady } from "@work-engine/protocol";
 import { Sha256DigestSchema, WorkspaceReadySchema } from "@work-engine/protocol";
 import { JsonFileStartClaimStore } from "./persistence.ts";
-import { HerdrSessionController, MemoryProcessSupervisor, NodeCommandRunner, scrubHerdrEnvironment, type CommandRunner } from "./process.ts";
+import {
+  HerdrSessionController,
+  MemoryProcessSupervisor,
+  NodeCommandRunner,
+  scrubHerdrEnvironment,
+  type CommandRunner,
+} from "./process.ts";
 import { InMemoryReadinessProbe, SessionHostService } from "./host.ts";
 import { ModelProxy, type ModelChatRequest, type ModelProvider } from "./model-proxy.ts";
 import { LinuxSessionIdentityProvider, SessionCredentialManager } from "./security.ts";
 import { SessionRuntimeManager, SessionHostDaemon, type ContainerVersions } from "./daemon.ts";
 
 class LocalReadinessProbe extends InMemoryReadinessProbe {
-  constructor(private readonly commandRunner: CommandRunner, private readonly environment: NodeJS.ProcessEnv) {
+  constructor(
+    private readonly commandRunner: CommandRunner,
+    private readonly environment: NodeJS.ProcessEnv,
+  ) {
     super(async () => {
-      const commands: readonly (readonly string[])[] = [["herdr", "--version"], ["omp", "--version"], ["work", "--version"]];
+      const commands: readonly (readonly string[])[] = [
+        ["herdr", "--version"],
+        ["omp", "--version"],
+        ["work", "--version"],
+      ];
       for (const command of commands) {
-        const result = await commandRunner.run(command, { env: scrubHerdrEnvironment(environment) });
+        const result = await commandRunner.run(command, {
+          env: scrubHerdrEnvironment(environment),
+        });
         if (result.exitCode !== 0) throw new Error(`${command[0]} readiness failed`);
       }
       const ready: WorkspaceReady = {
@@ -28,9 +43,16 @@ class LocalReadinessProbe extends InMemoryReadinessProbe {
 }
 
 class HttpModelProvider implements ModelProvider {
-  constructor(private readonly endpoint: string, private readonly clientId: string, private readonly clientSecret: string) {}
+  constructor(
+    private readonly endpoint: string,
+    private readonly clientId: string,
+    private readonly clientSecret: string,
+  ) {}
 
-  async complete(request: ModelChatRequest, providerModel: "@cf/openai/gpt-oss-120b"): Promise<unknown> {
+  async complete(
+    request: ModelChatRequest,
+    providerModel: "@cf/openai/gpt-oss-120b",
+  ): Promise<unknown> {
     if (this.endpoint.length === 0) throw new Error("model endpoint is not configured");
     const response = await fetch(this.endpoint, {
       method: "POST",
@@ -51,7 +73,8 @@ const main = async (): Promise<void> => {
   const runner: CommandRunner = new NodeCommandRunner();
   const runtimeDirectory = environment.WORK_ENGINE_RUNTIME_DIR ?? "/run/work-engine";
   const socketPath = environment.WORK_ENGINE_HERDR_SOCKET ?? `${runtimeDirectory}/herdr.sock`;
-  const workspaceDirectory = environment.WORK_ENGINE_WORKSPACE_ROOT ?? "/var/lib/work-engine/sessions";
+  const workspaceDirectory =
+    environment.WORK_ENGINE_WORKSPACE_ROOT ?? "/var/lib/work-engine/sessions";
   const sessionHome = environment.WORK_ENGINE_SESSION_HOME_ROOT ?? "/var/lib/work-engine/sessions";
   const claims = new JsonFileStartClaimStore(`${runtimeDirectory}/start-claims.json`);
   const supervisor = new MemoryProcessSupervisor();
@@ -76,7 +99,8 @@ const main = async (): Promise<void> => {
     handlers: (sessionId) => ({
       observeProject: async () => remoteProjectQuery(environment),
       sessionStatus: async () => (await host?.snapshot()) ?? { accepting: false, claims: [] },
-      startSession: async (_managerSessionId, workId) => remoteStartRequest(environment, sessionId, workId),
+      startSession: async (_managerSessionId, workId) =>
+        remoteStartRequest(environment, sessionId, workId),
       finalizeCandidate: async (request) => {
         if (host === undefined) throw new Error("Session host is not ready");
         return host.finalizeCandidate(request);
@@ -96,7 +120,8 @@ const main = async (): Promise<void> => {
     processController: controller,
     readiness: new LocalReadinessProbe(runner, environment),
     lifecycle: {
-      onStarted: async ({ spec }) => runtimeManager.create(spec, `${workspaceDirectory}/${spec.sessionId}`),
+      onStarted: async ({ spec }) =>
+        runtimeManager.create(spec, `${workspaceDirectory}/${spec.sessionId}`),
       onTerminal: async ({ sessionId }) => runtimeManager.terminate(sessionId),
     },
   });
@@ -110,7 +135,10 @@ const main = async (): Promise<void> => {
   };
   const daemon = new SessionHostDaemon({
     host,
-    access: { clientId: required("CF_ACCESS_CLIENT_ID", environment), clientSecret: required("CF_ACCESS_CLIENT_SECRET", environment) },
+    access: {
+      clientId: required("CF_ACCESS_CLIENT_ID", environment),
+      clientSecret: required("CF_ACCESS_CLIENT_SECRET", environment),
+    },
     modelProvider: provider,
     versions,
     runtimeDirectory,
@@ -129,12 +157,18 @@ const main = async (): Promise<void> => {
 };
 
 const remoteProjectQuery = async (environment: NodeJS.ProcessEnv): Promise<unknown> => {
-  const response = await fetch(required("WORK_ENGINE_PROJECT_QUERY_ENDPOINT", environment), { headers: accessHeaders(environment) });
+  const response = await fetch(required("WORK_ENGINE_PROJECT_QUERY_ENDPOINT", environment), {
+    headers: accessHeaders(environment),
+  });
   if (!response.ok) throw new Error(`Project query returned ${response.status}`);
   return response.json();
 };
 
-const remoteStartRequest = async (environment: NodeJS.ProcessEnv, managerSessionId: SessionId, workId: string): Promise<unknown> => {
+const remoteStartRequest = async (
+  environment: NodeJS.ProcessEnv,
+  managerSessionId: SessionId,
+  workId: string,
+): Promise<unknown> => {
   const response = await fetch(required("WORK_ENGINE_SESSION_START_ENDPOINT", environment), {
     method: "POST",
     headers: { ...accessHeaders(environment), "content-type": "application/json" },

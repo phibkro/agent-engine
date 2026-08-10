@@ -5,7 +5,11 @@ import type {
   WorkspaceLease,
 } from "@work-engine/protocol";
 import { SessionHostWireResponseSchema } from "@work-engine/runtime";
-import type { SessionHostError, SessionHostWireFailure, SessionHostWireResponse } from "@work-engine/runtime";
+import type {
+  SessionHostError,
+  SessionHostWireFailure,
+  SessionHostWireResponse,
+} from "@work-engine/runtime";
 import {
   SessionHostCancelRequestSchema,
   SessionStartSpecSchema,
@@ -36,8 +40,20 @@ export class SessionHostRouter {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (!this.authorized(request.headers)) return json({ _tag: "SessionHostWireFailure", code: "host_unavailable", reason: "Access service token required" }, 401);
-    if (request.method !== "POST") return json({ _tag: "SessionHostWireFailure", code: "decode_failure", reason: "POST required" }, 405);
+    if (!this.authorized(request.headers))
+      return json(
+        {
+          _tag: "SessionHostWireFailure",
+          code: "host_unavailable",
+          reason: "Access service token required",
+        },
+        401,
+      );
+    if (request.method !== "POST")
+      return json(
+        { _tag: "SessionHostWireFailure", code: "decode_failure", reason: "POST required" },
+        405,
+      );
     try {
       const input = (await request.json()) as unknown;
       if (url.pathname === SESSION_HOST_ROUTES.ensureReady) {
@@ -50,18 +66,31 @@ export class SessionHostRouter {
       }
       if (url.pathname === SESSION_HOST_ROUTES.cancel) {
         const cancellation = decodeUnknownStrict(SessionHostCancelRequestSchema, input);
-        return this.success(await Effect.runPromise(this.options.host.cancel(cancellation.sessionId, cancellation.reason)));
+        return this.success(
+          await Effect.runPromise(
+            this.options.host.cancel(cancellation.sessionId, cancellation.reason),
+          ),
+        );
       }
-      return json({ _tag: "SessionHostWireFailure", code: "decode_failure", reason: "route not found" }, 404);
+      return json(
+        { _tag: "SessionHostWireFailure", code: "decode_failure", reason: "route not found" },
+        404,
+      );
     } catch (error) {
       if (isSessionHostError(error)) return this.failure(error);
-      return json({ _tag: "SessionHostWireFailure", code: "decode_failure", reason: errorMessage(error) }, 400);
+      return json(
+        { _tag: "SessionHostWireFailure", code: "decode_failure", reason: errorMessage(error) },
+        400,
+      );
     }
   }
 
   private authorized(headers: Headers): boolean {
     if (headers.has("authorization")) return false;
-    return headers.get("CF-Access-Client-Id") === this.options.access.clientId && headers.get("CF-Access-Client-Secret") === this.options.access.clientSecret;
+    return (
+      headers.get("CF-Access-Client-Id") === this.options.access.clientId &&
+      headers.get("CF-Access-Client-Secret") === this.options.access.clientSecret
+    );
   }
 
   private success(value: SessionHostWireResponse): Response {
@@ -69,7 +98,10 @@ export class SessionHostRouter {
       const decoded = decodeUnknownStrict(SessionHostWireResponseSchema, value);
       return json(decoded, 200);
     } catch (error) {
-      return json({ _tag: "SessionHostWireFailure", code: "decode_failure", reason: errorMessage(error) }, 500);
+      return json(
+        { _tag: "SessionHostWireFailure", code: "decode_failure", reason: errorMessage(error) },
+        500,
+      );
     }
   }
 
@@ -80,9 +112,12 @@ export class SessionHostRouter {
   }
 }
 
-export const decodeEnsureReadyRequest = (input: unknown): WorkspaceLease => decodeUnknownStrict(WorkspaceLeaseSchema, input);
-export const decodeStartRequest = (input: unknown): SessionStartSpec => decodeUnknownStrict(SessionStartSpecSchema, input);
-export const decodeCancelRequest = (input: unknown): SessionHostCancelRequest => decodeUnknownStrict(SessionHostCancelRequestSchema, input);
+export const decodeEnsureReadyRequest = (input: unknown): WorkspaceLease =>
+  decodeUnknownStrict(WorkspaceLeaseSchema, input);
+export const decodeStartRequest = (input: unknown): SessionStartSpec =>
+  decodeUnknownStrict(SessionStartSpecSchema, input);
+export const decodeCancelRequest = (input: unknown): SessionHostCancelRequest =>
+  decodeUnknownStrict(SessionHostCancelRequestSchema, input);
 
 const wireCode = (error: SessionHostError): SessionHostWireFailure["code"] => {
   switch (error._tag) {
@@ -140,6 +175,18 @@ const isSessionHostError = (error: unknown): error is SessionHostError =>
   typeof error === "object" &&
   error !== null &&
   "_tag" in error &&
-  ["LeaseExpired", "WorkspaceUnavailable", "ReadinessFailed", "VersionMismatch", "SessionNotFound", "SessionAlreadyStarted", "ProcessUnavailable", "ModelUnavailable", "HostUnavailable"].includes(String(error._tag));
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-const json = (body: unknown, status: number): Response => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  [
+    "LeaseExpired",
+    "WorkspaceUnavailable",
+    "ReadinessFailed",
+    "VersionMismatch",
+    "SessionNotFound",
+    "SessionAlreadyStarted",
+    "ProcessUnavailable",
+    "ModelUnavailable",
+    "HostUnavailable",
+  ].includes(String(error._tag));
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+const json = (body: unknown, status: number): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

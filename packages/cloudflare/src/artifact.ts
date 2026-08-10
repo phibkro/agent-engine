@@ -28,7 +28,10 @@ const metadataReceipt = (object: R2Object, digest: Sha256Digest): ArtifactReceip
   if (mediaType === undefined || mediaType.length === 0) return undefined;
   const customDigest = object.customMetadata?.digest;
   if (customDigest !== undefined && customDigest !== digest) return undefined;
-  if (object.customMetadata?.bytes !== undefined && Number(object.customMetadata.bytes) !== object.size)
+  if (
+    object.customMetadata?.bytes !== undefined &&
+    Number(object.customMetadata.bytes) !== object.size
+  )
     return undefined;
   return ArtifactReceiptSchema.make({ digest, bytes: object.size, mediaType });
 };
@@ -50,7 +53,11 @@ export class R2ArtifactStore implements ArtifactStore {
         const existing = await this.#bucket.head(key);
         if (existing !== null) {
           const receipt = metadataReceipt(existing, digest);
-          if (receipt === undefined || receipt.bytes !== content.byteLength || receipt.mediaType !== mediaType) {
+          if (
+            receipt === undefined ||
+            receipt.bytes !== content.byteLength ||
+            receipt.mediaType !== mediaType
+          ) {
             throw {
               _tag: "ArtifactConflict",
               digest,
@@ -80,10 +87,17 @@ export class R2ArtifactStore implements ArtifactStore {
         });
         const verified = await this.#bucket.head(key);
         if (verified === null) {
-          throw { _tag: "ArtifactUnavailable", reason: "R2 put did not produce a head" } satisfies ArtifactError;
+          throw {
+            _tag: "ArtifactUnavailable",
+            reason: "R2 put did not produce a head",
+          } satisfies ArtifactError;
         }
         const receipt = metadataReceipt(verified, digest);
-        if (receipt === undefined || receipt.bytes !== content.byteLength || receipt.mediaType !== mediaType) {
+        if (
+          receipt === undefined ||
+          receipt.bytes !== content.byteLength ||
+          receipt.mediaType !== mediaType
+        ) {
           throw {
             _tag: "ArtifactDigestMismatch",
             expected: digest,
@@ -92,18 +106,29 @@ export class R2ArtifactStore implements ArtifactStore {
         }
         const stored = await this.#bucket.get(key);
         if (stored === null) {
-          throw { _tag: "ArtifactUnavailable", reason: "R2 put body is unavailable" } satisfies ArtifactError;
+          throw {
+            _tag: "ArtifactUnavailable",
+            reason: "R2 put body is unavailable",
+          } satisfies ArtifactError;
         }
         const storedBytes = await stored.bytes();
         const observed = await digestBytes(storedBytes);
         if (observed !== digest || storedBytes.byteLength !== content.byteLength) {
-          throw { _tag: "ArtifactDigestMismatch", expected: digest, observed } satisfies ArtifactError;
+          throw {
+            _tag: "ArtifactDigestMismatch",
+            expected: digest,
+            observed,
+          } satisfies ArtifactError;
         }
         return receipt;
       },
       catch: (cause) => {
-        if (typeof cause === "object" && cause !== null && "_tag" in cause) return cause as ArtifactError;
-        return { _tag: "ArtifactUnavailable", reason: cause instanceof Error ? cause.message : "R2 failure" };
+        if (typeof cause === "object" && cause !== null && "_tag" in cause)
+          return cause as ArtifactError;
+        return {
+          _tag: "ArtifactUnavailable",
+          reason: cause instanceof Error ? cause.message : "R2 failure",
+        };
       },
     });
   }
@@ -113,7 +138,8 @@ export class R2ArtifactStore implements ArtifactStore {
       try: async () => {
         const parsedDigest = Sha256DigestSchema.make(digest);
         const object = await this.#bucket.head(keyFor(parsedDigest));
-        if (object === null) throw { _tag: "ArtifactMissing", digest: parsedDigest } satisfies ArtifactError;
+        if (object === null)
+          throw { _tag: "ArtifactMissing", digest: parsedDigest } satisfies ArtifactError;
         const receipt = metadataReceipt(object, parsedDigest);
         if (receipt === undefined) {
           throw {
@@ -125,8 +151,12 @@ export class R2ArtifactStore implements ArtifactStore {
         return receipt;
       },
       catch: (cause) => {
-        if (typeof cause === "object" && cause !== null && "_tag" in cause) return cause as ArtifactError;
-        return { _tag: "ArtifactUnavailable", reason: cause instanceof Error ? cause.message : "R2 failure" };
+        if (typeof cause === "object" && cause !== null && "_tag" in cause)
+          return cause as ArtifactError;
+        return {
+          _tag: "ArtifactUnavailable",
+          reason: cause instanceof Error ? cause.message : "R2 failure",
+        };
       },
     });
   }
@@ -136,31 +166,47 @@ export class R2ArtifactStore implements ArtifactStore {
       try: async () => {
         const receipt = await Effect.runPromise(this.head(digest));
         const object = await this.#bucket.get(keyFor(receipt.digest));
-        if (object === null) throw { _tag: "ArtifactMissing", digest: receipt.digest } satisfies ArtifactError;
+        if (object === null)
+          throw { _tag: "ArtifactMissing", digest: receipt.digest } satisfies ArtifactError;
         const content = await object.bytes();
         const observed = await digestBytes(content);
         if (observed !== receipt.digest || content.byteLength !== receipt.bytes) {
-          throw { _tag: "ArtifactDigestMismatch", expected: receipt.digest, observed } satisfies ArtifactError;
+          throw {
+            _tag: "ArtifactDigestMismatch",
+            expected: receipt.digest,
+            observed,
+          } satisfies ArtifactError;
         }
         const mediaType = object.httpMetadata?.contentType ?? object.customMetadata?.mediaType;
         if (mediaType !== receipt.mediaType) {
-          throw { _tag: "ArtifactConflict", digest: receipt.digest, reason: "R2 media type changed" } satisfies ArtifactError;
+          throw {
+            _tag: "ArtifactConflict",
+            digest: receipt.digest,
+            reason: "R2 media type changed",
+          } satisfies ArtifactError;
         }
         return content;
       },
       catch: (cause) => {
-        if (typeof cause === "object" && cause !== null && "_tag" in cause) return cause as ArtifactError;
-        return { _tag: "ArtifactUnavailable", reason: cause instanceof Error ? cause.message : "R2 failure" };
+        if (typeof cause === "object" && cause !== null && "_tag" in cause)
+          return cause as ArtifactError;
+        return {
+          _tag: "ArtifactUnavailable",
+          reason: cause instanceof Error ? cause.message : "R2 failure",
+        };
       },
     });
   }
 }
 
-export const ArtifactStoreService = Effect.Service<ArtifactStoreService>()("work-engine/ArtifactStore", {
-  sync: () => {
-    throw new Error("ArtifactStoreService must be provided by a Cloudflare layer");
+export const ArtifactStoreService = Effect.Service<ArtifactStoreService>()(
+  "work-engine/ArtifactStore",
+  {
+    sync: () => {
+      throw new Error("ArtifactStoreService must be provided by a Cloudflare layer");
+    },
   },
-});
+);
 
 export const ArtifactStoreLive = (bucket: R2Bucket): Layer.Layer<ArtifactStoreService> =>
   Layer.succeed(ArtifactStoreService, new R2ArtifactStore(bucket));

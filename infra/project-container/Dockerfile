@@ -33,6 +33,8 @@ COPY infra/project-container/herdr.toml /etc/herdr/herdr.toml
 COPY infra/project-container/versions.json /opt/work-engine/infra/project-container/versions.json
 
 RUN bun install --frozen-lockfile --ignore-scripts
+RUN mkdir -p /opt/work-engine/bin \
+  && bun build --compile apps/cli/src/main.ts --outfile /opt/work-engine/bin/work
 RUN case "$(herdr --version)" in *0.8.0*) ;; *) exit 1 ;; esac
 RUN case "$(omp --version)" in *17.2.3*) ;; *) exit 1 ;; esac
 RUN herdr integration install omp \

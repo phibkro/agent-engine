@@ -106,7 +106,10 @@ export class WorkspaceCustodian {
     await mkdir(this.options.baseRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.options.worktreeRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.options.snapshotRoot, { recursive: true, mode: 0o700 });
-    const baseRepositoryPath = join(this.options.baseRoot, digestHex(this.options.baseManifest.digest));
+    const baseRepositoryPath = join(
+      this.options.baseRoot,
+      digestHex(this.options.baseManifest.digest),
+    );
     await this.materializeBase(baseRepositoryPath);
     const worktreePath = join(this.options.worktreeRoot, spec.sessionId);
     await rm(worktreePath, { recursive: true, force: true });
@@ -118,7 +121,9 @@ export class WorkspaceCustodian {
       baseRepositoryPath,
       workspaceViewId: workspaceViewId(spec.sessionId),
       baseManifest: this.options.baseManifest,
-      writableScope: this.options.writableScope ?? (spec.workspaceLease.mode === "write" ? ["src/greeting.ts"] : []),
+      writableScope:
+        this.options.writableScope ??
+        (spec.workspaceLease.mode === "write" ? ["src/greeting.ts"] : []),
       finalized: false,
       processExited: false,
     };
@@ -128,16 +133,35 @@ export class WorkspaceCustodian {
 
   async markProcessExited(sessionId: SessionId): Promise<void> {
     const session = this.sessions.get(sessionId);
-    if (session === undefined) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: `unknown session: ${sessionId}` });
+    if (session === undefined)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: `unknown session: ${sessionId}`,
+      });
     session.processExited = true;
   }
 
   async finalize(request: CandidateFinalizeRequest): Promise<FrozenCandidate> {
     const session = this.sessions.get(request.sessionId);
-    if (session === undefined) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: `unknown session: ${request.sessionId}` });
-    if (session.finalized) throw new CustodyFailureError({ _tag: "CandidateAlreadyFinalized", sessionId: request.sessionId });
-    if (!session.processExited) throw new CustodyFailureError({ _tag: "CandidateFinalizeBeforeExit", sessionId: request.sessionId });
-    const changedPaths = validateWritableScope(await this.changedPaths(session.worktreePath), session.writableScope);
+    if (session === undefined)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: `unknown session: ${request.sessionId}`,
+      });
+    if (session.finalized)
+      throw new CustodyFailureError({
+        _tag: "CandidateAlreadyFinalized",
+        sessionId: request.sessionId,
+      });
+    if (!session.processExited)
+      throw new CustodyFailureError({
+        _tag: "CandidateFinalizeBeforeExit",
+        sessionId: request.sessionId,
+      });
+    const changedPaths = validateWritableScope(
+      await this.changedPaths(session.worktreePath),
+      session.writableScope,
+    );
     const snapshotPath = join(this.options.snapshotRoot, request.sessionId);
     await this.revoke(request.sessionId);
     await this.copyTrackedFiles(session.worktreePath, snapshotPath);
@@ -190,7 +214,8 @@ export class WorkspaceCustodian {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
     await rm(session.worktreePath, { recursive: true, force: true });
-    if (session.snapshotPath !== undefined) await rm(session.snapshotPath, { recursive: true, force: true });
+    if (session.snapshotPath !== undefined)
+      await rm(session.snapshotPath, { recursive: true, force: true });
     this.sessions.delete(sessionId);
   }
 
@@ -211,11 +236,17 @@ export class WorkspaceCustodian {
       const path = safePath(baseRepositoryPath, entry.path);
       const bytes = await this.getArtifact(entry.digest);
       if (bytes.byteLength !== entry.bytes) {
-        throw new CustodyFailureError({ _tag: "BaseArtifactUnavailable", reason: `length mismatch for ${entry.path}` });
+        throw new CustodyFailureError({
+          _tag: "BaseArtifactUnavailable",
+          reason: `length mismatch for ${entry.path}`,
+        });
       }
       const observed = await sha256(bytes);
       if (observed !== entry.digest) {
-        throw new CustodyFailureError({ _tag: "BaseArtifactUnavailable", reason: `digest mismatch for ${entry.path}` });
+        throw new CustodyFailureError({
+          _tag: "BaseArtifactUnavailable",
+          reason: `digest mismatch for ${entry.path}`,
+        });
       }
       await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
       await writeFile(path, bytes, { mode: 0o600 });
@@ -245,13 +276,22 @@ export class WorkspaceCustodian {
     const listed = await this.runner.run(["find", path, "-type", "f"], {
       env: scrubHerdrEnvironment(process.env),
     });
-    if (listed.exitCode !== 0) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: "cannot enumerate snapshot files" });
+    if (listed.exitCode !== 0)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: "cannot enumerate snapshot files",
+      });
     for (const file of decodeLines(listed.stdout)) await chmod(file, 0o444);
     const directories = await this.runner.run(["find", path, "-type", "d"], {
       env: scrubHerdrEnvironment(process.env),
     });
-    if (directories.exitCode !== 0) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: "cannot enumerate snapshot directories" });
-    for (const directory of decodeLines(directories.stdout).reverse()) await chmod(directory, 0o555);
+    if (directories.exitCode !== 0)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: "cannot enumerate snapshot directories",
+      });
+    for (const directory of decodeLines(directories.stdout).reverse())
+      await chmod(directory, 0o555);
   }
 
   private async ensureHostOwnership(path: string): Promise<void> {
@@ -269,16 +309,30 @@ export class WorkspaceCustodian {
 
   private async changedPaths(worktreePath: string): Promise<readonly string[]> {
     const unstaged = await this.runGit(["diff", "--name-only", "--no-renames"], worktreePath);
-    const staged = await this.runGit(["diff", "--cached", "--name-only", "--no-renames"], worktreePath);
-    const untracked = await this.runGit(["ls-files", "--others", "--exclude-standard"], worktreePath);
-    return sortUtf8([...decodeLines(unstaged.stdout), ...decodeLines(staged.stdout), ...decodeLines(untracked.stdout)]);
+    const staged = await this.runGit(
+      ["diff", "--cached", "--name-only", "--no-renames"],
+      worktreePath,
+    );
+    const untracked = await this.runGit(
+      ["ls-files", "--others", "--exclude-standard"],
+      worktreePath,
+    );
+    return sortUtf8([
+      ...decodeLines(unstaged.stdout),
+      ...decodeLines(staged.stdout),
+      ...decodeLines(untracked.stdout),
+    ]);
   }
 
   private async manifestFor(root: string): Promise<ContentManifest> {
     const listed = await this.runner.run(["find", root, "-type", "f", "-print"], {
       env: scrubHerdrEnvironment(process.env),
     });
-    if (listed.exitCode !== 0) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: "cannot enumerate candidate files" });
+    if (listed.exitCode !== 0)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: "cannot enumerate candidate files",
+      });
     const entries: ContentManifestEntry[] = [];
     for (const absolute of decodeLines(listed.stdout)) {
       const path = relative(root, absolute).split(sep).join("/");
@@ -293,14 +347,23 @@ export class WorkspaceCustodian {
 
   private async runCheck(snapshotPath: string): Promise<CommandResult> {
     const [executable, ...args] = this.requiredCheck.split(/\s+/u);
-    if (executable === undefined) throw new CustodyFailureError({ _tag: "WorkspaceCommandFailed", command: [this.requiredCheck], reason: "empty check command" });
+    if (executable === undefined)
+      throw new CustodyFailureError({
+        _tag: "WorkspaceCommandFailed",
+        command: [this.requiredCheck],
+        reason: "empty check command",
+      });
     return this.runner.run([executable, ...args], {
       cwd: snapshotPath,
       env: scrubHerdrEnvironment(process.env),
     });
   }
 
-  private async runGit(args: readonly string[], cwd: string, requireSuccess = true): Promise<CommandResult> {
+  private async runGit(
+    args: readonly string[],
+    cwd: string,
+    requireSuccess = true,
+  ): Promise<CommandResult> {
     const result = await this.runner.run(["git", ...args], {
       cwd,
       env: scrubHerdrEnvironment(process.env),
@@ -319,7 +382,10 @@ export class WorkspaceCustodian {
     try {
       return await Effect.runPromise(this.options.artifactStore.get(digest));
     } catch (error) {
-      throw new CustodyFailureError({ _tag: "BaseArtifactUnavailable", reason: errorMessage(error) });
+      throw new CustodyFailureError({
+        _tag: "BaseArtifactUnavailable",
+        reason: errorMessage(error),
+      });
     }
   }
 
@@ -332,18 +398,39 @@ export class WorkspaceCustodian {
       throw new CustodyFailureError({ _tag: "ArtifactUploadFailed", reason: errorMessage(error) });
     }
     if (receipt.digest !== expected || receipt.bytes !== content.byteLength) {
-      throw new CustodyFailureError({ _tag: "ArtifactVerificationFailed", digest: expected, reason: "put receipt mismatch" });
+      throw new CustodyFailureError({
+        _tag: "ArtifactVerificationFailed",
+        digest: expected,
+        reason: "put receipt mismatch",
+      });
     }
     let head: ArtifactReceipt;
     try {
       head = await Effect.runPromise(this.options.artifactStore.head(expected));
     } catch (error) {
-      throw new CustodyFailureError({ _tag: "ArtifactVerificationFailed", digest: expected, reason: errorMessage(error) });
+      throw new CustodyFailureError({
+        _tag: "ArtifactVerificationFailed",
+        digest: expected,
+        reason: errorMessage(error),
+      });
     }
-    if (head.digest !== expected || head.bytes !== content.byteLength || head.mediaType !== mediaType) {
-      throw new CustodyFailureError({ _tag: "ArtifactVerificationFailed", digest: expected, reason: "head receipt mismatch" });
+    if (
+      head.digest !== expected ||
+      head.bytes !== content.byteLength ||
+      head.mediaType !== mediaType
+    ) {
+      throw new CustodyFailureError({
+        _tag: "ArtifactVerificationFailed",
+        digest: expected,
+        reason: "head receipt mismatch",
+      });
     }
-    return ArtifactReceiptSchema.make({ _tag: "ArtifactReceipt", digest: expected, bytes: content.byteLength, mediaType });
+    return ArtifactReceiptSchema.make({
+      _tag: "ArtifactReceipt",
+      digest: expected,
+      bytes: content.byteLength,
+      mediaType,
+    });
   }
 
   private async writeMcpConfig(worktreePath: string, sessionId: SessionId): Promise<void> {
@@ -358,39 +445,66 @@ export class WorkspaceCustodian {
       },
     };
     const path = join(worktreePath, ".mcp.json");
-    await writeFile(path, JSON.stringify(config, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-    const excluded = await this.runGit(["rev-parse", "--git-path", "info/exclude"], worktreePath, false);
+    await writeFile(path, JSON.stringify(config, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    const excluded = await this.runGit(
+      ["rev-parse", "--git-path", "info/exclude"],
+      worktreePath,
+      false,
+    );
     if (excluded.exitCode === 0) {
       const excludePath = new TextDecoder().decode(excluded.stdout).trim();
       if (excludePath.length > 0) {
         const current = await readFile(excludePath, "utf8").catch(() => "");
-        if (!current.split(/\r?\n/u).includes(".mcp.json")) await writeFile(excludePath, `${current}${current.endsWith("\n") || current.length === 0 ? "" : "\n"}.mcp.json\n`, { mode: 0o600 });
+        if (!current.split(/\r?\n/u).includes(".mcp.json"))
+          await writeFile(
+            excludePath,
+            `${current}${current.endsWith("\n") || current.length === 0 ? "" : "\n"}.mcp.json\n`,
+            { mode: 0o600 },
+          );
       }
     }
   }
 }
 
-export const validateWritableScope = (changedPaths: readonly string[], writableScope: readonly string[]): readonly string[] => {
+export const validateWritableScope = (
+  changedPaths: readonly string[],
+  writableScope: readonly string[],
+): readonly string[] => {
   const allowed = new Set(writableScope);
   const outOfScope = sortUtf8(changedPaths.filter((path) => !allowed.has(path)));
-  if (outOfScope.length > 0) throw new CustodyFailureError({ _tag: "CandidateScopeViolation", changedPaths: outOfScope });
+  if (outOfScope.length > 0)
+    throw new CustodyFailureError({ _tag: "CandidateScopeViolation", changedPaths: outOfScope });
   return sortUtf8(changedPaths);
 };
 
 const safePath = (root: string, path: string): string => {
-  if (path.startsWith("/") || path.includes("\\") || path.split("/").includes("..")) throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
+  if (path.startsWith("/") || path.includes("\\") || path.split("/").includes(".."))
+    throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
   const resolved = resolve(root, path);
   const rootResolved = resolve(root);
-  if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${sep}`)) throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
+  if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${sep}`))
+    throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
   return resolved;
 };
 
 const decodeLines = (bytes: Uint8Array): readonly string[] =>
-  new TextDecoder().decode(bytes).split(/\r?\n/u).map((line) => line.trim()).filter((line) => line.length > 0);
+  new TextDecoder()
+    .decode(bytes)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 const decodeNulSeparated = (bytes: Uint8Array): readonly string[] =>
-  new TextDecoder().decode(bytes).split("\0").filter((path) => path.length > 0);
+  new TextDecoder()
+    .decode(bytes)
+    .split("\0")
+    .filter((path) => path.length > 0);
 const sortUtf8 = (paths: readonly string[]): readonly string[] =>
   [...new Set(paths)].sort(compareUtf8PathBytes);
 const digestHex = (value: string): string => value.replace(/[^a-z0-9]/giu, "").slice(-64);
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-const isMissingFile = (error: unknown): boolean => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+const isMissingFile = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";

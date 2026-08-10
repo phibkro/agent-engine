@@ -1,12 +1,24 @@
 import { chmod, chown, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as Effect from "effect/Effect";
-import type { SessionId, SessionStartSpec, WorkspaceLease, WorkspaceReady } from "@work-engine/protocol";
+import type {
+  SessionId,
+  SessionStartSpec,
+  WorkspaceLease,
+  WorkspaceReady,
+} from "@work-engine/protocol";
 import { SessionHostRouter, type SessionHostAccessCredentials } from "./router.ts";
 import { SessionHostService } from "./host.ts";
 import { ModelProxy, type ModelProvider } from "./model-proxy.ts";
 import { SessionMcpServer, type SessionMcpHandlers } from "./mcp.ts";
-import { LinuxSessionIdentityProvider, SessionCredentialManager, scrubSessionEnvironment, ensurePrivateRuntime, type SessionIdentity, type SessionIdentityProvider } from "./security.ts";
+import {
+  LinuxSessionIdentityProvider,
+  SessionCredentialManager,
+  scrubSessionEnvironment,
+  ensurePrivateRuntime,
+  type SessionIdentity,
+  type SessionIdentityProvider,
+} from "./security.ts";
 
 export interface ContainerVersions {
   readonly herdr: string;
@@ -58,8 +70,18 @@ export class SessionRuntimeManager {
     );
     const ompHome = join(this.options.homeRoot, spec.sessionId, ".omp");
     await mkdir(join(ompHome, "agent"), { recursive: true, mode: 0o700 });
-    await writeOwned(join(ompHome, "agent", "models.yml"), modelsConfig(credentials.modelToken), identity.uid, identity.gid);
-    await writeOwned(join(ompHome, "agent", "config.yml"), "modelRoles:\n  default: work-engine/gpt-oss-120b\n", identity.uid, identity.gid);
+    await writeOwned(
+      join(ompHome, "agent", "models.yml"),
+      modelsConfig(credentials.modelToken),
+      identity.uid,
+      identity.gid,
+    );
+    await writeOwned(
+      join(ompHome, "agent", "config.yml"),
+      "modelRoles:\n  default: work-engine/gpt-oss-120b\n",
+      identity.uid,
+      identity.gid,
+    );
     const environment = scrubSessionEnvironment({
       ...process.env,
       HOME: join(this.options.homeRoot, spec.sessionId),
@@ -142,7 +164,11 @@ export class SessionHostDaemon {
     if (url.pathname === "/healthz" && request.method === "GET") return this.health();
     if (!this.accepting) return json({ error: "host shutting down" }, 503);
     if (url.pathname.startsWith("/v1/session-host/")) return this.router.fetch(request);
-    if (url.pathname.startsWith("/v1/sessions/") && url.pathname.endsWith("/model/chat/completions")) return this.modelProxy.fetch(request);
+    if (
+      url.pathname.startsWith("/v1/sessions/") &&
+      url.pathname.endsWith("/model/chat/completions")
+    )
+      return this.modelProxy.fetch(request);
     const mcp = /^\/v1\/sessions\/([^/]+)\/mcp$/u.exec(url.pathname);
     if (mcp !== null && mcp[1] !== undefined && this.options.mcpBySession !== undefined) {
       const server = this.options.mcpBySession(mcp[1] as SessionId);
@@ -154,7 +180,15 @@ export class SessionHostDaemon {
   async start(): Promise<{ readonly port: number }> {
     await ensurePrivateRuntime(this.options.runtimeDirectory, this.options.herdrSocketPath);
     const port = this.options.port ?? 8788;
-    const bun = (globalThis as unknown as { Bun?: { serve(options: { port: number; fetch: (request: Request) => Promise<Response> }): { stop(): void } } }).Bun;
+    const bun = (
+      globalThis as unknown as {
+        Bun?: {
+          serve(options: { port: number; fetch: (request: Request) => Promise<Response> }): {
+            stop(): void;
+          };
+        };
+      }
+    ).Bun;
     if (bun === undefined) throw new Error("Bun runtime is required for the in-container daemon");
     this.server = bun.serve({ port, fetch: (request) => this.fetch(request) });
     return { port };
@@ -163,33 +197,71 @@ export class SessionHostDaemon {
   async stop(reason = "sigterm"): Promise<void> {
     this.accepting = false;
     await this.options.host.shutdown(reason);
-    for (const runtime of this.options.sessionRuntime.list()) await this.options.sessionRuntime.terminate(runtime.sessionId);
+    for (const runtime of this.options.sessionRuntime.list())
+      await this.options.sessionRuntime.terminate(runtime.sessionId);
     this.server?.stop();
     this.server = undefined;
   }
 
   private health(): Response {
     const versions = this.options.versions;
-    if (versions.herdr !== "0.8.0" || versions.omp !== "17.2.3" || versions.bun !== "1.3.13" || versions.work.length === 0 || versions.integration.length === 0) return json({ ready: false, reason: "pinned runtime mismatch" }, 503);
-    return json({ _tag: "WorkspaceReady", ready: true, herdr: versions.herdr, omp: versions.omp, bun: versions.bun, integration: versions.integration, work: versions.work, imageDigest: versions.imageDigest }, 200);
+    if (
+      versions.herdr !== "0.8.0" ||
+      versions.omp !== "17.2.3" ||
+      versions.bun !== "1.3.13" ||
+      versions.work.length === 0 ||
+      versions.integration.length === 0
+    )
+      return json({ ready: false, reason: "pinned runtime mismatch" }, 503);
+    return json(
+      {
+        _tag: "WorkspaceReady",
+        ready: true,
+        herdr: versions.herdr,
+        omp: versions.omp,
+        bun: versions.bun,
+        integration: versions.integration,
+        work: versions.work,
+        imageDigest: versions.imageDigest,
+      },
+      200,
+    );
   }
 }
 
-export const makeDefaultSessionRuntimeManager = (options: Omit<SessionRuntimeManagerOptions, "identityProvider" | "credentials" | "modelProxy"> & {
-  readonly identityProvider?: SessionIdentityProvider;
-  readonly credentials?: SessionCredentialManager;
-  readonly modelProxy: ModelProxy;
-}): SessionRuntimeManager => new SessionRuntimeManager({
-  ...options,
-  identityProvider: options.identityProvider ?? new LinuxSessionIdentityProvider({ homeRoot: options.homeRoot, capabilityRoot: join(options.homeRoot, ".capabilities"), modelRoot: join(options.homeRoot, ".model"), hostUid: options.hostUid, hostGid: options.hostGid }),
-  credentials: options.credentials ?? new SessionCredentialManager(),
-  modelProxy: options.modelProxy,
-});
+export const makeDefaultSessionRuntimeManager = (
+  options: Omit<SessionRuntimeManagerOptions, "identityProvider" | "credentials" | "modelProxy"> & {
+    readonly identityProvider?: SessionIdentityProvider;
+    readonly credentials?: SessionCredentialManager;
+    readonly modelProxy: ModelProxy;
+  },
+): SessionRuntimeManager =>
+  new SessionRuntimeManager({
+    ...options,
+    identityProvider:
+      options.identityProvider ??
+      new LinuxSessionIdentityProvider({
+        homeRoot: options.homeRoot,
+        capabilityRoot: join(options.homeRoot, ".capabilities"),
+        modelRoot: join(options.homeRoot, ".model"),
+        hostUid: options.hostUid,
+        hostGid: options.hostGid,
+      }),
+    credentials: options.credentials ?? new SessionCredentialManager(),
+    modelProxy: options.modelProxy,
+  });
 
-const modelsConfig = (token: string): string => `providers:\n  work-engine:\n    baseUrl: http://127.0.0.1:8788/v1\n    api: openai-completions\n    apiKey: ${token}\n    models:\n      - id: gpt-oss-120b\n        name: Work Engine GPT-OSS 120B\n        contextWindow: 128000\n        maxTokens: 8192\n`;
-const writeOwned = async (path: string, content: string, uid: number, gid: number): Promise<void> => {
+const modelsConfig = (token: string): string =>
+  `providers:\n  work-engine:\n    baseUrl: http://127.0.0.1:8788/v1\n    api: openai-completions\n    apiKey: ${token}\n    models:\n      - id: gpt-oss-120b\n        name: Work Engine GPT-OSS 120B\n        contextWindow: 128000\n        maxTokens: 8192\n`;
+const writeOwned = async (
+  path: string,
+  content: string,
+  uid: number,
+  gid: number,
+): Promise<void> => {
   await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
   await chmod(path, 0o600);
   await chown(path, uid, gid);
 };
-const json = (body: unknown, status: number): Response => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (body: unknown, status: number): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

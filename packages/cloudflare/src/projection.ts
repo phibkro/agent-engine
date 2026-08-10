@@ -1,5 +1,9 @@
 import * as Schema from "effect/Schema";
-import { EventEnvelopeSchema, ProjectObservationSchema, type ProjectObservation } from "@work-engine/protocol";
+import {
+  EventEnvelopeSchema,
+  ProjectObservationSchema,
+  type ProjectObservation,
+} from "@work-engine/protocol";
 
 export const PROJECT_PROJECTION_MIGRATION = `
 CREATE TABLE IF NOT EXISTS project_event_projection (
@@ -26,7 +30,9 @@ export class D1ProjectProjection {
 
   async project(observation: ProjectObservation): Promise<void> {
     await this.ensureMigration();
-    const decoded = Schema.decodeUnknownSync(ProjectObservationSchema, { onExcessProperty: "error" })(observation);
+    const decoded = Schema.decodeUnknownSync(ProjectObservationSchema, {
+      onExcessProperty: "error",
+    })(observation);
     const grouped = new Map<number, typeof decoded.history>();
     for (const envelope of decoded.history) {
       const events = grouped.get(envelope.eventRevision) ?? [];
@@ -53,6 +59,9 @@ export class D1ProjectProjection {
   }
 }
 
-export const projectObservationToD1 = async (db: D1Database, observation: ProjectObservation): Promise<void> => {
+export const projectObservationToD1 = async (
+  db: D1Database,
+  observation: ProjectObservation,
+): Promise<void> => {
   await new D1ProjectProjection(db).project(observation);
 };

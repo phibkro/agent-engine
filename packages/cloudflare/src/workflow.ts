@@ -18,8 +18,12 @@ const requestHost = async (
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(env.ACCESS_CLIENT_ID === undefined ? {} : { "CF-Access-Client-Id": env.ACCESS_CLIENT_ID }),
-      ...(env.ACCESS_CLIENT_SECRET === undefined ? {} : { "CF-Access-Client-Secret": env.ACCESS_CLIENT_SECRET }),
+      ...(env.ACCESS_CLIENT_ID === undefined
+        ? {}
+        : { "CF-Access-Client-Id": env.ACCESS_CLIENT_ID }),
+      ...(env.ACCESS_CLIENT_SECRET === undefined
+        ? {}
+        : { "CF-Access-Client-Secret": env.ACCESS_CLIENT_SECRET }),
     },
     body: json(payload),
   });
@@ -33,7 +37,11 @@ export const runSessionEffect = async (
   effect: OutboxMessage["effect"],
 ): Promise<unknown> => {
   if (effect._tag === "StartSessionEffect") {
-    const ready = await requestHost(env, "/v1/session-host/workspaces/ensure-ready", effect.spec.workspaceLease);
+    const ready = await requestHost(
+      env,
+      "/v1/session-host/workspaces/ensure-ready",
+      effect.spec.workspaceLease,
+    );
     if (decode(SessionHostWireResponseSchema, ready)._tag === "SessionHostWireFailure") {
       throw new Error(decode(SessionHostWireResponseSchema, ready).reason);
     }
@@ -52,10 +60,13 @@ export class SessionWorkflow extends WorkflowEntrypoint<CloudflareRuntimeEnv, Ou
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return await step.do(`session-host-attempt-${attempt + 1}`, () => runSessionEffect(this.env, message.effect));
+        return await step.do(`session-host-attempt-${attempt + 1}`, () =>
+          runSessionEffect(this.env, message.effect),
+        );
       } catch (cause) {
         lastError = cause;
-        if (attempt < 2) await step.sleep(`session-host-backoff-${attempt + 1}`, 10_000 * 2 ** attempt);
+        if (attempt < 2)
+          await step.sleep(`session-host-backoff-${attempt + 1}`, 10_000 * 2 ** attempt);
       }
     }
     throw lastError instanceof Error ? lastError : new Error("Session host dispatch exhausted");

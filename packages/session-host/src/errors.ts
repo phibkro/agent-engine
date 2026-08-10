@@ -11,9 +11,17 @@ export type CandidateFinalizeFailure =
 
 export type CustodyFailure =
   | { readonly _tag: "BaseArtifactUnavailable"; readonly reason: string }
-  | { readonly _tag: "WorkspaceCommandFailed"; readonly command: readonly string[]; readonly reason: string }
+  | {
+      readonly _tag: "WorkspaceCommandFailed";
+      readonly command: readonly string[];
+      readonly reason: string;
+    }
   | { readonly _tag: "ArtifactUploadFailed"; readonly reason: string }
-  | { readonly _tag: "ArtifactVerificationFailed"; readonly digest: string; readonly reason: string }
+  | {
+      readonly _tag: "ArtifactVerificationFailed";
+      readonly digest: string;
+      readonly reason: string;
+    }
   | { readonly _tag: "WorkspacePathRejected"; readonly path: string }
   | { readonly _tag: "SnapshotUnavailable"; readonly reason: string };
 
@@ -75,10 +83,7 @@ export const failureReason = (failure: SessionHostFailure): string => {
 };
 
 export const isSessionHostFailure = (value: unknown): value is SessionHostFailure =>
-  typeof value === "object" &&
-  value !== null &&
-  "_tag" in value &&
-  typeof value._tag === "string";
+  typeof value === "object" && value !== null && "_tag" in value && typeof value._tag === "string";
 
 export const workspaceViewId = (sessionId: SessionId): WorkspaceViewId =>
   `${sessionId.replace(/^ses_/, "wsv_")}` as WorkspaceViewId;

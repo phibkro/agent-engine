@@ -60,22 +60,30 @@ export class LinuxSessionIdentityProvider implements SessionIdentityProvider {
     await mkdir(this.options.capabilityRoot, { recursive: true, mode: 0o700 });
     await mkdir(this.options.modelRoot, { recursive: true, mode: 0o700 });
     if (this.provisionUsers) {
-      const result = await this.runner.run([
-        "useradd",
-        "--system",
-        "--no-create-home",
-        "--home-dir",
-        home,
-        "--shell",
-        "/usr/sbin/nologin",
-        "--uid",
-        String(uid),
-        "--gid",
-        String(gid),
-        username,
-      ], { env: scrubHerdrEnvironment(process.env) });
-      if (result.exitCode !== 0 && !new TextDecoder().decode(result.stderr).includes("already exists")) {
-        throw new Error(`cannot create Session UID ${uid}: ${new TextDecoder().decode(result.stderr)}`);
+      const result = await this.runner.run(
+        [
+          "useradd",
+          "--system",
+          "--no-create-home",
+          "--home-dir",
+          home,
+          "--shell",
+          "/usr/sbin/nologin",
+          "--uid",
+          String(uid),
+          "--gid",
+          String(gid),
+          username,
+        ],
+        { env: scrubHerdrEnvironment(process.env) },
+      );
+      if (
+        result.exitCode !== 0 &&
+        !new TextDecoder().decode(result.stderr).includes("already exists")
+      ) {
+        throw new Error(
+          `cannot create Session UID ${uid}: ${new TextDecoder().decode(result.stderr)}`,
+        );
       }
     }
     await chown(home, uid, gid);
@@ -92,8 +100,13 @@ export class LinuxSessionIdentityProvider implements SessionIdentityProvider {
       const result = await this.runner.run(["userdel", "--remove", identity.username], {
         env: scrubHerdrEnvironment(process.env),
       });
-      if (result.exitCode !== 0 && !new TextDecoder().decode(result.stderr).includes("does not exist")) {
-        throw new Error(`cannot revoke Session UID ${identity.uid}: ${new TextDecoder().decode(result.stderr)}`);
+      if (
+        result.exitCode !== 0 &&
+        !new TextDecoder().decode(result.stderr).includes("does not exist")
+      ) {
+        throw new Error(
+          `cannot revoke Session UID ${identity.uid}: ${new TextDecoder().decode(result.stderr)}`,
+        );
       }
     }
   }
@@ -119,7 +132,13 @@ export interface SessionCredentialSet {
 export class SessionCredentialManager {
   private readonly credentials = new Map<SessionId, SessionCredentialSet>();
 
-  async issue(sessionId: SessionId, capabilityFile: string, modelTokenFile: string, uid: number, gid: number): Promise<SessionCredentialSet> {
+  async issue(
+    sessionId: SessionId,
+    capabilityFile: string,
+    modelTokenFile: string,
+    uid: number,
+    gid: number,
+  ): Promise<SessionCredentialSet> {
     const capabilityToken = randomBytes(32).toString("base64url");
     const modelToken = randomBytes(32).toString("base64url");
     const capabilityDigest = String(await sha256(new TextEncoder().encode(capabilityToken)));
@@ -128,7 +147,15 @@ export class SessionCredentialManager {
     await writeFile(modelTokenFile, `${modelToken}\n`, { encoding: "utf8", mode: 0o600 });
     await chown(capabilityFile, uid, gid);
     await chown(modelTokenFile, uid, gid);
-    const credentials = { sessionId, capabilityToken, modelToken, capabilityDigest, modelDigest, capabilityFile, modelTokenFile };
+    const credentials = {
+      sessionId,
+      capabilityToken,
+      modelToken,
+      capabilityDigest,
+      modelDigest,
+      capabilityFile,
+      modelTokenFile,
+    };
     this.credentials.set(sessionId, credentials);
     return credentials;
   }
@@ -174,7 +201,10 @@ export const scrubSessionEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.
   return next;
 };
 
-export const ensurePrivateRuntime = async (runtimeDirectory: string, socketPath: string): Promise<void> => {
+export const ensurePrivateRuntime = async (
+  runtimeDirectory: string,
+  socketPath: string,
+): Promise<void> => {
   await mkdir(runtimeDirectory, { recursive: true, mode: 0o700 });
   await chmod(runtimeDirectory, 0o700);
   try {
@@ -184,16 +214,24 @@ export const ensurePrivateRuntime = async (runtimeDirectory: string, socketPath:
   }
 };
 
-export const canOpenSocket = async (socketPath: string, uid: number, gid: number): Promise<boolean> => {
+export const canOpenSocket = async (
+  socketPath: string,
+  uid: number,
+  gid: number,
+): Promise<boolean> => {
   try {
     const runner = new NodeCommandRunner();
-    const result = await runner.run(["runuser", "--uid", String(uid), "--gid", String(gid), "--", "test", "-r", socketPath], {
-      env: scrubHerdrEnvironment(process.env),
-    });
+    const result = await runner.run(
+      ["runuser", "--uid", String(uid), "--gid", String(gid), "--", "test", "-r", socketPath],
+      {
+        env: scrubHerdrEnvironment(process.env),
+      },
+    );
     return result.exitCode === 0;
   } catch {
     return false;
   }
 };
 
-const isMissingFile = (error: unknown): boolean => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+const isMissingFile = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";

@@ -8,7 +8,13 @@ import type {
   SessionStartSpec,
   Timestamp,
 } from "@work-engine/protocol";
-import { EffectIdSchema, SessionHostReceiptSchema, SessionIdSchema, SessionStartSpecSchema, TimestampSchema } from "@work-engine/protocol";
+import {
+  EffectIdSchema,
+  SessionHostReceiptSchema,
+  SessionIdSchema,
+  SessionStartSpecSchema,
+  TimestampSchema,
+} from "@work-engine/protocol";
 import { decodeUnknownStrict } from "@work-engine/protocol";
 import { sha256 } from "@work-engine/protocol";
 
@@ -163,10 +169,7 @@ export class JsonFileStartClaimStore implements StartClaimStore {
   }
 }
 
-export const makeStartClaim = (
-  spec: SessionStartSpec,
-  acceptedAt: Timestamp,
-): StartClaim => {
+export const makeStartClaim = (spec: SessionStartSpec, acceptedAt: Timestamp): StartClaim => {
   const launchId = spec.effectId;
   const processReference = `omp:${spec.sessionId}:${spec.effectId}`;
   const receipt: SessionHostReceipt = {

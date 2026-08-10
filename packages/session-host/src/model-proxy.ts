@@ -68,7 +68,11 @@ export interface SessionUsage {
 export type ModelProxyFailure =
   | { readonly _tag: "ModelTokenInvalid"; readonly sessionId: SessionId }
   | { readonly _tag: "ModelNotAllowed"; readonly model: string }
-  | { readonly _tag: "ModelBudgetExceeded"; readonly sessionId: SessionId; readonly remaining: number }
+  | {
+      readonly _tag: "ModelBudgetExceeded";
+      readonly sessionId: SessionId;
+      readonly remaining: number;
+    }
   | { readonly _tag: "ModelUnavailable"; readonly reason: string }
   | { readonly _tag: "ModelDecodeFailure"; readonly reason: string };
 
@@ -127,20 +131,38 @@ export class ModelProxy {
     if (!MODEL_ALIASES.includes(request.model as (typeof MODEL_ALIASES)[number])) {
       throw new ModelProxyError({ _tag: "ModelNotAllowed", model: request.model });
     }
-    if (request.stream === true) throw new ModelProxyError({ _tag: "ModelUnavailable", reason: "streaming is not enabled" });
+    if (request.stream === true)
+      throw new ModelProxyError({ _tag: "ModelUnavailable", reason: "streaming is not enabled" });
     const requested = request.max_completion_tokens ?? request.max_tokens ?? MODEL_RESPONSE_LIMIT;
-    if (requested > MODEL_RESPONSE_LIMIT) throw new ModelProxyError({ _tag: "ModelBudgetExceeded", sessionId, remaining: MODEL_RESPONSE_LIMIT });
+    if (requested > MODEL_RESPONSE_LIMIT)
+      throw new ModelProxyError({
+        _tag: "ModelBudgetExceeded",
+        sessionId,
+        remaining: MODEL_RESPONSE_LIMIT,
+      });
     const budget = this.budgets.get(sessionId);
     if (budget === undefined) throw new ModelProxyError({ _tag: "ModelTokenInvalid", sessionId });
     const remaining = budget.outputBudget - budget.reservedOutputTokens;
-    if (requested > remaining) throw new ModelProxyError({ _tag: "ModelBudgetExceeded", sessionId, remaining });
-    const reserved: SessionUsage = { ...budget, reservedOutputTokens: budget.reservedOutputTokens + requested, calls: budget.calls + 1 };
+    if (requested > remaining)
+      throw new ModelProxyError({ _tag: "ModelBudgetExceeded", sessionId, remaining });
+    const reserved: SessionUsage = {
+      ...budget,
+      reservedOutputTokens: budget.reservedOutputTokens + requested,
+      calls: budget.calls + 1,
+    };
     this.budgets.set(sessionId, reserved);
     try {
-      const response = await this.options.provider.complete({ ...request, max_tokens: requested }, MODEL_PROVIDER);
+      const response = await this.options.provider.complete(
+        { ...request, max_tokens: requested },
+        MODEL_PROVIDER,
+      );
       const decoded = decodeModelResponse(response);
       const completed = decoded.usage?.completion_tokens ?? requested;
-      if (completed > requested || completed > remaining) throw new ModelProxyError({ _tag: "ModelUnavailable", reason: "provider exceeded the reserved output budget" });
+      if (completed > requested || completed > remaining)
+        throw new ModelProxyError({
+          _tag: "ModelUnavailable",
+          reason: "provider exceeded the reserved output budget",
+        });
       this.budgets.set(sessionId, {
         ...reserved,
         completedOutputTokens: reserved.completedOutputTokens + completed,
@@ -160,10 +182,17 @@ export class ModelProxy {
       if (token === undefined) return jsonResponse({ error: "model token required" }, 401);
       const sessionId = await this.options.credentials.sessionForModelToken(token);
       if (sessionId === undefined) return jsonResponse({ error: "model token invalid" }, 401);
-      return jsonResponse({ object: "list", data: [{ id: "gpt-oss-120b", object: "model", owned_by: "work-engine" }] }, 200);
+      return jsonResponse(
+        {
+          object: "list",
+          data: [{ id: "gpt-oss-120b", object: "model", owned_by: "work-engine" }],
+        },
+        200,
+      );
     }
     const match = /^\/v1\/sessions\/([^/]+)\/model\/chat\/completions$/u.exec(url.pathname);
-    if (request.method !== "POST" || match === null || !url.pathname.startsWith(this.routePrefix)) return jsonResponse({ error: "not found" }, 404);
+    if (request.method !== "POST" || match === null || !url.pathname.startsWith(this.routePrefix))
+      return jsonResponse({ error: "not found" }, 404);
     const sessionId = match[1] as SessionId | undefined;
     if (sessionId === undefined) return jsonResponse({ error: "session not found" }, 404);
     const token = bearerToken(request.headers.get("authorization"));
@@ -173,7 +202,8 @@ export class ModelProxy {
       const response = await this.complete(sessionId, token, input);
       return jsonResponse(response, 200);
     } catch (error) {
-      if (!(error instanceof ModelProxyError)) return jsonResponse({ error: "model unavailable" }, 503);
+      if (!(error instanceof ModelProxyError))
+        return jsonResponse({ error: "model unavailable" }, 503);
       return jsonResponse({ error: error.failure }, statusForFailure(error.failure));
     }
   }
@@ -233,4 +263,5 @@ const failureReason = (failure: ModelProxyFailure): string => {
       return failure.reason;
   }
 };
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);

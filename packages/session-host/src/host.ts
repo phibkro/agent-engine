@@ -23,10 +23,26 @@ import {
   decodeUnknownStrict,
 } from "@work-engine/protocol";
 import type { SessionHost, SessionHostError } from "@work-engine/runtime";
-import { HostFailure, CustodyFailureError, failureReason, isSessionHostFailure, workspaceViewId } from "./errors.ts";
-import { makeStartClaim, startClaimKey, type StartClaim, type StartClaimStore } from "./persistence.ts";
+import {
+  HostFailure,
+  CustodyFailureError,
+  failureReason,
+  isSessionHostFailure,
+  workspaceViewId,
+} from "./errors.ts";
+import {
+  makeStartClaim,
+  startClaimKey,
+  type StartClaim,
+  type StartClaimStore,
+} from "./persistence.ts";
 import type { SessionProcess, SessionProcessController } from "./process.ts";
-import type { WorkspaceCustodian, WorkspaceSession, FrozenCandidate, CandidateFinalizeRequest } from "./custody.ts";
+import type {
+  WorkspaceCustodian,
+  WorkspaceSession,
+  FrozenCandidate,
+  CandidateFinalizeRequest,
+} from "./custody.ts";
 
 export interface Clock {
   now(): Date;
@@ -108,7 +124,10 @@ export class SessionHostService implements SessionHost {
     });
   }
 
-  cancel(sessionId: SessionId, reason: string): Effect.Effect<SessionHostReceipt, SessionHostError> {
+  cancel(
+    sessionId: SessionId,
+    reason: string,
+  ): Effect.Effect<SessionHostReceipt, SessionHostError> {
     return Effect.tryPromise({
       try: () => this.cancelAsync(sessionId, reason),
       catch: (error) => toHostError(error),
@@ -126,16 +145,20 @@ export class SessionHostService implements SessionHost {
     });
   }
 
-
   async finalizeCandidate(request: CandidateFinalizeRequest): Promise<FrozenCandidate> {
-    if (this.options.workspace === undefined) throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: "workspace custody is not configured" });
+    if (this.options.workspace === undefined)
+      throw new CustodyFailureError({
+        _tag: "SnapshotUnavailable",
+        reason: "workspace custody is not configured",
+      });
     const candidate = await this.options.workspace.finalize(request);
     await this.options.candidate?.candidate(candidate);
     return candidate;
   }
 
   async markProcessExited(sessionId: SessionId): Promise<void> {
-    if (this.options.workspace !== undefined) await this.options.workspace.markProcessExited(sessionId);
+    if (this.options.workspace !== undefined)
+      await this.options.workspace.markProcessExited(sessionId);
   }
 
   async shutdown(reason = "sigterm"): Promise<void> {
@@ -156,7 +179,8 @@ export class SessionHostService implements SessionHost {
 
   private async ensureReadyAsync(lease: WorkspaceLease): Promise<WorkspaceReady> {
     const now = timestamp(this.clock.now());
-    if (lease.expiresAt <= now) throw new HostFailure({ _tag: "LeaseExpired", resourceId: lease.resourceId });
+    if (lease.expiresAt <= now)
+      throw new HostFailure({ _tag: "LeaseExpired", resourceId: lease.resourceId });
     try {
       const ready = await withTimeout(this.options.readiness.ensureReady(lease, 60_000), 60_000);
       return WorkspaceReadySchema.make(ready);
@@ -168,9 +192,11 @@ export class SessionHostService implements SessionHost {
   }
 
   private async startAsync(spec: SessionStartSpec): Promise<SessionHostReceipt> {
-    if (!this.accepting) throw new HostFailure({ _tag: "HostUnavailable", reason: "Session host is shutting down" });
+    if (!this.accepting)
+      throw new HostFailure({ _tag: "HostUnavailable", reason: "Session host is shutting down" });
     const now = timestamp(this.clock.now());
-    if (spec.workspaceLease.expiresAt <= now) throw new HostFailure({ _tag: "LeaseExpired", resourceId: spec.workspaceLease.resourceId });
+    if (spec.workspaceLease.expiresAt <= now)
+      throw new HostFailure({ _tag: "LeaseExpired", resourceId: spec.workspaceLease.resourceId });
     return this.withLock(spec.sessionId, async () => {
       const key = startClaimKey(spec.sessionId, spec.effectId);
       const existing = await this.options.claims.get(key);
@@ -192,12 +218,17 @@ export class SessionHostService implements SessionHost {
           startedAt: now,
           processReference: claim.processReference,
         });
-        const process = await this.options.processController.spawn(spec, claim.launchId, claim.processReference);
+        const process = await this.options.processController.spawn(
+          spec,
+          claim.launchId,
+          claim.processReference,
+        );
         await this.options.claims.update(key, (current) => runningClaim(current, process));
         return claim.receipt;
       } catch (error) {
         if (error instanceof HostFailure) throw error;
-        if (error instanceof CustodyFailureError) throw new HostFailure({ _tag: "WorkspaceUnavailable", reason: error.message });
+        if (error instanceof CustodyFailureError)
+          throw new HostFailure({ _tag: "WorkspaceUnavailable", reason: error.message });
         throw new HostFailure({ _tag: "ProcessUnavailable", reason: errorMessage(error) });
       }
     });
@@ -213,14 +244,17 @@ export class SessionHostService implements SessionHost {
       });
     }
     if (claim.state !== "running" || claim.processId !== existing.pid) {
-      await this.options.claims.update(claim.key as `${SessionId}:${EffectId}`, (current) => runningClaim(current, existing));
+      await this.options.claims.update(claim.key as `${SessionId}:${EffectId}`, (current) =>
+        runningClaim(current, existing),
+      );
     }
     return claim.receipt;
   }
 
   private async cancelAsync(sessionId: SessionId, reason: string): Promise<SessionHostReceipt> {
     const normalizedReason = reason.trim();
-    if (normalizedReason.length === 0) throw new HostFailure({ _tag: "HostUnavailable", reason: "cancellation reason is required" });
+    if (normalizedReason.length === 0)
+      throw new HostFailure({ _tag: "HostUnavailable", reason: "cancellation reason is required" });
     return this.withLock(sessionId, async () => {
       const claim = await this.findSessionClaim(sessionId);
       if (claim === undefined) throw new HostFailure({ _tag: "SessionNotFound", sessionId });
@@ -232,7 +266,11 @@ export class SessionHostService implements SessionHost {
     });
   }
 
-  private async reportTerminalAsync(sessionId: SessionId, status: "completed" | "failed" | "interrupted", reason: string): Promise<SessionHostReceipt> {
+  private async reportTerminalAsync(
+    sessionId: SessionId,
+    status: "completed" | "failed" | "interrupted",
+    reason: string,
+  ): Promise<SessionHostReceipt> {
     return this.withLock(sessionId, async () => {
       const claim = await this.findSessionClaim(sessionId);
       if (claim === undefined) throw new HostFailure({ _tag: "SessionNotFound", sessionId });
@@ -241,17 +279,30 @@ export class SessionHostService implements SessionHost {
     });
   }
 
-  private async reportTerminalLocked(claim: StartClaim, status: "completed" | "failed" | "interrupted", reason: string): Promise<SessionHostReceipt> {
+  private async reportTerminalLocked(
+    claim: StartClaim,
+    status: "completed" | "failed" | "interrupted",
+    reason: string,
+  ): Promise<SessionHostReceipt> {
     const terminalAt = timestamp(this.clock.now());
-    const terminalClaim = await this.options.claims.update(claim.key as `${SessionId}:${EffectId}`, (current) => ({
-      ...current,
-      state: "terminal",
-      terminalStatus: status,
-      terminalReason: reason,
-      terminalAt,
-    }));
+    const terminalClaim = await this.options.claims.update(
+      claim.key as `${SessionId}:${EffectId}`,
+      (current) => ({
+        ...current,
+        state: "terminal",
+        terminalStatus: status,
+        terminalReason: reason,
+        terminalAt,
+      }),
+    );
     try {
-      await this.terminalCallbacks.onTerminal?.({ sessionId: claim.sessionId, effectId: claim.effectId, status, reason, terminalAt });
+      await this.terminalCallbacks.onTerminal?.({
+        sessionId: claim.sessionId,
+        effectId: claim.effectId,
+        status,
+        reason,
+        terminalAt,
+      });
       await this.options.workspace?.revoke(claim.sessionId);
     } catch (error) {
       throw new HostFailure({ _tag: "HostUnavailable", reason: errorMessage(error) });
@@ -317,15 +368,22 @@ export interface HostCommandCallbacks {
   readonly makeEnvelope: (command: ProjectCommand) => Promise<CommandEnvelope>;
 }
 
-export const dispatchDecodedCommand = async (callbacks: HostCommandCallbacks, command: ProjectCommand): Promise<CommandResult> => {
+export const dispatchDecodedCommand = async (
+  callbacks: HostCommandCallbacks,
+  command: ProjectCommand,
+): Promise<CommandResult> => {
   const envelope = await callbacks.makeEnvelope(command);
   return callbacks.dispatcher.dispatch(envelope);
 };
 
-export const decodeHostLease = (input: unknown): WorkspaceLease => decodeUnknownStrict(WorkspaceLeaseSchema, input);
-export const decodeHostStartSpec = (input: unknown): SessionStartSpec => decodeUnknownStrict(SessionStartSpecSchema, input);
-export const decodeHostCancel = (input: unknown): SessionHostCancelRequest => decodeUnknownStrict(SessionHostCancelRequestSchema, input);
-export const decodeHostReceipt = (input: unknown): SessionHostReceipt => decodeUnknownStrict(SessionHostReceiptSchema, input);
+export const decodeHostLease = (input: unknown): WorkspaceLease =>
+  decodeUnknownStrict(WorkspaceLeaseSchema, input);
+export const decodeHostStartSpec = (input: unknown): SessionStartSpec =>
+  decodeUnknownStrict(SessionStartSpecSchema, input);
+export const decodeHostCancel = (input: unknown): SessionHostCancelRequest =>
+  decodeUnknownStrict(SessionHostCancelRequestSchema, input);
+export const decodeHostReceipt = (input: unknown): SessionHostReceipt =>
+  decodeUnknownStrict(SessionHostReceiptSchema, input);
 
 const runningClaim = (claim: StartClaim, process: SessionProcess): StartClaim => ({
   ...claim,
@@ -335,17 +393,35 @@ const runningClaim = (claim: StartClaim, process: SessionProcess): StartClaim =>
   startedAt: process.startedAt as Timestamp,
 });
 
-const timestamp = (date: Date): Timestamp => date.toISOString().replace(/(\.\d{3})\d*Z$/u, "$1Z") as Timestamp;
+const timestamp = (date: Date): Timestamp =>
+  date.toISOString().replace(/(\.\d{3})\d*Z$/u, "$1Z") as Timestamp;
 const toHostError = (error: unknown): SessionHostError => {
-  if (error instanceof HostFailure && isSessionHostFailure(error.failure) && isRuntimeSessionHostError(error.failure)) return error.failure;
-  if (error instanceof HostFailure) return { _tag: "HostUnavailable", reason: failureReason(error.failure) };
+  if (
+    error instanceof HostFailure &&
+    isSessionHostFailure(error.failure) &&
+    isRuntimeSessionHostError(error.failure)
+  )
+    return error.failure;
+  if (error instanceof HostFailure)
+    return { _tag: "HostUnavailable", reason: failureReason(error.failure) };
   return { _tag: "HostUnavailable", reason: errorMessage(error) };
 };
 const isRuntimeSessionHostError = (error: unknown): error is SessionHostError => {
   if (!isSessionHostFailure(error)) return false;
-  return ["LeaseExpired", "WorkspaceUnavailable", "ReadinessFailed", "VersionMismatch", "SessionNotFound", "SessionAlreadyStarted", "ProcessUnavailable", "ModelUnavailable", "HostUnavailable"].includes(error._tag);
+  return [
+    "LeaseExpired",
+    "WorkspaceUnavailable",
+    "ReadinessFailed",
+    "VersionMismatch",
+    "SessionNotFound",
+    "SessionAlreadyStarted",
+    "ProcessUnavailable",
+    "ModelUnavailable",
+    "HostUnavailable",
+  ].includes(error._tag);
 };
-const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 const withTimeout = async <A>(promise: Promise<A>, timeoutMs: number): Promise<A> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<A>((_resolve, reject) => {

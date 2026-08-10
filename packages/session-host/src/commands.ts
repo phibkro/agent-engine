@@ -18,7 +18,12 @@ import type {
 } from "@work-engine/protocol";
 import { EventRevisionSchema, SchemaVersionSchema, makeCommandId } from "@work-engine/protocol";
 import { HostFailure } from "./errors.ts";
-import type { DecodedCommandDispatcher, SessionHostLifecycleCallbacks, SessionStartedContext, SessionTerminalContext } from "./host.ts";
+import type {
+  DecodedCommandDispatcher,
+  SessionHostLifecycleCallbacks,
+  SessionStartedContext,
+  SessionTerminalContext,
+} from "./host.ts";
 
 export interface HostRevisionProvider {
   currentRevision(projectId: ProjectId): Promise<EventRevision>;
@@ -45,12 +50,15 @@ export class DecodedHostCommandCallbacks {
   private readonly actor: AuthenticatedActor;
 
   constructor(private readonly options: DecodedHostCommandOptions) {
-    this.actor = "kind" in options.actor ? options.actor : {
-      _tag: "AuthenticatedActor",
-      actorId: options.actor.actorId,
-      kind: "session_host",
-      presentedGrants: options.actor.grants,
-    };
+    this.actor =
+      "kind" in options.actor
+        ? options.actor
+        : {
+            _tag: "AuthenticatedActor",
+            actorId: options.actor.actorId,
+            kind: "session_host",
+            presentedGrants: options.actor.grants,
+          };
   }
 
   async dispatch(command: ProjectCommand): Promise<CommandResult> {
@@ -79,15 +87,19 @@ export class DecodedHostCommandCallbacks {
   async reportTerminal(context: SessionTerminalContext): Promise<CommandResult> {
     const previous = this.terminalSessions.get(context.sessionId);
     if (previous !== undefined) {
-      if (previous.status === context.status && previous.reason === context.reason) return this.dispatch({
-        _tag: "ReportSessionTerminal",
-        sessionId: context.sessionId,
-        status: context.status,
-        reason: context.reason,
-        terminalAt: context.terminalAt,
-        effectId: context.effectId,
+      if (previous.status === context.status && previous.reason === context.reason)
+        return this.dispatch({
+          _tag: "ReportSessionTerminal",
+          sessionId: context.sessionId,
+          status: context.status,
+          reason: context.reason,
+          terminalAt: context.terminalAt,
+          effectId: context.effectId,
+        });
+      throw new HostFailure({
+        _tag: "HostUnavailable",
+        reason: `conflicting terminal report for ${context.sessionId}`,
       });
-      throw new HostFailure({ _tag: "HostUnavailable", reason: `conflicting terminal report for ${context.sessionId}` });
     }
     this.terminalSessions.set(context.sessionId, context);
     return this.dispatch({
@@ -113,7 +125,9 @@ export class DecodedHostCommandCallbacks {
   }
 }
 
-export const proposalCommand = (proposal: Proposal): Extract<ProjectCommand, { readonly _tag: "SubmitProposal" }> => ({
+export const proposalCommand = (
+  proposal: Proposal,
+): Extract<ProjectCommand, { readonly _tag: "SubmitProposal" }> => ({
   _tag: "SubmitProposal",
   proposal,
 });
@@ -122,7 +136,9 @@ export interface SessionHostLifecycleCommandOptions extends DecodedHostCommandOp
   readonly onTerminalFlush?: () => Promise<void>;
 }
 
-export const makeDecodedLifecycleCallbacks = (options: SessionHostLifecycleCommandOptions): SessionHostLifecycleCallbacks => {
+export const makeDecodedLifecycleCallbacks = (
+  options: SessionHostLifecycleCommandOptions,
+): SessionHostLifecycleCallbacks => {
   const callbacks = new DecodedHostCommandCallbacks(options);
   return {
     onStarted: async (context) => {

@@ -26,7 +26,8 @@ export interface CommandRunner {
 const collect = async (stream: Readable | null): Promise<Uint8Array> => {
   if (stream === null) return new Uint8Array();
   const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  for await (const chunk of stream)
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   return new Uint8Array(Buffer.concat(chunks));
 };
 
@@ -79,7 +80,11 @@ export interface SessionProcess {
 
 export interface SessionProcessController {
   findExisting(claim: StartClaim): Promise<SessionProcess | undefined>;
-  spawn(spec: SessionStartSpec, launchId: string, processReference: string): Promise<SessionProcess>;
+  spawn(
+    spec: SessionStartSpec,
+    launchId: string,
+    processReference: string,
+  ): Promise<SessionProcess>;
   cancel(sessionId: SessionId, reason: string): Promise<void>;
   isExited(sessionId: SessionId): Promise<boolean>;
 }
@@ -152,7 +157,11 @@ export class HerdrSessionController implements SessionProcessController {
     return this.options.supervisor.find(claim.launchId);
   }
 
-  async spawn(spec: SessionStartSpec, launchId: string, processReference: string): Promise<SessionProcess> {
+  async spawn(
+    spec: SessionStartSpec,
+    launchId: string,
+    processReference: string,
+  ): Promise<SessionProcess> {
     const topology = await this.ensureProjectTopology(spec);
     const role = this.options.roleFor?.(spec) ?? "worker";
     const agentName = `${role}-${spec.sessionId}`;
@@ -168,7 +177,16 @@ export class HerdrSessionController implements SessionProcessController {
     if (started.exitCode !== 0) {
       throw new CustodyFailureError({
         _tag: "WorkspaceCommandFailed",
-        command: [this.herdrBinary, "agent", "start", agentName, "--kind", "omp", "--pane", topology.paneId],
+        command: [
+          this.herdrBinary,
+          "agent",
+          "start",
+          agentName,
+          "--kind",
+          "omp",
+          "--pane",
+          topology.paneId,
+        ],
         reason: decodeOutput(started.stderr, "Herdr agent start failed"),
       });
     }
@@ -239,10 +257,13 @@ export class HerdrSessionController implements SessionProcessController {
   }
 
   private async runHerdr(args: readonly string[]): Promise<CommandResult> {
-    return this.options.runner.run([this.herdrBinary, "--session", this.options.sessionName, ...args], {
-      cwd: this.options.runtimeDirectory,
-      env: scrubHerdrEnvironment(this.options.environment ?? process.env),
-    });
+    return this.options.runner.run(
+      [this.herdrBinary, "--session", this.options.sessionName, ...args],
+      {
+        cwd: this.options.runtimeDirectory,
+        env: scrubHerdrEnvironment(this.options.environment ?? process.env),
+      },
+    );
   }
 }
 
@@ -268,7 +289,8 @@ export const parseIdentifier = (bytes: Uint8Array, field: string): string => {
     // Herdr also supports a plain identifier response; use it below.
   }
   const [first] = text.split(/\s+/u);
-  if (first === undefined || first.length === 0) throw new Error(`Herdr response did not contain ${field}`);
+  if (first === undefined || first.length === 0)
+    throw new Error(`Herdr response did not contain ${field}`);
   return first;
 };
 
@@ -286,7 +308,8 @@ const parseTabIdentifiers = (bytes: Uint8Array, workspaceId: string): HerdrIdent
     // Plain tab/pane output is accepted below.
   }
   const [tabId, paneId] = text.split(/\s+/u);
-  if (tabId === undefined || paneId === undefined) throw new Error("Herdr response did not contain tab and pane identifiers");
+  if (tabId === undefined || paneId === undefined)
+    throw new Error("Herdr response did not contain tab and pane identifiers");
   return { workspaceId, tabId, paneId };
 };
 

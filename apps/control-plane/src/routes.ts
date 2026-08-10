@@ -51,9 +51,13 @@ const grants = (request: Request): AuthenticatedActor["presentedGrants"] => {
     .filter((value) => value.length > 0) as AuthenticatedActor["presentedGrants"];
 };
 
-const actor = (request: Request, kind: AuthenticatedActor["kind"] = "operator"): AuthenticatedActor => {
+const actor = (
+  request: Request,
+  kind: AuthenticatedActor["kind"] = "operator",
+): AuthenticatedActor => {
   const actorId = request.headers.get(WorkEngineHeader.actorId);
-  if (actorId === null || actorId.length === 0) throw new Error("X-Work-Engine-Actor-Id is required");
+  if (actorId === null || actorId.length === 0)
+    throw new Error("X-Work-Engine-Actor-Id is required");
   return decode(AuthenticatedActorSchema, {
     _tag: "AuthenticatedActor",
     actorId,
@@ -72,7 +76,12 @@ const authHeaders = (env: ControlPlaneEnv): HeadersInit => ({
 const authenticated = (request: Request, env: ControlPlaneEnv): Response | undefined => {
   const id = request.headers.get(WorkEngineHeader.accessClientId);
   const secret = request.headers.get(WorkEngineHeader.accessClientSecret);
-  if (id === null || secret === null || id !== env.ACCESS_CLIENT_ID || secret !== env.ACCESS_CLIENT_SECRET) {
+  if (
+    id === null ||
+    secret === null ||
+    id !== env.ACCESS_CLIENT_ID ||
+    secret !== env.ACCESS_CLIENT_SECRET
+  ) {
     return failure("unauthorized", "Cloudflare Access service-token authentication failed", 401);
   }
 };
@@ -88,13 +97,23 @@ const mapError = (cause: unknown): Response => {
         headers: { "content-type": "application/json" },
       });
     }
-    if (tag === "DecodeFailure") return failure("decode_failure", String((cause as { readonly reason: unknown }).reason), 502);
-    if (tag === "Unauthorized") return failure("unauthorized", String((cause as { readonly reason: unknown }).reason), 403);
+    if (tag === "DecodeFailure")
+      return failure("decode_failure", String((cause as { readonly reason: unknown }).reason), 502);
+    if (tag === "Unauthorized")
+      return failure("unauthorized", String((cause as { readonly reason: unknown }).reason), 403);
   }
-  return failure("dependency_unavailable", cause instanceof Error ? cause.message : "Cloudflare dependency unavailable", 503);
+  return failure(
+    "dependency_unavailable",
+    cause instanceof Error ? cause.message : "Cloudflare dependency unavailable",
+    503,
+  );
 };
 
-export const handleRequest = async (request: Request, env: ControlPlaneEnv, ctx: ExecutionContext): Promise<Response> => {
+export const handleRequest = async (
+  request: Request,
+  env: ControlPlaneEnv,
+  ctx: ExecutionContext,
+): Promise<Response> => {
   const denied = authenticated(request, env);
   if (denied !== undefined) return denied;
   const url = new URL(request.url);
@@ -111,14 +130,20 @@ export const handleRequest = async (request: Request, env: ControlPlaneEnv, ctx:
     if (request.method === "POST" && commandMatch !== null) {
       const input = decode(CommandEnvelopeSchema, await body(request));
       const subject = actor(request, input.actor.kind);
-      if (input.actor.actorId !== subject.actorId) throw new Error("command actor does not match Access actor");
+      if (input.actor.actorId !== subject.actorId)
+        throw new Error("command actor does not match Access actor");
       const command: CommandEnvelope = { ...input, actor: subject };
       const authority = new DurableObjectProjectAuthority(env.PROJECTS, subject, authHeaders(env));
       const result = await run(authority.dispatch(command));
-      return new Response(json(result), { status: result._tag === "Rejected" ? 409 : 200, headers: { "content-type": "application/json" } });
+      return new Response(json(result), {
+        status: result._tag === "Rejected" ? 409 : 200,
+        headers: { "content-type": "application/json" },
+      });
     }
 
-    const observationMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/observations\/current$/u);
+    const observationMatch = url.pathname.match(
+      /^\/v1\/projects\/([^/]+)\/observations\/current$/u,
+    );
     if (request.method === "GET" && observationMatch !== null) {
       const id = projectId(observationMatch[1]!);
       const subject = actor(request, "operator");
@@ -135,7 +160,12 @@ export const handleRequest = async (request: Request, env: ControlPlaneEnv, ctx:
       const subject = actor(request, "operator");
       const authority = new DurableObjectProjectAuthority(env.PROJECTS, subject, authHeaders(env));
       const observation = await run(authority.observe(id));
-      if (!observationReferencesDigest(observation, digest)) return failure("unauthorized", "artifact is not referenced by an accepted Project event", 403);
+      if (!observationReferencesDigest(observation, digest))
+        return failure(
+          "unauthorized",
+          "artifact is not referenced by an accepted Project event",
+          403,
+        );
       const artifacts = new R2ArtifactStore(env.ARTIFACTS);
       const receipt = await run(artifacts.head(digest));
       const bytes = await run(artifacts.get(digest));
@@ -158,7 +188,9 @@ export const handleRequest = async (request: Request, env: ControlPlaneEnv, ctx:
       return new Response(json(result), { headers: { "content-type": "application/json" } });
     }
 
-    const attachGetMatch = url.pathname.match(/^\/v1\/projects\/([^/]+)\/attach-resolutions\/([^/]+)$/u);
+    const attachGetMatch = url.pathname.match(
+      /^\/v1\/projects\/([^/]+)\/attach-resolutions\/([^/]+)$/u,
+    );
     if (request.method === "GET" && attachGetMatch !== null) {
       const id = projectId(attachGetMatch[1]!);
       const subject = actor(request, "operator");
@@ -168,17 +200,24 @@ export const handleRequest = async (request: Request, env: ControlPlaneEnv, ctx:
     }
 
     const modelMatch = url.pathname.match(/^\/v1\/sessions\/([^/]+)\/model\/chat\/completions$/u);
-    if (request.method === "POST" && modelMatch !== null) return await handleModel(request, env, modelMatch[1]!);
+    if (request.method === "POST" && modelMatch !== null)
+      return await handleModel(request, env, modelMatch[1]!);
     return failure("not_found", "Worker route does not exist", 404);
   } catch (cause) {
-    if (cause instanceof Error && /required|valid|decode|does not match/iu.test(cause.message)) return failure("decode_failure", cause.message, 400);
+    if (cause instanceof Error && /required|valid|decode|does not match/iu.test(cause.message))
+      return failure("decode_failure", cause.message, 400);
     return mapError(cause);
   }
 };
 
-const handleModel = async (request: Request, env: ControlPlaneEnv, sessionId: string): Promise<Response> => {
+const handleModel = async (
+  request: Request,
+  env: ControlPlaneEnv,
+  sessionId: string,
+): Promise<Response> => {
   const input: ModelChatRequest = decode(ModelChatRequestSchema, await body(request));
-  if (input.stream === true) return failure("decode_failure", "streaming model responses are not part of tracer 0001", 400);
+  if (input.stream === true)
+    return failure("decode_failure", "streaming model responses are not part of tracer 0001", 400);
   const id = projectId(request.headers.get(PROJECT_ID_HEADER) ?? "");
   const subject = actor(request, "worker_session");
   const requestedTokens = input.max_tokens ?? 8192;
@@ -193,8 +232,10 @@ const handleModel = async (request: Request, env: ControlPlaneEnv, sessionId: st
     },
     body: json({ _tag: "ModelAuthorizationRequest", sessionId, requestedTokens }),
   });
-  if (!authorization.ok) return failure("unauthorized", "Session model authorization failed", authorization.status);
-  if (env.AI === undefined) return failure("model_unavailable", "Workers AI binding is unavailable", 503);
+  if (!authorization.ok)
+    return failure("unauthorized", "Session model authorization failed", authorization.status);
+  if (env.AI === undefined)
+    return failure("model_unavailable", "Workers AI binding is unavailable", 503);
   const output: unknown = await env.AI.run("@cf/openai/gpt-oss-120b", {
     messages: input.messages,
     max_tokens: requestedTokens,

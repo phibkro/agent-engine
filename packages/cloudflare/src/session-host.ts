@@ -73,7 +73,10 @@ export class CloudflareSessionHost implements SessionHost {
           body: json(body),
         });
         if (!response.ok) {
-          throw { _tag: "HostUnavailable", reason: `Session host returned ${response.status}` } satisfies SessionHostError;
+          throw {
+            _tag: "HostUnavailable",
+            reason: `Session host returned ${response.status}`,
+          } satisfies SessionHostError;
         }
         const decoded = await readResponse(response);
         const failure = mapFailure(decoded);
@@ -81,8 +84,12 @@ export class CloudflareSessionHost implements SessionHost {
         return decoded;
       },
       catch: (cause) => {
-        if (typeof cause === "object" && cause !== null && "_tag" in cause) return cause as SessionHostError;
-        return { _tag: "HostUnavailable", reason: cause instanceof Error ? cause.message : "Session host request failed" };
+        if (typeof cause === "object" && cause !== null && "_tag" in cause)
+          return cause as SessionHostError;
+        return {
+          _tag: "HostUnavailable",
+          reason: cause instanceof Error ? cause.message : "Session host request failed",
+        };
       },
     });
   }
@@ -95,30 +102,49 @@ export class CloudflareSessionHost implements SessionHost {
       Effect.flatMap((response) =>
         response._tag === "WorkspaceReady"
           ? Effect.succeed(decode(WorkspaceReadySchema, response))
-          : Effect.fail({ _tag: "HostUnavailable", reason: "Session host returned a non-readiness receipt" }),
+          : Effect.fail({
+              _tag: "HostUnavailable",
+              reason: "Session host returned a non-readiness receipt",
+            }),
       ),
     );
   }
 
   start(spec: SessionStartSpec): Effect.Effect<SessionHostReceipt, SessionHostError> {
-    return this.#request("/v1/session-host/sessions/start", decode(SessionStartSpecSchema, spec)).pipe(
-      Effect.flatMap((response) =>
-        response._tag === "SessionHostReceipt"
-          ? Effect.succeed(decode(SessionHostReceiptSchema, response))
-          : Effect.fail({ _tag: "HostUnavailable", reason: "Session host returned a non-start receipt" }),
-      ),
-    );
-  }
-
-  cancel(sessionId: SessionId, reason: string): Effect.Effect<SessionHostReceipt, SessionHostError> {
     return this.#request(
-      "/v1/session-host/sessions/cancel",
-      decode(SessionHostCancelRequestSchema, { _tag: "SessionHostCancelRequest", sessionId, reason }),
+      "/v1/session-host/sessions/start",
+      decode(SessionStartSpecSchema, spec),
     ).pipe(
       Effect.flatMap((response) =>
         response._tag === "SessionHostReceipt"
           ? Effect.succeed(decode(SessionHostReceiptSchema, response))
-          : Effect.fail({ _tag: "HostUnavailable", reason: "Session host returned a non-cancel receipt" }),
+          : Effect.fail({
+              _tag: "HostUnavailable",
+              reason: "Session host returned a non-start receipt",
+            }),
+      ),
+    );
+  }
+
+  cancel(
+    sessionId: SessionId,
+    reason: string,
+  ): Effect.Effect<SessionHostReceipt, SessionHostError> {
+    return this.#request(
+      "/v1/session-host/sessions/cancel",
+      decode(SessionHostCancelRequestSchema, {
+        _tag: "SessionHostCancelRequest",
+        sessionId,
+        reason,
+      }),
+    ).pipe(
+      Effect.flatMap((response) =>
+        response._tag === "SessionHostReceipt"
+          ? Effect.succeed(decode(SessionHostReceiptSchema, response))
+          : Effect.fail({
+              _tag: "HostUnavailable",
+              reason: "Session host returned a non-cancel receipt",
+            }),
       ),
     );
   }
@@ -129,4 +155,5 @@ export const SessionHostService = Context.Service<SessionHost>("work-engine/Sess
 export const SessionHostLive = (
   binding: Fetcher,
   headers: HeadersInit = {},
-): Layer.Layer<SessionHost> => Layer.succeed(SessionHostService, new CloudflareSessionHost(binding, headers));
+): Layer.Layer<SessionHost> =>
+  Layer.succeed(SessionHostService, new CloudflareSessionHost(binding, headers));

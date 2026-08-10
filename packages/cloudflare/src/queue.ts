@@ -1,7 +1,11 @@
 import * as Schema from "effect/Schema";
 import { WorkEngineHeader } from "@work-engine/runtime";
 import type { CloudflareRuntimeEnv } from "./env.ts";
-import { OutboxMessageSchema, WorkflowStartReceiptRequestSchema, type OutboxMessage } from "./schemas.ts";
+import {
+  OutboxMessageSchema,
+  WorkflowStartReceiptRequestSchema,
+  type OutboxMessage,
+} from "./schemas.ts";
 
 const json = (value: unknown): string => JSON.stringify(value);
 const decode = <S extends Schema.Top>(schema: S, value: unknown): S["Type"] =>
@@ -13,11 +17,18 @@ const authorityHeaders = (env: CloudflareRuntimeEnv): HeadersInit => ({
   "content-type": "application/json",
   [WorkEngineHeader.actorId]: "system/session-workflow",
   [WorkEngineHeader.grantIds]: "",
-  ...(env.ACCESS_CLIENT_ID === undefined ? {} : { [WorkEngineHeader.accessClientId]: env.ACCESS_CLIENT_ID }),
-  ...(env.ACCESS_CLIENT_SECRET === undefined ? {} : { [WorkEngineHeader.accessClientSecret]: env.ACCESS_CLIENT_SECRET }),
+  ...(env.ACCESS_CLIENT_ID === undefined
+    ? {}
+    : { [WorkEngineHeader.accessClientId]: env.ACCESS_CLIENT_ID }),
+  ...(env.ACCESS_CLIENT_SECRET === undefined
+    ? {}
+    : { [WorkEngineHeader.accessClientSecret]: env.ACCESS_CLIENT_SECRET }),
 });
 
-const markWorkflowStarted = async (message: OutboxMessage, env: CloudflareRuntimeEnv): Promise<void> => {
+const markWorkflowStarted = async (
+  message: OutboxMessage,
+  env: CloudflareRuntimeEnv,
+): Promise<void> => {
   if (env.PROJECTS === undefined) throw new Error("Project authority binding is unavailable");
   const stub = env.PROJECTS.getByName(message.projectId);
   const payload = decode(WorkflowStartReceiptRequestSchema, {
@@ -48,7 +59,8 @@ export const consumeSessionEffects = async (
       continue;
     }
     if (message.attempts > 3) {
-      if (env.SESSION_DEAD_LETTER !== undefined) await env.SESSION_DEAD_LETTER.send(body, { contentType: "json" });
+      if (env.SESSION_DEAD_LETTER !== undefined)
+        await env.SESSION_DEAD_LETTER.send(body, { contentType: "json" });
       message.ack();
       continue;
     }
@@ -58,7 +70,10 @@ export const consumeSessionEffects = async (
     }
     try {
       try {
-        await env.SESSION_WORKFLOW.create({ id: workflowInstanceId(body.effect.effectId), params: body });
+        await env.SESSION_WORKFLOW.create({
+          id: workflowInstanceId(body.effect.effectId),
+          params: body,
+        });
       } catch {
         await env.SESSION_WORKFLOW.get(workflowInstanceId(body.effect.effectId));
       }

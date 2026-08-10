@@ -18,6 +18,8 @@ import {
   type ResultEnvelope,
 } from "./output.ts";
 
+export const CLI_VERSION = "work-engine 0.0.0";
+
 const stdout = Bun.stdout.writer();
 const stderr = Bun.stderr.writer();
 
@@ -89,6 +91,10 @@ const runMcpRoot = (invocation: ParsedInvocation): Effect.Effect<void, CliFailur
 
 export const runCli = (argv: ReadonlyArray<string>): Effect.Effect<number, never> =>
   Effect.gen(function* () {
+    if (argv.length === 1 && argv[0] === "--version") {
+      writeStdout(CLI_VERSION);
+      return 0;
+    }
     const parsed = parseInvocation(argv);
     if ("_tag" in parsed) {
       const envelope = failureEnvelope("usage", parsed);
