@@ -1,8 +1,16 @@
 import { Effect } from "effect";
-import { mkdir, stat, unlink, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import type { AttachResolution, ProjectId, WorkId } from "@work-engine/runtime";
+import type { ProjectId, WorkId } from "@work-engine/protocol";
+import type { AttachResolution } from "@work-engine/runtime";
 import type { OperatorConfig } from "./config.ts";
+import {
+  currentUid,
+  environment as bunEnvironment,
+  inspectFile,
+  makeDirectory,
+  removeFile,
+  resolvePath,
+  writeTextFileExclusive,
+} from "./platform.ts";
 
 export const PINNED_HERDR_VERSION = "0.8.0";
 
@@ -17,8 +25,13 @@ export type AttachError =
 
 export interface AttachFileSystem {
   readonly makeDirectory: (path: string) => Effect.Effect<void, AttachError>;
-  readonly writePrivateExclusive: (path: string, content: string) => Effect.Effect<void, AttachError>;
-  readonly inspect: (path: string) => Effect.Effect<{ readonly uid: number; readonly mode: number }, AttachError>;
+  readonly writePrivateExclusive: (
+    path: string,
+    content: string,
+  ) => Effect.Effect<void, AttachError>;
+  readonly inspect: (
+    path: string,
+  ) => Effect.Effect<{ readonly uid: number; readonly mode: number }, AttachError>;
   readonly removeOwned: (path: string) => Effect.Effect<void, AttachError>;
 }
 
@@ -57,16 +70,14 @@ export interface AttachOutcome {
   readonly remoteHerdrVersion?: string;
 }
 
-const currentUid = (): number => {
-  const getuid = process.getuid;
-  return typeof getuid === "function" ? getuid() : -1;
-};
-
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 const safeResolutionId = (value: string): boolean =>
-  value.length > 0 && /^[A-Za-z0-9._-]+$/.test(value) && !value.includes("..") && !value.includes("/");
+  value.length > 0 &&
+  /^[A-Za-z0-9._-]+$/.test(value) &&
+  !value.includes("..") &&
+  !value.includes("/");
 
 const parseTime = (timestamp: string): number => Date.parse(timestamp);
 
@@ -104,7 +115,7 @@ export const validateAttachResolution = (
       reason: "resolution does not use the reviewed Wrangler SSH proxy",
     });
   }
-  return Effect.succeed(undefined);
+  return Effect.void;
 };
 
 export const renderSshConfig = (
@@ -121,81 +132,53 @@ export const renderSshConfig = (
     "",
   ].join("\n");
 
-const makeNodeFileSystem = (): AttachFileSystem => ({
+const fileFailure = (path: string, error: unknown): AttachError => ({
+  _tag: "AttachFilesystemFailure",
+  path,
+  reason: reasonOf(error),
+});
+
+const makeBunFileSystem = (): AttachFileSystem => ({
   makeDirectory: (path) =>
-    Effect.tryPromise({
-      try: () => mkdir(path, { recursive: true, mode: 0o700 }),
-      catch: (error) => ({
-        _tag: "AttachFilesystemFailure" as const,
-        path,
-        reason: reasonOf(error),
-      }),
-    }),
+    makeDirectory(path).pipe(Effect.mapError((error) => fileFailure(path, error))),
   writePrivateExclusive: (path, content) =>
-    Effect.tryPromise({
-      try: async () => {
-        await writeFile(path, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
-        const metadata = await stat(path);
-        if ((metadata.mode & 0o777) !== 0o600 || metadata.uid !== currentUid()) {
-          await unlink(path).catch(() => undefined);
-          throw new Error("new SSH configuration is not owned with mode 0600");
-        }
-      },
-      catch: (error) => ({
-        _tag: "AttachFilesystemFailure" as const,
-        path,
-        reason: reasonOf(error),
-      }),
+    Effect.gen(function* () {
+      yield* writeTextFileExclusive(path, content).pipe(
+        Effect.mapError((error) => fileFailure(path, error)),
+      );
+      const metadata = yield* inspectFile(path).pipe(
+        Effect.mapError((error) => fileFailure(path, error)),
+      );
+      if (metadata.mode !== 0o600 || metadata.uid !== currentUid()) {
+        yield* Effect.ignore(removeFile(path));
+        return yield* Effect.fail(
+          fileFailure(path, "new SSH configuration is not owned with mode 0600"),
+        );
+      }
     }),
-  inspect: (path) =>
-    Effect.tryPromise({
-      try: async () => {
-        const metadata = await stat(path);
-        return { uid: metadata.uid, mode: metadata.mode & 0o777 };
-      },
-      catch: (error) => ({
-        _tag: "AttachFilesystemFailure" as const,
-        path,
-        reason: reasonOf(error),
-      }),
-    }),
+  inspect: (path) => inspectFile(path).pipe(Effect.mapError((error) => fileFailure(path, error))),
   removeOwned: (path) =>
     Effect.gen(function* () {
-      const metadata = yield* Effect.tryPromise({
-        try: async () => {
-          const value = await stat(path);
-          return { uid: value.uid, mode: value.mode & 0o777 };
-        },
-        catch: (error) => ({
-          _tag: "AttachFilesystemFailure" as const,
-          path,
-          reason: reasonOf(error),
-        }),
-      });
+      const metadata = yield* inspectFile(path).pipe(
+        Effect.mapError((error) => fileFailure(path, error)),
+      );
       if (metadata.uid !== currentUid() || metadata.mode !== 0o600) {
-        return yield* Effect.fail({
-          _tag: "AttachFilesystemFailure",
-          path,
-          reason: "refusing to remove a file not owned with mode 0600",
-        } as const);
+        return yield* Effect.fail(
+          fileFailure(path, "refusing to remove a file not owned with mode 0600"),
+        );
       }
-      yield* Effect.tryPromise({
-        try: () => unlink(path),
-        catch: (error) => ({
-          _tag: "AttachFilesystemFailure" as const,
-          path,
-          reason: reasonOf(error),
-        }),
-      });
+      yield* removeFile(path).pipe(Effect.mapError((error) => fileFailure(path, error)));
     }),
 });
 
 export const scrubbedEnvironment = (
-  source: Readonly<Record<string, string | undefined>> = process.env,
+  source: Readonly<Record<string, string | undefined>> = bunEnvironment(),
 ): Record<string, string> => {
   const entries = Object.entries(source).filter(([key, value]) => {
     if (value === undefined) return false;
-    return !key.startsWith("WORK_ENGINE_") && !key.startsWith("CF_ACCESS") && key !== "AUTHORIZATION";
+    return (
+      !key.startsWith("WORK_ENGINE_") && !key.startsWith("CF_ACCESS") && key !== "AUTHORIZATION"
+    );
   });
   return Object.fromEntries(entries) as Record<string, string>;
 };
@@ -234,7 +217,10 @@ const makeNodeProcess = (): AttachProcess => ({
 });
 
 const parseHerdrVersion = (output: string): string | undefined => {
-  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   for (const line of lines) {
     const match = /^(?:herdr\s+)?(\d+\.\d+\.\d+)$/.exec(line);
     if (match?.[1] !== undefined) return match[1];
@@ -259,12 +245,12 @@ const checkedVersion = (
 export const writeAttachConfig = (
   resolution: AttachResolution,
   config: OperatorConfig,
-  fileSystem: AttachFileSystem = makeNodeFileSystem(),
+  fileSystem: AttachFileSystem = makeBunFileSystem(),
 ): Effect.Effect<AttachTarget, AttachError> =>
   Effect.gen(function* () {
     const alias = `work-engine-${resolution.resolutionId}`;
-    const directory = resolve(config.sshDirectory);
-    const configPath = join(directory, `${resolution.resolutionId}.conf`);
+    const directory = yield* resolvePath(config.sshDirectory);
+    const configPath = yield* resolvePath(directory, `${resolution.resolutionId}.conf`);
     yield* fileSystem.makeDirectory(directory);
     yield* fileSystem.writePrivateExclusive(
       configPath,
@@ -294,7 +280,7 @@ export const runAttach = (
 ): Effect.Effect<AttachOutcome, AttachError> =>
   Effect.gen(function* () {
     yield* validateAttachResolution(resolution, projectId, workId, options.now ?? Date.now());
-    const fileSystem = options.fileSystem ?? makeNodeFileSystem();
+    const fileSystem = options.fileSystem ?? makeBunFileSystem();
     const process = options.process ?? makeNodeProcess();
     const target = yield* writeAttachConfig(resolution, config, fileSystem);
     const environment = scrubbedEnvironment();
@@ -354,5 +340,5 @@ export const runAttach = (
 
 export const removeAttachConfig = (
   path: string,
-  fileSystem: AttachFileSystem = makeNodeFileSystem(),
+  fileSystem: AttachFileSystem = makeBunFileSystem(),
 ): Effect.Effect<void, AttachError> => fileSystem.removeOwned(path);

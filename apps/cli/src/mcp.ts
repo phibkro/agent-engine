@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import {
   CommandIdSchema,
   EventRevisionSchema,
@@ -7,7 +7,6 @@ import {
   type Capability,
   type ProjectId,
   type ProjectObservation,
-  type ProjectCommand,
 } from "@work-engine/protocol";
 import { makeRemoteClient, type RemoteClientError } from "./client.ts";
 import type { ConfigError, SessionCapabilityFile } from "./config.ts";
@@ -33,32 +32,66 @@ export const SESSION_TOOLS: ReadonlyArray<McpTool> = [
   {
     name: SessionToolName.projectRead,
     description: "Read the current Project observation for this Session's scope.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" } }, required: ["projectId"] },
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
   },
   {
     name: SessionToolName.workRead,
     description: "Read the current Project observation containing Work state.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" } }, required: ["projectId"] },
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" } },
+      required: ["projectId"],
+    },
   },
   {
     name: SessionToolName.evidenceRead,
     description: "Read canonical Evidence references from a Project observation.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" }, evidenceId: { type: "string" } }, required: ["projectId", "evidenceId"] },
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" }, evidenceId: { type: "string" } },
+      required: ["projectId", "evidenceId"],
+    },
   },
   {
     name: SessionToolName.proposalRead,
     description: "Read canonical Proposal references from a Project observation.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" }, proposalId: { type: "string" } }, required: ["projectId", "proposalId"] },
+    inputSchema: {
+      type: "object",
+      properties: { projectId: { type: "string" }, proposalId: { type: "string" } },
+      required: ["projectId", "proposalId"],
+    },
   },
   {
     name: SessionToolName.workerStart,
     description: "Request a worker Session when this Session's Grant permits it.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" }, expectedRevision: { type: "number" }, commandId: { type: "string" }, command: { type: "object" } }, required: ["projectId", "expectedRevision", "commandId", "command"] },
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        expectedRevision: { type: "number" },
+        commandId: { type: "string" },
+        command: { type: "object" },
+      },
+      required: ["projectId", "expectedRevision", "commandId", "command"],
+    },
   },
   {
     name: SessionToolName.sessionCancel,
     description: "Request cancellation of a Session when this Session's Grant permits it.",
-    inputSchema: { type: "object", properties: { projectId: { type: "string" }, expectedRevision: { type: "number" }, commandId: { type: "string" }, command: { type: "object" } }, required: ["projectId", "expectedRevision", "commandId", "command"] },
+    inputSchema: {
+      type: "object",
+      properties: {
+        projectId: { type: "string" },
+        expectedRevision: { type: "number" },
+        commandId: { type: "string" },
+        command: { type: "object" },
+      },
+      required: ["projectId", "expectedRevision", "commandId", "command"],
+    },
   },
   {
     name: SessionToolName.candidateFinalize,
@@ -74,14 +107,13 @@ export type McpError =
   | { readonly _tag: "McpForbidden"; readonly reason: string }
   | { readonly _tag: "McpLoopbackFailure"; readonly reason: string };
 
-const JsonRpcIdSchema = Schema.Union([Schema.String, Schema.Number]);
+const JsonRpcIdSchema = Schema.Union([Schema.String, Schema.Finite]);
 const JsonRpcRequestSchema = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
   id: Schema.optionalKey(JsonRpcIdSchema),
   method: Schema.NonEmptyString,
   params: Schema.optionalKey(Schema.Json),
 });
-type JsonRpcRequest = typeof JsonRpcRequestSchema.Type;
 
 const ToolCommandParamsSchema = Schema.Struct({
   projectId: ProjectIdSchema,
@@ -92,14 +124,24 @@ const ToolCommandParamsSchema = Schema.Struct({
 
 type JsonRpcResponse =
   | { readonly jsonrpc: "2.0"; readonly id: string | number | undefined; readonly result: unknown }
-  | { readonly jsonrpc: "2.0"; readonly id: string | number | undefined; readonly error: { readonly code: number; readonly message: string } };
+  | {
+      readonly jsonrpc: "2.0";
+      readonly id: string | number | undefined;
+      readonly error: { readonly code: number; readonly message: string };
+    };
 
 const errorReason = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   if (typeof error !== "object" || error === null) return String(error);
   if ("reason" in error && typeof error.reason === "string") return error.reason;
-  if ("failure" in error && typeof error.failure === "object" && error.failure !== null && "code" in error.failure && "reason" in error.failure) {
+  if (
+    "failure" in error &&
+    typeof error.failure === "object" &&
+    error.failure !== null &&
+    "code" in error.failure &&
+    "reason" in error.failure
+  ) {
     return `${String(error.failure.code)}: ${String(error.failure.reason)}`;
   }
   if ("name" in error && typeof error.name === "string") return error.name;
@@ -141,14 +183,21 @@ const capabilityAllows = (
 };
 
 const projectIdFrom = (params: unknown): Effect.Effect<ProjectId, McpError> =>
-  Effect.try({
-    try: () => {
-      if (typeof params !== "object" || params === null || !("projectId" in params)) {
-        throw new Error("projectId is required");
-      }
-      return Schema.decodeUnknownSync(ProjectIdSchema, { onExcessProperty: "error" })(params.projectId);
-    },
-    catch: (error) => ({ _tag: "McpDecodeFailure" as const, reason: errorReason(error) }),
+  Effect.gen(function* () {
+    if (typeof params !== "object" || params === null || !("projectId" in params)) {
+      return yield* Effect.fail({
+        _tag: "McpDecodeFailure",
+        reason: "projectId is required",
+      } as const);
+    }
+    return yield* Schema.decodeUnknownEffect(ProjectIdSchema, {
+      onExcessProperty: "error",
+    })(params.projectId).pipe(
+      Effect.mapError((error) => ({
+        _tag: "McpDecodeFailure" as const,
+        reason: String(error),
+      })),
+    );
   });
 
 const observationFor = (
@@ -156,14 +205,23 @@ const observationFor = (
   method: SessionToolName,
   params: unknown,
 ): unknown => {
-  if (method === SessionToolName.projectRead || method === SessionToolName.workRead) return observation;
+  if (method === SessionToolName.projectRead || method === SessionToolName.workRead)
+    return observation;
   const property = method === SessionToolName.evidenceRead ? "evidenceId" : "proposalId";
-  const requested = typeof params === "object" && params !== null && property in params ? params[property] : undefined;
-  return observation.history.find((entry) => {
-    if (method === SessionToolName.evidenceRead && entry.event._tag === "EvidenceRecorded") return requested === entry.event.evidence.evidenceId;
-    if (method === SessionToolName.proposalRead && entry.event._tag === "ProposalSubmitted") return requested === entry.event.proposal.proposalId;
-    return false;
-  }) ?? null;
+  const record =
+    typeof params === "object" && params !== null
+      ? (params as Readonly<Record<string, unknown>>)
+      : undefined;
+  const requested = record?.[property];
+  return (
+    observation.history.find((entry) => {
+      if (method === SessionToolName.evidenceRead && entry.event._tag === "EvidenceRecorded")
+        return requested === entry.event.evidence.evidenceId;
+      if (method === SessionToolName.proposalRead && entry.event._tag === "ProposalSubmitted")
+        return requested === entry.event.proposal.proposalId;
+      return false;
+    }) ?? null
+  );
 };
 
 type ToolCommandParams = typeof ToolCommandParamsSchema.Type;
@@ -172,24 +230,40 @@ const parseToolCommand = (
   params: unknown,
   expectedTag: "StartWorkerSession" | "CancelSession",
 ): Effect.Effect<ToolCommandParams, McpError> =>
-  Effect.try({
-    try: () => {
-      const parsed = Schema.decodeUnknownSync(ToolCommandParamsSchema, { onExcessProperty: "error" })(params);
-      if (parsed.command._tag !== expectedTag) throw new Error(`expected ${expectedTag}`);
-      return parsed;
-    },
-    catch: (error) => ({ _tag: "McpDecodeFailure" as const, reason: errorReason(error) }),
+  Effect.gen(function* () {
+    const parsed = yield* Schema.decodeUnknownEffect(ToolCommandParamsSchema, {
+      onExcessProperty: "error",
+    })(params).pipe(
+      Effect.mapError((error) => ({
+        _tag: "McpDecodeFailure" as const,
+        reason: String(error),
+      })),
+    );
+    if (parsed.command._tag !== expectedTag) {
+      return yield* Effect.fail({
+        _tag: "McpDecodeFailure",
+        reason: `expected ${expectedTag}`,
+      } as const);
+    }
+    return parsed;
   });
 
 const forwardCandidateFinalize = (
   capability: SessionCapabilityFile,
-  request: JsonRpcRequest,
+  request: {
+    readonly id?: string | number;
+    readonly params: unknown;
+  },
 ): Effect.Effect<unknown, McpError> =>
   Effect.gen(function* () {
     const endpoint = yield* Effect.try({
       try: () => {
         const parsed = new URL(capability.endpoint);
-        if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.hostname !== "[::1]") {
+        if (
+          parsed.hostname !== "127.0.0.1" &&
+          parsed.hostname !== "localhost" &&
+          parsed.hostname !== "[::1]"
+        ) {
           throw new Error("Session host endpoint is not loopback");
         }
         return parsed.toString();
@@ -201,7 +275,12 @@ const forwardCandidateFinalize = (
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: request.id, method: "candidate.finalize", params: request.params ?? null }),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            method: "candidate.finalize",
+            params: request.params ?? null,
+          }),
           signal,
         });
         const text = await response.text();
@@ -217,10 +296,14 @@ export const handleMcpRequest = (
   requestInput: unknown,
 ): Effect.Effect<JsonRpcResponse, McpError> =>
   Effect.gen(function* () {
-    const request = yield* Effect.try({
-      try: () => Schema.decodeUnknownSync(JsonRpcRequestSchema, { onExcessProperty: "error" })(requestInput),
-      catch: (error) => ({ _tag: "McpDecodeFailure" as const, reason: errorReason(error) }),
-    });
+    const request = yield* Schema.decodeUnknownEffect(JsonRpcRequestSchema, {
+      onExcessProperty: "error",
+    })(requestInput).pipe(
+      Effect.mapError((error) => ({
+        _tag: "McpDecodeFailure" as const,
+        reason: String(error),
+      })),
+    );
     if (request.method === "initialize") {
       return {
         jsonrpc: "2.0" as const,
@@ -239,31 +322,51 @@ export const handleMcpRequest = (
       return { jsonrpc: "2.0" as const, id: request.id, result: null };
     }
     if (request.method !== "tools/call") {
-      return yield* Effect.fail({ _tag: "McpForbidden", reason: `method ${request.method} is not permitted` } as const);
+      return yield* Effect.fail({
+        _tag: "McpForbidden",
+        reason: `method ${request.method} is not permitted`,
+      } as const);
     }
     const params = request.params;
     if (typeof params !== "object" || params === null || !("name" in params)) {
-      return yield* Effect.fail({ _tag: "McpDecodeFailure", reason: "tools/call requires a tool name" } as const);
+      return yield* Effect.fail({
+        _tag: "McpDecodeFailure",
+        reason: "tools/call requires a tool name",
+      } as const);
     }
-    const nameValue = params.name;
-    const name = typeof nameValue === "string"
-      ? SESSION_TOOLS.find((tool) => tool.name === nameValue)?.name
-      : undefined;
+    const nameValue = (params as Readonly<Record<string, unknown>>)["name"];
+    const name =
+      typeof nameValue === "string"
+        ? SESSION_TOOLS.find((tool) => tool.name === nameValue)?.name
+        : undefined;
     if (name === undefined) {
-      return yield* Effect.fail({ _tag: "McpForbidden", reason: "tool is not in the Session allowlist" } as const);
+      return yield* Effect.fail({
+        _tag: "McpForbidden",
+        reason: "tool is not in the Session allowlist",
+      } as const);
     }
-    const toolArguments = "arguments" in params ? params.arguments : null;
+    const toolArguments =
+      "arguments" in params ? (params as Readonly<Record<string, unknown>>)["arguments"] : null;
     const client = makeRemoteClient({ baseUrl: capability.endpoint, actor: capability.actor });
     if (name === SessionToolName.candidateFinalize) {
       if (!capabilityAllows(capability, name)) {
-        return yield* Effect.fail({ _tag: "McpForbidden", reason: `Grant does not permit ${name}` } as const);
+        return yield* Effect.fail({
+          _tag: "McpForbidden",
+          reason: `Grant does not permit ${name}`,
+        } as const);
       }
-      const forwarded = yield* forwardCandidateFinalize(capability, { ...request, params: toolArguments });
+      const forwarded = yield* forwardCandidateFinalize(capability, {
+        ...request,
+        params: toolArguments,
+      });
       return { jsonrpc: "2.0" as const, id: request.id, result: forwarded };
     }
     const projectId = yield* projectIdFrom(toolArguments);
     if (!capabilityAllows(capability, name, projectId)) {
-      return yield* Effect.fail({ _tag: "McpForbidden", reason: `Grant does not permit ${name} for Project` } as const);
+      return yield* Effect.fail({
+        _tag: "McpForbidden",
+        reason: `Grant does not permit ${name} for Project`,
+      } as const);
     }
     if (
       name === SessionToolName.projectRead ||
@@ -309,20 +412,24 @@ export const runMcp = (
           try {
             requestInput = JSON.parse(line) as unknown;
           } catch (error) {
-            await Effect.runPromise(stdio.write(JSON.stringify({
-              jsonrpc: "2.0",
-              id: undefined,
-              error: { code: -32700, message: errorReason(error) },
-            })));
+            await Effect.runPromise(
+              stdio.write(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: undefined,
+                  error: { code: -32700, message: errorReason(error) },
+                }),
+              ),
+            );
             continue;
           }
           const response = await Effect.runPromise(
             handleMcpRequest(capability, requestInput).pipe(
-              Effect.catchAll((error) =>
+              Effect.catchCause((cause) =>
                 Effect.succeed({
                   jsonrpc: "2.0" as const,
                   id: undefined,
-                  error: { code: -32602, message: errorReason(error) },
+                  error: { code: -32602, message: errorReason(Cause.squash(cause)) },
                 }),
               ),
             ),
@@ -333,4 +440,3 @@ export const runMcp = (
       catch: () => undefined,
     }),
   );
-

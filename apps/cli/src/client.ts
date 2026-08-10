@@ -52,9 +52,7 @@ export interface RemoteClient {
     expectedRevision: EventRevision,
     command: ProjectCommand,
   ) => Effect.Effect<CommandResult, RemoteClientError>;
-  readonly observe: (
-    projectId: ProjectId,
-  ) => Effect.Effect<ProjectObservation, RemoteClientError>;
+  readonly observe: (projectId: ProjectId) => Effect.Effect<ProjectObservation, RemoteClientError>;
   readonly artifact: (
     projectId: ProjectId,
     digest: Sha256Digest,
@@ -85,7 +83,10 @@ const DOMAIN_REJECTIONS: Record<string, true> = {
 const asFailure = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, input: string): S["Type"] => {
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  input: string,
+): S["Type"] => {
   const parsed: unknown = JSON.parse(input);
   return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(parsed);
 };
@@ -105,11 +106,12 @@ const decodeFailure = (input: string, path: string): RemoteClientError => {
   }
 };
 
-const bodyFor = <S extends Schema.ConstraintEncoder<unknown>>(schema: S, value: S["Type"]): string =>
-  JSON.stringify(Schema.encodeSync(schema, { onExcessProperty: "error" })(value));
+const bodyFor = <S extends Schema.ConstraintEncoder<unknown>>(
+  schema: S,
+  value: S["Type"],
+): string => JSON.stringify(Schema.encodeSync(schema, { onExcessProperty: "error" })(value));
 
-const route = (baseUrl: string, path: string): string =>
-  new URL(path, `${baseUrl}/`).toString();
+const route = (baseUrl: string, path: string): string => new URL(path, `${baseUrl}/`).toString();
 
 const makeHeaders = (config: RemoteClientConfig, includeJson: boolean): Headers => {
   const headers = new Headers({
@@ -125,16 +127,18 @@ const makeHeaders = (config: RemoteClientConfig, includeJson: boolean): Headers 
   return headers;
 };
 
-const responseError = (
-  response: Response,
-  body: string,
-  path: string,
-): RemoteClientError => {
+const responseError = (response: Response, body: string, path: string): RemoteClientError => {
   if (response.status === 401) {
-    return { _tag: "AuthenticationFailure", reason: "Cloudflare Access rejected the service token" };
+    return {
+      _tag: "AuthenticationFailure",
+      reason: "Cloudflare Access rejected the service token",
+    };
   }
   if (response.status === 403) {
-    return { _tag: "AuthorizationFailure", reason: "Cloudflare Access or Project Grant denied the request" };
+    return {
+      _tag: "AuthorizationFailure",
+      reason: "Cloudflare Access or Project Grant denied the request",
+    };
   }
   if (response.status === 408 || response.status === 429 || response.status >= 500) {
     return { _tag: "DependencyUnavailable", reason: `Worker returned HTTP ${response.status}` };
@@ -191,7 +195,8 @@ const fetchBytes = (
 ): Effect.Effect<Uint8Array, RemoteClientError> =>
   Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: (signal) => fetch(route(config.baseUrl, path), { headers: makeHeaders(config, false), signal }),
+      try: (signal) =>
+        fetch(route(config.baseUrl, path), { headers: makeHeaders(config, false), signal }),
       catch: (error) => ({
         _tag: "TransportFailure" as const,
         reason: asFailure(error),
@@ -223,9 +228,9 @@ const commandEffect = (
   expectedRevision: EventRevision,
   command: ProjectCommand,
 ): Effect.Effect<CommandResult, RemoteClientError> => {
-  const actor = Schema.decodeUnknownSync(AuthenticatedActorSchema, config.actor, {
+  const actor = Schema.decodeUnknownSync(AuthenticatedActorSchema, {
     onExcessProperty: "error",
-  });
+  })(config.actor);
   const envelope: CommandEnvelope = {
     schemaVersion: SchemaVersionSchema.make("work-engine/v1"),
     commandId,
@@ -262,10 +267,7 @@ export const makeRemoteClient = (config: RemoteClientConfig): RemoteClient => ({
       ProjectObservationSchema,
     ),
   artifact: (projectId, digest) =>
-    fetchBytes(
-      config,
-      `/v1/projects/${encodeURIComponent(projectId)}/artifacts/${digest}`,
-    ),
+    fetchBytes(config, `/v1/projects/${encodeURIComponent(projectId)}/artifacts/${digest}`),
   attachResolution: (projectId, request) =>
     fetchJson(
       config,
@@ -294,9 +296,9 @@ export const makeCommandEnvelope = (
   commandId,
   projectId,
   expectedRevision,
-  actor: Schema.decodeUnknownSync(AuthenticatedActorSchema, config.actor, {
+  actor: Schema.decodeUnknownSync(AuthenticatedActorSchema, {
     onExcessProperty: "error",
-  }),
+  })(config.actor),
   command,
 });
 

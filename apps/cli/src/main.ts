@@ -18,12 +18,17 @@ import {
   type ResultEnvelope,
 } from "./output.ts";
 
+const stdout = Bun.stdout.writer();
+const stderr = Bun.stderr.writer();
+
 const writeStdout = (text: string): void => {
-  process.stdout.write(`${text}\n`);
+  stdout.write(`${text}\n`);
+  stdout.flush();
 };
 
 const writeStderr = (text: string): void => {
-  process.stderr.write(`${text}\n`);
+  stderr.write(`${text}\n`);
+  stderr.flush();
 };
 
 const unknownFailure = (error: unknown): CliFailure => {
@@ -31,7 +36,10 @@ const unknownFailure = (error: unknown): CliFailure => {
   if (error instanceof Error && (error.name === "AbortError" || error.name === "SIGINT")) {
     return { _tag: "Cancelled", reason: "operator cancelled the command" };
   }
-  return { _tag: "TransportFailure", reason: error instanceof Error ? error.message : String(error) };
+  return {
+    _tag: "TransportFailure",
+    reason: error instanceof Error ? error.message : String(error),
+  };
 };
 
 const emit = (invocation: ParsedInvocation, envelope: ResultEnvelope): void => {
@@ -48,21 +56,25 @@ const runMcpRoot = (invocation: ParsedInvocation): Effect.Effect<void, CliFailur
   Effect.gen(function* () {
     const sessionValue = invocation.flags.get("session");
     if (typeof sessionValue !== "string") {
-      return yield* Effect.fail({ _tag: "UsageFailure", reason: "mcp requires --session <session-id>" } as const);
+      return yield* Effect.fail({
+        _tag: "UsageFailure",
+        reason: "mcp requires --session <session-id>",
+      } as const);
     }
-    const sessionId = yield* Effect.try({
-      try: () => Schema.decodeUnknownSync(SessionIdSchema, { onExcessProperty: "error" })(sessionValue),
-      catch: (error) => ({ _tag: "UsageFailure" as const, reason: `invalid Session id: ${error instanceof Error ? error.message : String(error)}` }),
-    });
+    const sessionId = yield* Schema.decodeUnknownEffect(SessionIdSchema, {
+      onExcessProperty: "error",
+    })(sessionValue).pipe(
+      Effect.mapError((error) => ({
+        _tag: "UsageFailure" as const,
+        reason: `invalid Session id: ${String(error)}`,
+      })),
+    );
     const capability = yield* loadSessionCapability(sessionId);
     const input = (async function* (): AsyncIterable<string> {
       const decoder = new TextDecoder();
-      const reader = Bun.stdin.stream().getReader();
       let buffered = "";
-      while (true) {
-        const chunk = await reader.read();
-        if (chunk.done) break;
-        buffered += decoder.decode(chunk.value, { stream: true });
+      for await (const chunk of Bun.stdin.stream()) {
+        buffered += decoder.decode(chunk, { stream: true });
         const lines = buffered.split("\n");
         buffered = lines.pop() ?? "";
         for (const line of lines) yield line;
@@ -106,6 +118,7 @@ export const runCli = (argv: ReadonlyArray<string>): Effect.Effect<number, never
 
 export const main = async (): Promise<void> => {
   const exitCode = await Effect.runPromise(runCli(Bun.argv.slice(2)));
+  // oxlint-disable-next-line effect/no-cross-runtime -- Bun has no native exit-code setter.
   process.exitCode = exitCode;
 };
 

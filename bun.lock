@@ -27,6 +27,19 @@
         "wrangler": "4.120.0",
       },
     },
+    "apps/cli": {
+      "name": "@work-engine/cli",
+      "version": "0.0.0",
+      "bin": {
+        "work": "dist/work",
+      },
+      "dependencies": {
+        "@effect/platform-bun": "4.0.0-beta.102",
+        "@work-engine/protocol": "0.0.0",
+        "@work-engine/runtime": "0.0.0",
+        "effect": "4.0.0-beta.102",
+      },
+    },
     "packages/kernel": {
       "name": "@work-engine/kernel",
       "version": "0.0.0",
@@ -635,6 +648,8 @@
     "@vitest/spy": ["@vitest/spy@4.1.0", "", {}, "sha512-pz77k+PgNpyMDv2FV6qmk5ZVau6c3R8HC8v342T2xlFxQKTrSeYw9waIJG8KgV9fFwAtTu4ceRzMivPTH6wSxw=="],
 
     "@vitest/utils": ["@vitest/utils@4.1.0", "", { "dependencies": { "@vitest/pretty-format": "4.1.0", "convert-source-map": "^2.0.0", "tinyrainbow": "^3.0.3" } }, "sha512-XfPXT6a8TZY3dcGY8EdwsBulFCIw+BeeX0RZn2x/BtiY/75YGh8FeWGG8QISN/WhaqSrE2OrlDgtF8q5uhOTmw=="],
+
+    "@work-engine/cli": ["@work-engine/cli@workspace:apps/cli"],
 
     "@work-engine/kernel": ["@work-engine/kernel@workspace:packages/kernel"],
 

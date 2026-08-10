@@ -1,5 +1,4 @@
 import { Effect, Schema } from "effect";
-import { readFile, stat } from "node:fs/promises";
 import {
   AuthenticatedActorSchema,
   GrantSchema,
@@ -8,6 +7,12 @@ import {
   type Grant,
   type SessionId,
 } from "@work-engine/protocol";
+import {
+  currentUid,
+  environment as bunEnvironment,
+  inspectFile,
+  readTextFile,
+} from "./platform.ts";
 const NonEmptyStringSchema = Schema.NonEmptyString;
 
 export const OperatorEnvironmentSchema = Schema.Struct({
@@ -45,6 +50,7 @@ export interface OperatorConfig {
 export interface ConfigFileSystem {
   readonly readText: (path: string) => Effect.Effect<string, ConfigError>;
   readonly inspect: (path: string) => Effect.Effect<FileInspection, ConfigError>;
+  readonly currentUid: () => number;
 }
 
 export interface FileInspection {
@@ -64,57 +70,48 @@ const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   input: string,
   path: string,
 ): Effect.Effect<S["Type"], ConfigError> =>
-  Effect.try({
-    try: () => {
-      const parsed: unknown = JSON.parse(input);
-      return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(parsed);
-    },
-    catch: (error) => ({
-      _tag: "ConfigDecodeFailure" as const,
-      path,
-      reason: error instanceof Error ? error.message : String(error),
-    }),
+  Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(input) as unknown,
+      catch: (error) => ({
+        _tag: "ConfigDecodeFailure" as const,
+        path,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+    return yield* Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })(parsed).pipe(
+      Effect.mapError((error) => ({
+        _tag: "ConfigDecodeFailure" as const,
+        path,
+        reason: String(error),
+      })),
+    );
   });
 
-const makeNodeFileSystem = (): ConfigFileSystem => ({
+const makeBunFileSystem = (): ConfigFileSystem => ({
   readText: (path) =>
-    Effect.tryPromise({
-      try: () => readFile(path, "utf8"),
-      catch: (error) => ({
+    readTextFile(path).pipe(
+      Effect.mapError((error) => ({
         _tag: "ConfigIoFailure" as const,
         path,
         reason: error instanceof Error ? error.message : String(error),
-      }),
-    }),
+      })),
+    ),
   inspect: (path) =>
-    Effect.tryPromise({
-      try: async () => {
-        const result = await stat(path);
-        return {
-          uid: typeof result.uid === "number" ? result.uid : -1,
-          mode: result.mode & 0o777,
-        };
-      },
-      catch: (error) => ({
+    inspectFile(path).pipe(
+      Effect.mapError((error) => ({
         _tag: "ConfigIoFailure" as const,
         path,
         reason: error instanceof Error ? error.message : String(error),
-      }),
-    }),
+      })),
+    ),
+  currentUid,
 });
 
-const currentUid = (): number => {
-  const getuid = process.getuid;
-  return typeof getuid === "function" ? getuid() : -1;
-};
-
-const ensurePrivateOwned = (
-  fs: ConfigFileSystem,
-  path: string,
-): Effect.Effect<void, ConfigError> =>
+const ensurePrivateOwned = (fs: ConfigFileSystem, path: string): Effect.Effect<void, ConfigError> =>
   Effect.gen(function* () {
     const metadata = yield* fs.inspect(path);
-    if (metadata.uid !== currentUid()) {
+    if (metadata.uid !== fs.currentUid()) {
       return yield* Effect.fail({
         _tag: "ConfigPermissions",
         path,
@@ -131,30 +128,38 @@ const ensurePrivateOwned = (
   });
 
 const homePath = (value: string): string => {
-  if (value === "~") return process.env.HOME ?? value;
-  if (value.startsWith("~/")) return `${process.env.HOME ?? "~"}${value.slice(1)}`;
+  const home = bunEnvironment()["HOME"];
+  if (value === "~") return home ?? value;
+  if (value.startsWith("~/")) return `${home ?? "~"}${value.slice(1)}`;
   return value;
 };
 
-const actorGrants = (actor: AuthenticatedActor, grants: ReadonlyArray<Grant>): ReadonlyArray<Grant> =>
-  grants.filter((grant) => grant.subjectActorId === actor.actorId);
+const actorGrants = (
+  actor: AuthenticatedActor,
+  grants: ReadonlyArray<Grant>,
+): ReadonlyArray<Grant> => grants.filter((grant) => grant.subjectActorId === actor.actorId);
 
 export const decodeOperatorConfig = (
   environment: unknown,
-  files: ConfigFileSystem = makeNodeFileSystem(),
+  files: ConfigFileSystem = makeBunFileSystem(),
 ): Effect.Effect<OperatorConfig, ConfigError> =>
   Effect.gen(function* () {
-    const env = yield* Effect.try({
-      try: () => Schema.decodeUnknownSync(OperatorEnvironmentSchema, { onExcessProperty: "error" })(environment),
-      catch: (error) => ({
+    const env = yield* Schema.decodeUnknownEffect(OperatorEnvironmentSchema, {
+      onExcessProperty: "error",
+    })(environment).pipe(
+      Effect.mapError((error) => ({
         _tag: "ConfigDecodeFailure" as const,
         path: "environment",
-        reason: error instanceof Error ? error.message : String(error),
-      }),
-    });
+        reason: String(error),
+      })),
+    );
 
     yield* ensurePrivateOwned(files, env.WORK_ENGINE_ACTOR_FILE);
-    const actor = yield* decodeJson(AuthenticatedActorSchema, yield* files.readText(env.WORK_ENGINE_ACTOR_FILE), env.WORK_ENGINE_ACTOR_FILE);
+    const actor = yield* decodeJson(
+      AuthenticatedActorSchema,
+      yield* files.readText(env.WORK_ENGINE_ACTOR_FILE),
+      env.WORK_ENGINE_ACTOR_FILE,
+    );
     if (actor.kind !== "operator" || actor.sessionId !== undefined) {
       return yield* Effect.fail({
         _tag: "OperatorRequired",
@@ -162,14 +167,15 @@ export const decodeOperatorConfig = (
       } as const);
     }
 
-    const grants = env.WORK_ENGINE_GRANT_FILE === undefined
-      ? []
-      : yield* Effect.gen(function* () {
-          const grantPath = env.WORK_ENGINE_GRANT_FILE;
-          yield* ensurePrivateOwned(files, grantPath);
-          const text = yield* files.readText(grantPath);
-          return yield* decodeJson(Schema.Array(GrantSchema), text, grantPath);
-        });
+    const grantPath = env.WORK_ENGINE_GRANT_FILE;
+    const grants =
+      grantPath === undefined
+        ? []
+        : yield* Effect.gen(function* () {
+            yield* ensurePrivateOwned(files, grantPath);
+            const text = yield* files.readText(grantPath);
+            return yield* decodeJson(Schema.Array(GrantSchema), text, grantPath);
+          });
 
     const baseUrl = yield* Effect.try({
       try: () => new URL(env.WORK_ENGINE_URL).toString().replace(/\/$/, ""),
@@ -185,10 +191,12 @@ export const decodeOperatorConfig = (
       accessClientSecret: env.WORK_ENGINE_ACCESS_CLIENT_SECRET,
       actor: {
         ...actor,
-        presentedGrants: Array.from(new Set([
-          ...actor.presentedGrants,
-          ...actorGrants(actor, grants).map((grant) => grant.grantId),
-        ])),
+        presentedGrants: Array.from(
+          new Set([
+            ...actor.presentedGrants,
+            ...actorGrants(actor, grants).map((grant) => grant.grantId),
+          ]),
+        ),
       },
       grants,
       sshIdentityFile: homePath(env.WORK_ENGINE_SSH_IDENTITY_FILE ?? "~/.ssh/work-engine_ed25519"),
@@ -200,12 +208,15 @@ export const decodeOperatorConfig = (
 export const decodeSessionCapability = (
   text: string,
   expectedSessionId: SessionId,
-  files: ConfigFileSystem = makeNodeFileSystem(),
+  files: ConfigFileSystem = makeBunFileSystem(),
   path = "capability file",
 ): Effect.Effect<SessionCapabilityFile, ConfigError> =>
   Effect.gen(function* () {
     const capability = yield* decodeJson(SessionCapabilityFileSchema, text, path);
-    if (capability.sessionId !== expectedSessionId || capability.actor.sessionId !== expectedSessionId) {
+    if (
+      capability.sessionId !== expectedSessionId ||
+      capability.actor.sessionId !== expectedSessionId
+    ) {
       return yield* Effect.fail({
         _tag: "ConfigPermissions",
         path,
@@ -223,30 +234,35 @@ export const decodeSessionCapability = (
     return capability;
   });
 
-export const loadOperatorConfig = (): Effect.Effect<OperatorConfig, ConfigError> =>
-  decodeOperatorConfig({
-    WORK_ENGINE_URL: process.env.WORK_ENGINE_URL,
-    WORK_ENGINE_ACCESS_CLIENT_ID: process.env.WORK_ENGINE_ACCESS_CLIENT_ID,
-    WORK_ENGINE_ACCESS_CLIENT_SECRET: process.env.WORK_ENGINE_ACCESS_CLIENT_SECRET,
-    WORK_ENGINE_ACTOR_FILE: process.env.WORK_ENGINE_ACTOR_FILE,
-    WORK_ENGINE_GRANT_FILE: process.env.WORK_ENGINE_GRANT_FILE,
-    WORK_ENGINE_SSH_IDENTITY_FILE: process.env.WORK_ENGINE_SSH_IDENTITY_FILE,
-    WORK_ENGINE_SSH_DIRECTORY: process.env.WORK_ENGINE_SSH_DIRECTORY,
-    WORK_ENGINE_HERDR_BINARY: process.env.WORK_ENGINE_HERDR_BINARY,
-  });
+export const loadOperatorConfig: Effect.Effect<OperatorConfig, ConfigError> = Effect.sync(
+  bunEnvironment,
+).pipe(
+  Effect.flatMap((env) =>
+    decodeOperatorConfig({
+      WORK_ENGINE_URL: env["WORK_ENGINE_URL"],
+      WORK_ENGINE_ACCESS_CLIENT_ID: env["WORK_ENGINE_ACCESS_CLIENT_ID"],
+      WORK_ENGINE_ACCESS_CLIENT_SECRET: env["WORK_ENGINE_ACCESS_CLIENT_SECRET"],
+      WORK_ENGINE_ACTOR_FILE: env["WORK_ENGINE_ACTOR_FILE"],
+      WORK_ENGINE_GRANT_FILE: env["WORK_ENGINE_GRANT_FILE"],
+      WORK_ENGINE_SSH_IDENTITY_FILE: env["WORK_ENGINE_SSH_IDENTITY_FILE"],
+      WORK_ENGINE_SSH_DIRECTORY: env["WORK_ENGINE_SSH_DIRECTORY"],
+      WORK_ENGINE_HERDR_BINARY: env["WORK_ENGINE_HERDR_BINARY"],
+    }),
+  ),
+);
 
 export const loadSessionCapability = (
   expectedSessionId: SessionId,
 ): Effect.Effect<SessionCapabilityFile, ConfigError> =>
   Effect.gen(function* () {
-    const path = process.env.WORK_ENGINE_CAPABILITY_FILE;
+    const path = bunEnvironment()["WORK_ENGINE_CAPABILITY_FILE"];
     if (path === undefined || path.length === 0) {
       return yield* Effect.fail({
         _tag: "ConfigMissing",
         name: "WORK_ENGINE_CAPABILITY_FILE",
       } as const);
     }
-    const fs = makeNodeFileSystem();
+    const fs = makeBunFileSystem();
     yield* ensurePrivateOwned(fs, path);
     return yield* decodeSessionCapability(yield* fs.readText(path), expectedSessionId, fs, path);
   });

@@ -106,22 +106,28 @@ export const renderInteractive = (command: string, data: unknown): string => {
   if (typeof data !== "object" || data === null) return `${command}: ${String(data)}`;
   const record = data as Record<string, unknown>;
   const lines = [`${command}: accepted`];
-  if (typeof record.projectId === "string") lines.push(`project ${record.projectId}`);
-  if (typeof record.eventRevision === "number") lines.push(`event revision ${record.eventRevision}`);
-  if (typeof record.contentRevision === "number") lines.push(`content revision ${record.contentRevision}`);
-  if (typeof record.resolutionId === "string") lines.push(`resolution ${record.resolutionId}`);
-  if (typeof record.alias === "string") lines.push(`SSH target ${record.alias}`);
-  if (typeof record.configPath === "string") lines.push(`SSH config ${record.configPath}`);
+  if (typeof record["projectId"] === "string") lines.push(`project ${record["projectId"]}`);
+  if (typeof record["eventRevision"] === "number")
+    lines.push(`event revision ${record["eventRevision"]}`);
+  if (typeof record["contentRevision"] === "number")
+    lines.push(`content revision ${record["contentRevision"]}`);
+  if (typeof record["resolutionId"] === "string")
+    lines.push(`resolution ${record["resolutionId"]}`);
+  if (typeof record["alias"] === "string") lines.push(`SSH target ${record["alias"]}`);
+  if (typeof record["configPath"] === "string") lines.push(`SSH config ${record["configPath"]}`);
   const refs = evidenceReferences(data);
   if (refs.length > 0) lines.push(`evidence ${refs.join(", ")}`);
-  const history = record.history;
+  const history = record["history"];
   if (Array.isArray(history)) {
     for (const item of history) {
       if (typeof item !== "object" || item === null) continue;
       const event = item as Record<string, unknown>;
-      const eventRevision = event.eventRevision;
-      const payload = event.event;
-      const tag = typeof payload === "object" && payload !== null && "_tag" in payload ? String(payload._tag) : "event";
+      const eventRevision = event["eventRevision"];
+      const payload = event["event"];
+      const tag =
+        typeof payload === "object" && payload !== null && "_tag" in payload
+          ? String(payload._tag)
+          : "event";
       if (typeof eventRevision === "number") lines.push(`event ${eventRevision}: ${tag}`);
       const refsForEvent = evidenceReferences(payload);
       if (refsForEvent.length > 0) lines.push(`  evidence ${refsForEvent.join(", ")}`);

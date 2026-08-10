@@ -103,7 +103,8 @@ const importsIn = (file: string, source: string): readonly string[] => {
       : file.endsWith(".ts") || file.endsWith(".mts") || file.endsWith(".cts")
         ? "ts"
         : "js";
-  const imports = new Bun.Transpiler({ loader }).scanImports(source);
+  const scannedSource = source.startsWith("#!") ? source.slice(source.indexOf("\n") + 1) : source;
+  const imports = new Bun.Transpiler({ loader }).scanImports(scannedSource);
   return [...new Set(imports.map(({ path }) => path))];
 };
 
