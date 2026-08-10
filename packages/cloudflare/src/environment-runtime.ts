@@ -6,7 +6,7 @@ import {
   type EnvironmentPairing,
   type EnvironmentSnapshot,
 } from "@work-engine/protocol";
-import { getSandbox, type DirectoryBackup, type Sandbox } from "@cloudflare/sandbox";
+import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { EnvironmentRuntime } from "./environment.ts";
 import type { EnvironmentCredentialBroker } from "./environment-credentials.ts";
 import { InvalidRequestError } from "./errors.ts";
@@ -62,6 +62,7 @@ const parsePairingOutput = (
 export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   readonly #options: SandboxEnvironmentRuntimeOptions;
   #activeSandbox: Sandbox | undefined;
+  #generationId: string | undefined;
 
   constructor(options: SandboxEnvironmentRuntimeOptions) {
     this.#options = options;
@@ -83,6 +84,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     await sandbox.setKeepAlive(input.keepAlive);
     await sandbox.exec("true");
     this.#activeSandbox = sandbox;
+    this.#generationId = generationId;
     return { generationId };
   }
 
@@ -95,27 +97,51 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     if (sandbox === undefined) throw new Error("Sandbox must start before initialization");
     const owner = requireSafeGitSegment(input.repository.owner, "repository.owner");
     const name = requireSafeGitSegment(input.repository.name, "repository.name");
+    const environmentId = this.#environmentId;
+    const generationId = this.#generationId;
+    if (environmentId === undefined || generationId === undefined) {
+      throw new Error("Sandbox generation identity is unavailable");
+    }
     const lease = await this.#options.credentials.lease({
-      environmentId: this.#environmentId ?? "unknown",
+      environmentId,
+      generationId,
       repository: input.repository,
       provider: input.provider,
     });
+    const broker = new URL(lease.brokerOrigin);
+    await sandbox.setAllowedHosts([broker.hostname]);
     await sandbox.setEnvVars({
-      ...lease.environment,
+      T3CODE_BROKER_TOKEN: lease.generationToken,
+      T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
+      ...(input.provider === "claude"
+        ? {
+            ANTHROPIC_API_KEY: lease.generationToken,
+            ANTHROPIC_BASE_URL: `${lease.brokerOrigin}/v1/provider/anthropic`,
+          }
+        : {
+            OPENAI_API_KEY: lease.generationToken,
+            OPENAI_BASE_URL: `${lease.brokerOrigin}/v1/provider/openai`,
+          }),
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.extraHeader",
+      GIT_CONFIG_VALUE_0: `Authorization: Bearer ${lease.generationToken}`,
       T3CODE_HOME,
       T3CODE_NO_BROWSER: "true",
       T3CODE_HOST: "0.0.0.0",
       T3CODE_PORT: String(T3CODE_PORT),
     });
+    const remote = `${lease.brokerOrigin}/v1/git/${owner}/${name}`;
     await requireSuccessfulExec(
       sandbox,
       [
         `mkdir -p ${REPOSITORY_DIR}`,
         `cd ${REPOSITORY_DIR}`,
         "git init",
-        `git remote add origin https://github.com/${owner}/${name}.git`,
-        `git -c http.extraHeader="Authorization: Bearer $GITHUB_TOKEN" fetch --depth=1 origin ${input.baseCommit}`,
+        `git remote add origin ${remote}`,
+        `git fetch origin ${input.baseCommit}`,
         `git checkout --detach ${input.baseCommit}`,
+        'git config user.name "Work Engine"',
+        'git config user.email "work-engine@invalid"',
       ].join(" && "),
     );
     await this.#startT3Code(sandbox);
@@ -148,6 +174,10 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       timeout: 30_000,
     });
   }
+  async isReady(generationId: string): Promise<boolean> {
+    const process = await this.#sandbox(generationId).getProcess(T3CODE_PROCESS_ID);
+    return process !== null && (await process.getStatus()) === "running";
+  }
 
   async mintPairing(input: { readonly environmentId: string }): Promise<EnvironmentPairing> {
     const sandbox = this.#activeSandbox;
@@ -171,7 +201,10 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     });
   }
 
-  async checkpoint(snapshot: EnvironmentSnapshot): Promise<EnvironmentCheckpoint> {
+  async checkpoint(
+    snapshot: EnvironmentSnapshot,
+    options?: { readonly final?: boolean },
+  ): Promise<EnvironmentCheckpoint> {
     if (snapshot.generation === null) throw new Error("Cannot checkpoint without a generation");
     const sandbox = this.#sandbox(snapshot.generation.id);
     const process = await sandbox.getProcess(T3CODE_PROCESS_ID);
@@ -194,65 +227,190 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         ttl: BACKUP_TTL_SECONDS,
         gitignore: false,
       });
-      return decodeUnknownStrict(EnvironmentCheckpointSchema, {
+      const candidate = decodeUnknownStrict(EnvironmentCheckpointSchema, {
         generation: snapshot.generation.ordinal,
         stateCapture: "quiesced",
         head,
         versions: snapshot.versions,
         backup: { id: backup.id, dir: backup.dir },
-        validated: true,
+        validated: false,
         createdAt: this.#options.now(),
       });
+      try {
+        await this.#validateCheckpoint(snapshot.environmentId, candidate);
+      } catch (cause) {
+        await this.deleteCheckpoint(candidate).catch(() => undefined);
+        throw cause;
+      }
+      return decodeUnknownStrict(EnvironmentCheckpointSchema, {
+        ...candidate,
+        validated: true,
+      });
     } finally {
-      await this.#startT3Code(sandbox);
+      if (options?.final !== true) await this.#startT3Code(sandbox);
     }
   }
 
-  async recover(input: {
-    readonly snapshot: EnvironmentSnapshot;
-    readonly checkpoint: EnvironmentCheckpoint;
-    readonly generationOrdinal: number;
-  }): Promise<{ readonly generationId: string }> {
-    const generationId = `${input.snapshot.environmentId}-g${String(input.generationOrdinal)}`;
-    const sandbox = this.#sandbox(generationId);
-    await sandbox.setKeepAlive(true);
-    const backup: DirectoryBackup = {
-      id: input.checkpoint.backup.id,
-      dir: input.checkpoint.backup.dir,
-    };
-    const restored = await sandbox.restoreBackup(backup);
-    if (!restored.success) throw new Error("Sandbox backup restore failed");
+  async #validateCheckpoint(
+    environmentId: string,
+    checkpoint: EnvironmentCheckpoint,
+  ): Promise<void> {
+    const sandbox = this.#sandbox(`${environmentId}-validation-${checkpoint.backup.id}`);
+    try {
+      await sandbox.setKeepAlive(false);
+      const restored = await sandbox.restoreBackup({
+        id: checkpoint.backup.id,
+        dir: checkpoint.backup.dir,
+      });
+      if (!restored.success) throw new Error("Checkpoint validation restore failed");
+      await this.#validateRestoredState(sandbox, checkpoint);
+      await this.#startT3Code(sandbox);
+    } finally {
+      await sandbox.setKeepAlive(false).catch(() => undefined);
+      await sandbox.destroy().catch(() => undefined);
+    }
+  }
+
+  async #validateRestoredState(sandbox: Sandbox, checkpoint: EnvironmentCheckpoint): Promise<void> {
     const checks = await requireSuccessfulExec(
       sandbox,
       `sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
     );
     const lines = checks.stdout.trim().split(/\s+/u);
-    if (lines[0] !== "ok" || lines.at(-1) !== input.checkpoint.head) {
+    if (lines[0] !== "ok" || lines.at(-1) !== checkpoint.head) {
       throw new Error("Restored Sandbox failed SQLite or Git validation");
     }
-    await this.#startT3Code(sandbox);
-    this.#activeSandbox = sandbox;
-    return { generationId };
+  }
+
+  async #configureRecoveredGeneration(
+    sandbox: Sandbox,
+    input: {
+      readonly snapshot: EnvironmentSnapshot;
+      readonly generationId: string;
+    },
+  ): Promise<void> {
+    const lease = await this.#options.credentials.lease({
+      environmentId: input.snapshot.environmentId,
+      generationId: input.generationId,
+      repository: input.snapshot.repository,
+      provider: input.snapshot.provider,
+    });
+    const broker = new URL(lease.brokerOrigin);
+    await sandbox.setAllowedHosts([broker.hostname]);
+    await sandbox.setEnvVars({
+      T3CODE_BROKER_TOKEN: lease.generationToken,
+      T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
+      ...(input.snapshot.provider === "claude"
+        ? {
+            ANTHROPIC_API_KEY: lease.generationToken,
+            ANTHROPIC_BASE_URL: `${lease.brokerOrigin}/v1/provider/anthropic`,
+          }
+        : {
+            OPENAI_API_KEY: lease.generationToken,
+            OPENAI_BASE_URL: `${lease.brokerOrigin}/v1/provider/openai`,
+          }),
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "http.extraHeader",
+      GIT_CONFIG_VALUE_0: `Authorization: Bearer ${lease.generationToken}`,
+      T3CODE_HOME,
+      T3CODE_NO_BROWSER: "true",
+      T3CODE_HOST: "0.0.0.0",
+      T3CODE_PORT: String(T3CODE_PORT),
+    });
+  }
+
+  async deleteCheckpoint(checkpoint: EnvironmentCheckpoint): Promise<void> {
+    await this.#options.backupBucket.delete(backupObjectKeys(checkpoint.backup.id));
+  }
+  async recover(input: {
+    readonly snapshot: EnvironmentSnapshot;
+    readonly checkpoint: EnvironmentCheckpoint;
+    readonly generationOrdinal: number;
+  }): Promise<{ readonly generationId: string }> {
+    if (JSON.stringify(input.checkpoint.versions) !== JSON.stringify(input.snapshot.versions)) {
+      throw new Error("Checkpoint runtime version tuple does not match the Environment");
+    }
+    const previousId = input.snapshot.generation?.id;
+    if (previousId !== undefined) {
+      await this.#options.credentials.revoke({
+        environmentId: input.snapshot.environmentId,
+        generationId: previousId,
+      });
+      const previous = this.#sandbox(previousId);
+      await previous.setKeepAlive(false);
+      await previous.destroy();
+    }
+    const generationId = `${input.snapshot.environmentId}-g${String(input.generationOrdinal)}`;
+    const sandbox = this.#sandbox(generationId);
+    try {
+      await sandbox.setKeepAlive(true);
+      const restored = await sandbox.restoreBackup({
+        id: input.checkpoint.backup.id,
+        dir: input.checkpoint.backup.dir,
+      });
+      if (!restored.success) throw new Error("Sandbox backup restore failed");
+      await this.#validateRestoredState(sandbox, input.checkpoint);
+      await this.#configureRecoveredGeneration(sandbox, {
+        snapshot: input.snapshot,
+        generationId,
+      });
+      await this.#startT3Code(sandbox);
+      this.#activeSandbox = sandbox;
+      this.#environmentId = input.snapshot.environmentId;
+      this.#generationId = generationId;
+      return { generationId };
+    } catch (cause) {
+      await this.#options.credentials
+        .revoke({ environmentId: input.snapshot.environmentId, generationId })
+        .catch(() => undefined);
+      await sandbox.setKeepAlive(false).catch(() => undefined);
+      await sandbox.destroy().catch(() => undefined);
+      throw cause;
+    }
   }
 
   async destroy(snapshot: EnvironmentSnapshot): Promise<void> {
-    if (snapshot.generation !== null) {
-      const sandbox = this.#sandbox(snapshot.generation.id);
-      await sandbox.setKeepAlive(false);
-      await sandbox.destroy();
-    }
-    if (snapshot.acceptedCheckpoint !== null) {
-      await this.#options.backupBucket.delete(
-        backupObjectKeys(snapshot.acceptedCheckpoint.backup.id),
-      );
-    }
+    const generationIds = [
+      ...(snapshot.generation === null ? [] : [snapshot.generation.id]),
+      ...snapshot.retiredGenerationIds,
+    ];
+    const failures = (
+      await Promise.all(
+        [...new Set(generationIds)].map(async (generationId) => {
+          const generationFailures: unknown[] = [];
+          await this.#options.credentials
+            .revoke({ environmentId: snapshot.environmentId, generationId })
+            .catch((cause: unknown) => generationFailures.push(cause));
+          const sandbox = this.#sandbox(generationId);
+          await sandbox
+            .setKeepAlive(false)
+            .catch((cause: unknown) => generationFailures.push(cause));
+          await sandbox.destroy().catch((cause: unknown) => generationFailures.push(cause));
+          return generationFailures;
+        }),
+      )
+    ).flat();
+    const checkpoints = [
+      ...snapshot.retainedCheckpoints,
+      ...(snapshot.acceptedCheckpoint === null ? [] : [snapshot.acceptedCheckpoint]),
+    ];
+    await Promise.all(
+      [
+        ...new Map(checkpoints.map((checkpoint) => [checkpoint.backup.id, checkpoint])).values(),
+      ].map((checkpoint) =>
+        this.deleteCheckpoint(checkpoint).catch((cause: unknown) => failures.push(cause)),
+      ),
+    );
+    if (failures.length > 0) throw new AggregateError(failures, "Environment cleanup failed");
   }
 
   async proxy(request: Request, generationId: string): Promise<Response> {
     const sandbox = this.#sandbox(generationId);
     const url = new URL(request.url);
     url.pathname = url.pathname.replace(/^\/v1\/environments\/[^/]+\/connect/u, "") || "/";
-    const proxied = new Request(url.toString(), request);
+    const headers = new Headers(request.headers);
+    headers.delete("X-Environment-Internal");
+    const proxied = new Request(new Request(url.toString(), request), { headers });
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       return sandbox.wsConnect(proxied, T3CODE_PORT);
     }

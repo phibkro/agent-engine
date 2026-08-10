@@ -7,6 +7,7 @@ import {
 } from "./identifiers.ts";
 
 const PositiveIntSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
+const NonNegativeIntSchema = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
 export const EnvironmentIdSchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/)),
@@ -140,6 +141,13 @@ export const EnvironmentSnapshotSchema = Schema.TaggedStruct("EnvironmentSnapsho
   generation: Schema.NullOr(SandboxGenerationSchema),
   retiredGenerationIds: Schema.Array(NonEmptyStringSchema),
   acceptedCheckpoint: Schema.NullOr(EnvironmentCheckpointSchema),
+  dataLossWarning: Schema.Boolean,
+  retainedCheckpoints: Schema.Array(EnvironmentCheckpointSchema),
+  checkpointFailures: NonNegativeIntSchema,
+  checkpointRetryAt: Schema.NullOr(TimestampSchema),
+  recoveryFailures: NonNegativeIntSchema,
+  recoveryRetryAt: Schema.NullOr(TimestampSchema),
+  recoveryRequest: Schema.NullOr(EnvironmentRecoverRequestSchema),
   commandReceipts: Schema.Array(EnvironmentCommandReceiptSchema),
   createdAt: TimestampSchema,
   lastActivityAt: TimestampSchema,

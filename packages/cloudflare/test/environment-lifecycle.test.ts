@@ -7,6 +7,8 @@ import {
   EnvironmentDestroyRequestSchema,
   RuntimeVersionTupleSchema,
   decodeUnknownStrict,
+  type EnvironmentCheckpoint,
+  type EnvironmentSnapshot,
 } from "@work-engine/protocol";
 import {
   EnvironmentCoordinator,
@@ -34,15 +36,29 @@ class RecordingRuntime implements EnvironmentRuntime {
   starts = 0;
   recoveries = 0;
   failCheckpoint = false;
+  destroys = 0;
+  failRecover = false;
+  failInitialize = false;
+  finalCheckpoint = false;
+  checkpointCount = 0;
+  deletedCheckpoints: string[] = [];
 
   async start(): Promise<{ readonly generationId: string }> {
     this.starts += 1;
     return { generationId: "sandbox-1" };
   }
 
-  async initialize(): Promise<void> {}
+  async initialize(): Promise<void> {
+    if (this.failInitialize) throw new Error("initialization failed");
+  }
 
   async waitUntilReady(): Promise<void> {}
+  async isReady(): Promise<boolean> {
+    return true;
+  }
+  async deleteCheckpoint(checkpoint: EnvironmentCheckpoint): Promise<void> {
+    this.deletedCheckpoints.push(checkpoint.backup.id);
+  }
 
   async mintPairing() {
     return decodeUnknownStrict(EnvironmentPairingSchema, {
@@ -59,25 +75,32 @@ class RecordingRuntime implements EnvironmentRuntime {
     });
   }
 
-  async checkpoint() {
+  async checkpoint(_snapshot?: EnvironmentSnapshot, options?: { readonly final?: boolean }) {
+    this.finalCheckpoint = options?.final === true;
     if (this.failCheckpoint) throw new Error("capture failed");
+    this.checkpointCount += 1;
     return decodeUnknownStrict(EnvironmentCheckpointSchema, {
       generation: 1,
       stateCapture: "quiesced",
       head: "1".repeat(40),
       versions,
-      backup: { id: "backup-1", dir: "/workspace/environment" },
+      backup: {
+        id: `backup-${String(this.checkpointCount)}`,
+        dir: "/workspace/environment",
+      },
       validated: true,
       createdAt: now,
     });
   }
-
   async recover() {
     this.recoveries += 1;
+    if (this.failRecover) throw new Error("recovery failed");
     return { generationId: "sandbox-2" };
   }
 
-  async destroy(): Promise<void> {}
+  async destroy(): Promise<void> {
+    this.destroys += 1;
+  }
 }
 
 describe("Environment creation", () => {
@@ -97,6 +120,21 @@ describe("Environment creation", () => {
     expect(first.snapshot.lifecycle).toBe("Ready");
     expect(first.snapshot.generation?.id).toBe("sandbox-1");
     expect(runtime.starts).toBe(1);
+  });
+  it("records a started generation and destroys it when initialization fails", async () => {
+    const runtime = new RecordingRuntime();
+    runtime.failInitialize = true;
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      now: () => now,
+    });
+
+    await expect(coordinator.create(request)).rejects.toThrow("initialization failed");
+    expect((await coordinator.inspect())?.generation?.id).toBe("sandbox-1");
+    expect((await coordinator.inspect())?.lifecycle).toBe("Failed");
+    expect(runtime.destroys).toBe(1);
   });
 
   it("checkpoints, replaces a lost Sandbox, and makes destruction terminal", async () => {
@@ -167,5 +205,92 @@ describe("Environment creation", () => {
       accepted.acceptedCheckpoint?.backup.id,
     );
     expect((await coordinator.inspect())?.lifecycle).toBe("Ready");
+  });
+  it("exhausts checkpoint retries into Failed with explicit data-loss state", async () => {
+    const runtime = new RecordingRuntime();
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      now: () => now,
+    });
+    await coordinator.create(request);
+    runtime.failCheckpoint = true;
+    await expect(coordinator.checkpoint()).rejects.toThrow("capture failed");
+    await expect(coordinator.checkpoint()).rejects.toThrow("capture failed");
+    await expect(coordinator.checkpoint()).rejects.toThrow("capture failed");
+    const failed = await coordinator.inspect();
+    expect(failed?.lifecycle).toBe("Failed");
+    expect(failed?.checkpointFailures).toBe(3);
+    expect(failed?.checkpointRetryAt).toBeNull();
+    expect(failed?.dataLossWarning).toBe(true);
+  });
+
+  it("retains only the two newest accepted checkpoints", async () => {
+    const runtime = new RecordingRuntime();
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      now: () => now,
+    });
+    await coordinator.create(request);
+    await coordinator.checkpoint();
+    await coordinator.checkpoint();
+    const latest = await coordinator.checkpoint();
+    expect(latest.retainedCheckpoints.map((checkpoint) => checkpoint.backup.id)).toEqual([
+      "backup-2",
+      "backup-3",
+    ]);
+    expect(runtime.deletedCheckpoints).toEqual(["backup-1"]);
+  });
+  it("exhausts recovery retries into Failed while preserving the accepted checkpoint", async () => {
+    const runtime = new RecordingRuntime();
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      now: () => now,
+    });
+    await coordinator.create(request);
+    const checkpointed = await coordinator.checkpoint();
+    runtime.failRecover = true;
+    const recovery = decodeUnknownStrict(EnvironmentRecoverRequestSchema, {
+      _tag: "RecoverEnvironment",
+      commandId: "recover-00000000-0000-4000-8000-000000000003",
+      environmentId: "demo-environment",
+    });
+    await expect(coordinator.recover(recovery)).rejects.toThrow("recovery failed");
+    await expect(coordinator.recover(recovery)).rejects.toThrow("recovery failed");
+    await expect(coordinator.recover(recovery)).rejects.toThrow("recovery failed");
+    const failed = await coordinator.inspect();
+    expect(failed?.lifecycle).toBe("Failed");
+    expect(failed?.recoveryFailures).toBe(3);
+    expect(failed?.dataLossWarning).toBe(true);
+    expect(failed?.acceptedCheckpoint?.backup.id).toBe(checkpointed.acceptedCheckpoint?.backup.id);
+  });
+
+  it("continues destruction when the required final checkpoint fails", async () => {
+    const runtime = new RecordingRuntime();
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      now: () => now,
+    });
+    await coordinator.create(request);
+    runtime.failCheckpoint = true;
+
+    const destroyed = await coordinator.destroy(
+      decodeUnknownStrict(EnvironmentDestroyRequestSchema, {
+        _tag: "DestroyEnvironment",
+        commandId: "destroy-00000000-0000-4000-8000-000000000002",
+        environmentId: "demo-environment",
+      }),
+    );
+
+    expect(destroyed.lifecycle).toBe("Destroyed");
+    expect(runtime.finalCheckpoint).toBe(true);
+    expect(runtime.destroys).toBe(1);
   });
 });

@@ -12,7 +12,6 @@ import type { CloudflareRuntimeEnv } from "./env.ts";
 import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
 
 const SNAPSHOT_KEY = "environment";
-const CONNECTION_COUNT_KEY = "active-connections";
 const MAX_CONNECTIONS = 10;
 
 class DurableEnvironmentStore implements EnvironmentStore {
@@ -42,6 +41,24 @@ const requestPayload = async (request: Request): Promise<Record<string, unknown>
   return value as Record<string, unknown>;
 };
 
+const publicSnapshot = (snapshot: EnvironmentSnapshot | undefined): unknown =>
+  snapshot === undefined
+    ? undefined
+    : {
+        ...snapshot,
+        commandReceipts: snapshot.commandReceipts.map((receipt) => ({
+          ...receipt,
+          result:
+            typeof receipt.result === "object" &&
+            receipt.result !== null &&
+            !Array.isArray(receipt.result) &&
+            "token" in receipt.result
+              ? Object.fromEntries(
+                  Object.entries(receipt.result).filter(([name]) => name !== "token"),
+                )
+              : receipt.result,
+        })),
+      };
 const jsonError = (cause: unknown): Response => {
   if (cause instanceof UnauthorizedError) {
     return Response.json({ _tag: cause._tag, reason: cause.message }, { status: 403 });
@@ -62,6 +79,7 @@ const jsonError = (cause: unknown): Response => {
 export class EnvironmentDurableObject implements DurableObject {
   readonly #state: DurableObjectState;
   readonly #env: CloudflareRuntimeEnv;
+  #activeConnections = 0;
 
   constructor(state: DurableObjectState, env: CloudflareRuntimeEnv) {
     this.#state = state;
@@ -130,8 +148,17 @@ export class EnvironmentDurableObject implements DurableObject {
       await this.#state.storage.deleteAlarm();
       return;
     }
+    if (snapshot.lifecycle === "Failed") {
+      await this.#state.storage.setAlarm(Date.now() + 1_000);
+      return;
+    }
     await this.#state.storage.setAlarm(
-      Math.min(Date.parse(snapshot.expiresAt), Date.parse(snapshot.inactivityDeadline)),
+      Math.min(
+        Date.parse(snapshot.expiresAt),
+        Date.parse(snapshot.inactivityDeadline),
+        ...(snapshot.checkpointRetryAt === null ? [] : [Date.parse(snapshot.checkpointRetryAt)]),
+        ...(snapshot.recoveryRetryAt === null ? [] : [Date.parse(snapshot.recoveryRetryAt)]),
+      ),
     );
   }
 
@@ -143,8 +170,7 @@ export class EnvironmentDurableObject implements DurableObject {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return runtime.proxy(request, generationId);
     }
-    const active = (await this.#state.storage.get<number>(CONNECTION_COUNT_KEY)) ?? 0;
-    if (active >= MAX_CONNECTIONS) {
+    if (this.#activeConnections >= MAX_CONNECTIONS) {
       return Response.json({ _tag: "EnvironmentConnectionLimit" }, { status: 429 });
     }
     const upstreamResponse = await runtime.proxy(request, generationId);
@@ -158,16 +184,21 @@ export class EnvironmentDurableObject implements DurableObject {
     }
     bridge.accept();
     upstream.accept();
-    await this.#state.storage.put(CONNECTION_COUNT_KEY, active + 1);
+    this.#activeConnections += 1;
     let closed = false;
     const release = (): void => {
       if (closed) return;
       closed = true;
+      this.#activeConnections = Math.max(0, this.#activeConnections - 1);
       this.#state.waitUntil(
-        this.#state.storage.transaction(async (transaction) => {
-          const count = (await transaction.get<number>(CONNECTION_COUNT_KEY)) ?? 1;
-          await transaction.put(CONNECTION_COUNT_KEY, Math.max(0, count - 1));
-        }),
+        (async () => {
+          const { coordinator } = this.#coordinator();
+          let active = await coordinator.recordActivity();
+          if (this.#activeConnections === 0 && active.lifecycle === "Ready") {
+            active = await coordinator.checkpoint().catch(() => active);
+          }
+          await this.#schedule(active);
+        })(),
       );
     };
     bridge.addEventListener("message", (event) => upstream.send(event.data));
@@ -197,9 +228,20 @@ export class EnvironmentDurableObject implements DurableObject {
       const { coordinator, runtime } = this.#coordinator();
       const url = new URL(request.url);
       if (url.pathname.includes("/connect")) {
-        const current = await coordinator.inspect();
+        let current = await coordinator.inspect();
         if (current?.lifecycle !== "Ready" || current.generation === null) {
           throw new InvalidRequestError("Environment is not ready for connections");
+        }
+        if (!(await runtime.isReady(current.generation.id))) {
+          current = await coordinator.recover({
+            _tag: "RecoverEnvironment",
+            commandId: `recover-${crypto.randomUUID()}`,
+            environmentId: current.environmentId,
+          });
+          await this.#schedule(current);
+        }
+        if (current.generation === null) {
+          throw new InvalidRequestError("Recovered Environment has no generation");
         }
         const response = await this.#proxy(request, runtime, current.generation.id);
         if (response.status < 400) {
@@ -211,7 +253,7 @@ export class EnvironmentDurableObject implements DurableObject {
       if (request.method === "GET") {
         return Response.json({
           _tag: "EnvironmentInspected",
-          snapshot: await coordinator.inspect(),
+          snapshot: publicSnapshot(await coordinator.inspect()),
         });
       }
       const payload = await requestPayload(request);
@@ -219,25 +261,43 @@ export class EnvironmentDurableObject implements DurableObject {
       if (tag === "CreateEnvironment") {
         const created = await coordinator.create(payload);
         await this.#schedule(created.snapshot);
-        return Response.json({ _tag: "EnvironmentCreated", ...created });
+        const pairingUrl = `${created.pairing.endpoint}#${new URLSearchParams({ token: created.pairing.token }).toString()}`;
+        return Response.json({
+          _tag: "EnvironmentCreated",
+          snapshot: publicSnapshot(created.snapshot),
+          pairingUrl,
+          expiresAt: created.pairing.expiresAt,
+          scopes: created.pairing.scopes,
+        });
       }
       if (tag === "RecoverEnvironment") {
         const recovered = await coordinator.recover(payload);
         await this.#schedule(recovered);
-        return Response.json({ _tag: "EnvironmentRecovered", snapshot: recovered });
+        return Response.json({
+          _tag: "EnvironmentRecovered",
+          snapshot: publicSnapshot(recovered),
+        });
       }
       if (tag === "DestroyEnvironment") {
         const destroyed = await coordinator.destroy(payload);
         await this.#schedule(destroyed);
-        return Response.json({ _tag: "EnvironmentDestroyed", snapshot: destroyed });
+        return Response.json({
+          _tag: "EnvironmentDestroyed",
+          snapshot: publicSnapshot(destroyed),
+        });
       }
       if (tag === "CheckpointEnvironment") {
         const checkpointed = await coordinator.checkpoint();
         await this.#schedule(checkpointed);
-        return Response.json({ _tag: "EnvironmentCheckpointed", snapshot: checkpointed });
+        return Response.json({
+          _tag: "EnvironmentCheckpointed",
+          snapshot: publicSnapshot(checkpointed),
+        });
       }
       throw new InvalidRequestError("Unsupported Environment operation");
     } catch (cause) {
+      const current = await this.#coordinator().coordinator.inspect();
+      if (current !== undefined) await this.#schedule(current);
       return jsonError(cause);
     }
   }
@@ -247,6 +307,34 @@ export class EnvironmentDurableObject implements DurableObject {
     const current = await coordinator.inspect();
     if (current === undefined || current.lifecycle === "Destroyed") return;
     const now = Date.now();
+    if (
+      current.lifecycle === "Ready" &&
+      current.recoveryRetryAt !== null &&
+      current.recoveryRequest !== null &&
+      now >= Date.parse(current.recoveryRetryAt)
+    ) {
+      const recovered = await coordinator
+        .recover(current.recoveryRequest)
+        .catch(async () => (await coordinator.inspect()) ?? current);
+      await this.#schedule(recovered);
+      return;
+    }
+    if (
+      current.lifecycle === "Ready" &&
+      current.checkpointRetryAt !== null &&
+      now >= Date.parse(current.checkpointRetryAt)
+    ) {
+      const checkpointed = await coordinator
+        .checkpoint()
+        .catch(async () => (await coordinator.inspect()) ?? current);
+      await this.#schedule(checkpointed);
+      return;
+    }
+    if (this.#activeConnections > 0 && now < Date.parse(current.expiresAt)) {
+      const active = await coordinator.recordActivity();
+      await this.#schedule(active);
+      return;
+    }
     if (now < Date.parse(current.expiresAt) && now < Date.parse(current.inactivityDeadline)) {
       await this.#schedule(current);
       return;
