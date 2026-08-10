@@ -1,4 +1,11 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
+import * as Schema from "effect/Schema";
+import {
+  NonEmptyStringSchema,
+  ProjectIdSchema,
+  SessionIdSchema,
+  TimestampSchema,
+} from "@work-engine/protocol";
 import {
   MemoryRevisionSchema,
   ProjectMemoryFactSchema,
@@ -6,6 +13,7 @@ import {
   ProjectMemoryProposalSchema,
   ProjectMemoryRevisionSchema,
   decode,
+  encode,
   newId,
   nowIso,
   record,
@@ -13,6 +21,7 @@ import {
   type MemoryRevision,
   type ProjectMemoryFact,
   type ProjectMemoryProposal,
+  type ProjectMemoryProvenance,
   type ProjectMemoryRevision,
 } from "./contract.ts";
 import {
@@ -25,118 +34,139 @@ import {
   ProviderUnavailableError,
 } from "./errors.ts";
 
-interface MemoryRevisionRecord {
-  readonly revision: number;
-  readonly facts: readonly Record<string, unknown>[];
-  readonly acceptedAt: string;
-}
-
-interface MemoryProposalRecord {
-  readonly proposalId: string;
-  readonly expectedRevision: number;
-  readonly claim: string;
-  readonly provenance: Record<string, unknown>;
-  readonly sessionId: string;
-  readonly createdAt: string;
-}
-
-export interface ProjectMemorySnapshot {
-  readonly projectId: string;
-  readonly currentRevision: number;
-  readonly revisions: readonly MemoryRevisionRecord[];
-  readonly proposals: readonly MemoryProposalRecord[];
-}
-
-const clone = (snapshot: ProjectMemorySnapshot): ProjectMemorySnapshot => ({
-  projectId: snapshot.projectId,
-  currentRevision: snapshot.currentRevision,
-  revisions: snapshot.revisions.map((revision) => ({
-    ...revision,
-    facts: revision.facts.map((fact) => ({ ...fact })),
-  })),
-  proposals: snapshot.proposals.map((proposal) => ({
-    ...proposal,
-    provenance: { ...proposal.provenance },
-  })),
+const MemoryRevisionRecordSchema = Schema.Struct({
+  revision: MemoryRevisionSchema,
+  facts: Schema.Array(ProjectMemoryFactSchema),
+  acceptedAt: TimestampSchema,
 });
+type MemoryRevisionRecord = typeof MemoryRevisionRecordSchema.Type;
 
-const initialSnapshot = (projectId: string): ProjectMemorySnapshot => ({
-  projectId,
-  currentRevision: 0,
-  revisions: [{ revision: 0, facts: [], acceptedAt: nowIso() }],
-  proposals: [],
+const MemoryProposalRecordSchema = Schema.Struct({
+  ...ProjectMemoryProposalSchema.fields,
+  sessionId: SessionIdSchema,
+  createdAt: TimestampSchema,
 });
+type MemoryProposalRecord = typeof MemoryProposalRecordSchema.Type;
 
-const revisionValue = (revision: unknown): number => {
-  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
-    throw new InvalidRequestError("memoryRevision must be a non-negative integer");
-  }
-  return revision;
-};
+export const ProjectMemorySnapshotSchema = Schema.Struct({
+  projectId: ProjectIdSchema,
+  currentRevision: MemoryRevisionSchema,
+  revisions: Schema.Array(MemoryRevisionRecordSchema),
+  proposals: Schema.Array(MemoryProposalRecordSchema),
+}).check(
+  Schema.makeFilter((snapshot) => {
+    const first = snapshot.revisions[0];
+    const last = snapshot.revisions[snapshot.revisions.length - 1];
+    if (first === undefined || first.revision !== 0) {
+      return "Project Memory snapshots must start at revision zero";
+    }
+    if (last === undefined || last.revision !== snapshot.currentRevision) {
+      return "Project Memory currentRevision must match the latest revision";
+    }
+    for (const [index, revision] of snapshot.revisions.entries()) {
+      if (revision.revision !== index) return "Project Memory revisions must be contiguous";
+    }
+    if (snapshot.proposals.some((proposal) => proposal.expectedRevision > snapshot.currentRevision)) {
+      return "Project Memory proposals cannot target a future revision";
+    }
+    return true;
+  }),
+);
+export type ProjectMemorySnapshot = typeof ProjectMemorySnapshotSchema.Type;
 
-const makeFact = (claim: string, provenance: Record<string, unknown>): Record<string, unknown> => ({
-  _tag: "ProjectMemoryFact",
-  factId: newId("fact_"),
-  claim,
-  provenance,
-  acceptedAt: nowIso(),
-});
+const clone = (snapshot: ProjectMemorySnapshot): ProjectMemorySnapshot =>
+  decode(ProjectMemorySnapshotSchema, {
+    ...snapshot,
+    revisions: snapshot.revisions.map((revision) => ({
+      ...revision,
+      facts: revision.facts.map((fact) => ({ ...fact })),
+    })),
+    proposals: snapshot.proposals.map((proposal) => ({
+      ...proposal,
+      provenance: { ...proposal.provenance },
+    })),
+  });
+
+const initialSnapshot = (projectId: string): ProjectMemorySnapshot =>
+  decode(ProjectMemorySnapshotSchema, {
+    projectId,
+    currentRevision: 0,
+    revisions: [{ revision: 0, facts: [], acceptedAt: nowIso() }],
+    proposals: [],
+  });
+
+const revisionValue = (revision: unknown): MemoryRevision =>
+  decode(MemoryRevisionSchema, revision);
+
+const makeFact = (
+  claim: string,
+  provenance: ProjectMemoryProvenance,
+): ProjectMemoryFact =>
+  decode(ProjectMemoryFactSchema, {
+    _tag: "ProjectMemoryFact",
+    factId: newId("fact_"),
+    claim,
+    provenance,
+    acceptedAt: nowIso(),
+  });
 
 const makeProposal = (
-  proposalId: string,
-  expectedRevision: number,
+  proposalId: MemoryProposalRecord["proposalId"],
+  expectedRevision: MemoryRevision,
   claim: string,
-  provenance: Record<string, unknown>,
-): Record<string, unknown> => ({
-  _tag: "ProjectMemoryProposal",
-  proposalId,
-  expectedRevision,
-  claim,
-  provenance,
-  proposedAt: nowIso(),
-});
+  provenance: ProjectMemoryProvenance,
+): ProjectMemoryProposal =>
+  decode(ProjectMemoryProposalSchema, {
+    _tag: "ProjectMemoryProposal",
+    proposalId,
+    expectedRevision,
+    claim,
+    provenance,
+    proposedAt: nowIso(),
+  });
 
 const makeRevision = (
-  projectId: string,
-  revision: number,
-  previousRevision: number | undefined,
-  facts: readonly Record<string, unknown>[],
-  acceptedProposalId: string,
-): Record<string, unknown> => {
-  const value: Record<string, unknown> = {
+  projectId: ProjectMemorySnapshot["projectId"],
+  revision: MemoryRevision,
+  previousRevision: MemoryRevision | undefined,
+  facts: readonly ProjectMemoryFact[],
+  acceptedProposalId: MemoryProposalRecord["proposalId"],
+): ProjectMemoryRevision =>
+  decode(ProjectMemoryRevisionSchema, {
     _tag: "ProjectMemoryRevision",
     projectId,
     memoryRevision: revision,
     facts,
     acceptedProposalId,
     acceptedAt: nowIso(),
-  };
-  if (previousRevision !== undefined) value["previousRevision"] = previousRevision;
-  return value;
-};
+    ...(previousRevision === undefined ? {} : { previousRevision }),
+  });
 
 /** Single authority for accepted Project facts. It intentionally has no session identity in reads. */
 export class ProjectMemoryState {
   #snapshot: ProjectMemorySnapshot;
 
   constructor(projectId: string, snapshot?: ProjectMemorySnapshot) {
-    if (projectId.length === 0) throw new InvalidRequestError("projectId cannot be empty");
-    this.#snapshot = snapshot === undefined ? initialSnapshot(projectId) : clone(snapshot);
-    if (this.#snapshot.projectId !== projectId) {
+    const decodedProjectId = decode(ProjectIdSchema, projectId);
+    const decodedSnapshot =
+      snapshot === undefined ? undefined : decode(ProjectMemorySnapshotSchema, snapshot);
+    if (decodedSnapshot !== undefined && decodedSnapshot.projectId !== decodedProjectId) {
       throw new InvalidRequestError("Project Memory snapshot belongs to another project");
     }
+    this.#snapshot =
+      decodedSnapshot === undefined ? initialSnapshot(decodedProjectId) : clone(decodedSnapshot);
   }
 
   get snapshot(): ProjectMemorySnapshot {
     return clone(this.#snapshot);
   }
 
-  get projectId(): string {
+  get projectId(): ProjectMemorySnapshot["projectId"] {
     return this.#snapshot.projectId;
   }
 
   get currentRevision(): MemoryRevision {
-    return this.#snapshot.currentRevision as MemoryRevision;
+    return this.#snapshot.currentRevision;
   }
 
   readContext(atRevision: MemoryRevision, query = ""): readonly ProjectMemoryFact[] {
@@ -144,13 +174,10 @@ export class ProjectMemoryState {
     const revision = this.#snapshot.revisions.find((entry) => entry.revision === requested);
     if (revision === undefined) throw new MemoryRevisionUnavailableError(this.projectId, requested);
     const normalizedQuery = query.trim().toLowerCase();
-    return revision.facts
-      .filter((fact) => {
-        if (normalizedQuery.length === 0) return true;
-        const claim = typeof fact["claim"] === "string" ? fact["claim"].toLowerCase() : "";
-        return claim.includes(normalizedQuery);
-      })
-      .map((fact) => decode(ProjectMemoryFactSchema, fact));
+    return revision.facts.filter(
+      (fact) =>
+        normalizedQuery.length === 0 || fact.claim.toLowerCase().includes(normalizedQuery),
+    );
   }
 
   proposeMemory(
@@ -159,33 +186,33 @@ export class ProjectMemoryState {
     claim: string,
     provenance: unknown,
   ): ProjectMemoryProposal {
-    if (sessionId.length === 0) throw new InvalidRequestError("sessionId cannot be empty");
-    if (claim.trim().length === 0) throw new InvalidRequestError("claim cannot be empty");
+    const decodedSessionId = decode(SessionIdSchema, sessionId);
+    const decodedClaim = decode(NonEmptyStringSchema, claim);
     const expected = revisionValue(expectedRevision);
     if (expected > this.#snapshot.currentRevision) {
       throw new MemoryRevisionUnavailableError(this.projectId, expected);
     }
     const decodedProvenance = decode(ProjectMemoryProvenanceSchema, provenance);
-    const proposal: MemoryProposalRecord = {
+    const proposal = decode(MemoryProposalRecordSchema, {
+      _tag: "ProjectMemoryProposal",
       proposalId: newId("mpp_"),
       expectedRevision: expected,
-      claim,
-      provenance: record(decodedProvenance),
-      sessionId,
+      claim: decodedClaim,
+      provenance: decodedProvenance,
+      proposedAt: nowIso(),
+      sessionId: decodedSessionId,
       createdAt: nowIso(),
-    };
-    this.#snapshot = {
+    });
+    const nextSnapshot = decode(ProjectMemorySnapshotSchema, {
       ...this.#snapshot,
       proposals: [...this.#snapshot.proposals, proposal],
-    };
-    return decode(
-      ProjectMemoryProposalSchema,
-      makeProposal(
-        proposal.proposalId,
-        proposal.expectedRevision,
-        proposal.claim,
-        proposal.provenance,
-      ),
+    });
+    this.#snapshot = nextSnapshot;
+    return makeProposal(
+      proposal.proposalId,
+      proposal.expectedRevision,
+      proposal.claim,
+      proposal.provenance,
     );
   }
 
@@ -196,30 +223,30 @@ export class ProjectMemoryState {
     if (expected !== this.#snapshot.currentRevision || proposal.expectedRevision !== expected) {
       throw new MemoryRevisionMismatchError(expected, this.#snapshot.currentRevision);
     }
-    const nextRevision = this.#snapshot.currentRevision + 1;
+    const nextRevision = decode(MemoryRevisionSchema, this.#snapshot.currentRevision + 1);
     const fact = makeFact(proposal.claim, proposal.provenance);
     const prior = this.#snapshot.revisions[this.#snapshot.revisions.length - 1];
     const nextFacts = [...(prior?.facts ?? []), fact];
-    const nextRevisionRecord: MemoryRevisionRecord = {
+    const nextRevisionRecord = decode(MemoryRevisionRecordSchema, {
       revision: nextRevision,
       facts: nextFacts,
       acceptedAt: nowIso(),
-    };
-    this.#snapshot = {
+    });
+    const previousRevision =
+      nextRevision > 0 ? decode(MemoryRevisionSchema, nextRevision - 1) : undefined;
+    const nextSnapshot = decode(ProjectMemorySnapshotSchema, {
       ...this.#snapshot,
       currentRevision: nextRevision,
       revisions: [...this.#snapshot.revisions, nextRevisionRecord],
       proposals: this.#snapshot.proposals.filter((entry) => entry.proposalId !== proposalId),
-    };
-    return decode(
-      ProjectMemoryRevisionSchema,
-      makeRevision(
-        this.projectId,
-        nextRevision,
-        this.#snapshot.revisions.length > 1 ? nextRevision - 1 : undefined,
-        nextFacts,
-        proposal.proposalId,
-      ),
+    });
+    this.#snapshot = nextSnapshot;
+    return makeRevision(
+      this.projectId,
+      nextRevision,
+      previousRevision,
+      nextFacts,
+      proposal.proposalId,
     );
   }
 }
@@ -239,12 +266,13 @@ export class DurableObjectProjectMemoryStore implements ProjectMemoryStore {
   }
 
   async load(): Promise<ProjectMemorySnapshot | undefined> {
-    const snapshot = await this.#state.storage.get<ProjectMemorySnapshot>("memory");
-    return snapshot === undefined ? undefined : clone(snapshot);
+    const stored: unknown = await this.#state.storage.get("memory");
+    return stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
   }
 
   async save(snapshot: ProjectMemorySnapshot): Promise<void> {
-    await this.#state.storage.put("memory", clone(snapshot));
+    const decoded = decode(ProjectMemorySnapshotSchema, snapshot);
+    await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, decoded));
   }
 
   get projectId(): string {
@@ -267,18 +295,22 @@ export class ProjectMemoryDurableObject implements DurableObject {
   }
 
   async #load(projectId: string): Promise<ProjectMemoryState> {
+    const decodedProjectId = decode(ProjectIdSchema, projectId);
     if (this.#memory !== undefined) {
-      if (this.#memory.projectId !== projectId) throw new MemoryUnauthorizedError();
+      if (this.#memory.projectId !== decodedProjectId) throw new MemoryUnauthorizedError();
       return this.#memory;
     }
-    const snapshot = await this.#state.storage.get<ProjectMemorySnapshot>("memory");
-    this.#memory = new ProjectMemoryState(projectId, snapshot);
+    const stored: unknown = await this.#state.storage.get("memory");
+    const snapshot =
+      stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
+    this.#memory = new ProjectMemoryState(decodedProjectId, snapshot);
     return this.#memory;
   }
 
   async #save(memory: ProjectMemoryState): Promise<void> {
+    const snapshot = decode(ProjectMemorySnapshotSchema, memory.snapshot);
+    await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, snapshot));
     this.#memory = memory;
-    await this.#state.storage.put("memory", memory.snapshot);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -291,7 +323,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
       const body = payload === undefined ? {} : record(payload);
       if (url.pathname.endsWith("/read")) {
         const facts = memory.readContext(
-          MemoryRevisionSchema.make(revisionValue(body["atRevision"])),
+          revisionValue(body["atRevision"]),
           typeof body["query"] === "string" ? body["query"] : "",
         );
         return Response.json({ _tag: "ProjectMemoryRead", facts });
@@ -299,13 +331,14 @@ export class ProjectMemoryDurableObject implements DurableObject {
       if (url.pathname.endsWith("/propose")) {
         const sessionId = request.headers.get("X-Cloud-Task-Session");
         if (sessionId === null || sessionId.length === 0) throw new MemoryUnauthorizedError();
-        const proposal = memory.proposeMemory(
+        const nextMemory = new ProjectMemoryState(projectId, memory.snapshot);
+        const proposal = nextMemory.proposeMemory(
           sessionId,
-          MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
+          revisionValue(body["expectedRevision"]),
           requiredString(body["claim"], "claim"),
           body["provenance"],
         );
-        await this.#save(memory);
+        await this.#save(nextMemory);
         return Response.json(proposal);
       }
       if (url.pathname.endsWith("/accept")) {
@@ -317,11 +350,12 @@ export class ProjectMemoryDurableObject implements DurableObject {
         ) {
           throw new MemoryUnauthorizedError();
         }
-        const revision = memory.acceptMemory(
+        const nextMemory = new ProjectMemoryState(projectId, memory.snapshot);
+        const revision = nextMemory.acceptMemory(
           requiredString(body["proposalId"], "proposalId"),
-          MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
+          revisionValue(body["expectedRevision"]),
         );
-        await this.#save(memory);
+        await this.#save(nextMemory);
         return Response.json(revision);
       }
       return Response.json(

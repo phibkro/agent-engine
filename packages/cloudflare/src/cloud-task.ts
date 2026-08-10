@@ -1,12 +1,17 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
+import type { Json } from "effect/Schema";
+import type {
+  CloudTaskRequest,
+  CloudTaskResponse,
+} from "@work-engine/protocol";
 import {
   CloudTaskRequestSchema,
   CloudTaskResponseSchema,
   CloudTaskSchema,
   decode,
+  encode,
   json,
   record,
-  requiredString,
   type CloudTask,
   type SessionId,
 } from "./contract.ts";
@@ -24,7 +29,7 @@ import {
   UnauthorizedError,
 } from "./errors.ts";
 import { resolveCatalogProfile } from "./profiles.ts";
-import { SessionState, type SessionSnapshot } from "./session.ts";
+import { SessionSnapshotSchema, SessionState, decodeSessionSnapshot } from "./session.ts";
 
 export interface CloudTaskCaller {
   readonly callerId: string;
@@ -64,32 +69,22 @@ const authToken = (request: Request): string | undefined => {
     : undefined;
 };
 
-const wireTag = (payload: Record<string, unknown>): string => {
-  const tag = payload["_tag"] ?? payload["operation"];
-  if (typeof tag !== "string") throw new InvalidRequestError("Cloud-task request tag is required");
-  return tag;
-};
+const wireTag = (payload: CloudTaskRequest): CloudTaskRequest["_tag"] => payload._tag;
 
-const payloadBody = async (request: Request): Promise<Record<string, unknown>> => {
+const payloadBody = async (request: Request): Promise<CloudTaskRequest> => {
   const value: unknown = await request.json();
-  const decoded = decode(CloudTaskRequestSchema, value);
-  return record(decoded);
+  return decode(CloudTaskRequestSchema, value);
 };
 
-const taskFromPayload = (payload: Record<string, unknown>): CloudTask => {
-  const task = payload["task"] ?? payload;
-  return decode(CloudTaskSchema, task);
-};
+const taskFromPayload = (
+  payload: Extract<CloudTaskRequest, { readonly _tag: "Spawn" }>,
+): CloudTask => payload.task;
 
-const sessionIdFromPayload = (payload: Record<string, unknown>, task?: CloudTask): string => {
-  const sessionId = requiredString(payload["sessionId"], "sessionId");
-  if (
-    task !== undefined &&
-    sessionId !== requiredString(record(task)["sessionId"], "task.sessionId")
-  ) {
+const sessionIdFromPayload = (payload: CloudTaskRequest, task?: CloudTask): SessionId => {
+  if (task !== undefined && payload.sessionId !== task.sessionId) {
     throw new InvalidRequestError("payload.sessionId must equal task.sessionId");
   }
-  return sessionId;
+  return payload.sessionId;
 };
 
 /** One Session DO owns private lifecycle, cursor, messages, cancellation, and terminal result. */
@@ -111,14 +106,18 @@ export class SessionDurableObject implements DurableObject {
   }
 
   async #load(task?: CloudTask): Promise<SessionState> {
-    const existing = await this.#state.storage.get<SessionSnapshot>("session");
-    if (existing !== undefined) return new SessionState(existing.task as CloudTask, existing);
+    const stored: unknown = await this.#state.storage.get("session");
+    if (stored !== undefined) {
+      const existing = decodeSessionSnapshot(stored);
+      return new SessionState(existing.task, existing);
+    }
     if (task === undefined) throw new SessionNotFoundError(this.#state.id.toString());
     return new SessionState(task);
   }
 
   async #save(session: SessionState): Promise<void> {
-    await this.#state.storage.put("session", session.snapshot);
+    const snapshot = session.snapshot;
+    await this.#state.storage.put("session", encode(SessionSnapshotSchema, snapshot));
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -126,42 +125,37 @@ export class SessionDurableObject implements DurableObject {
       await this.#authorized(request);
       const payload = await payloadBody(request);
       const tag = wireTag(payload);
-      const task = tag === "Spawn" ? taskFromPayload(payload) : undefined;
+      const task = payload._tag === "Spawn" ? taskFromPayload(payload) : undefined;
       if (task !== undefined) {
-        const deadline = requiredString(record(task)["deadline"], "task.deadline");
-        if (Date.parse(deadline) <= Date.now()) {
+        if (Date.parse(task.deadline) <= Date.now()) {
           throw new InvalidRequestError("CloudTask deadline has expired");
         }
         await resolveCatalogProfile(this.#env.PROFILE_CATALOG, task);
       }
       const session = await this.#load(task);
-      if (tag === "Spawn") {
-        const admission = session.spawn(task as CloudTask);
+      if (payload._tag === "Spawn") {
+        if (task === undefined) throw new InvalidRequestError("Spawn task is required");
+        const admission = session.spawn(task);
         await this.#save(session);
         return Response.json({ _tag: "Spawned", admission });
       }
       const sessionId = sessionIdFromPayload(payload);
       if (sessionId !== session.sessionId) throw new UnauthorizedError("Session address mismatch");
-      if (tag === "Send") {
-        const messageId = requiredString(payload["messageId"], "messageId");
-        const message = payload["message"];
-        if (message === undefined) throw new InvalidRequestError("message is required");
-        const acceptedCursor = session.send(messageId, String(message));
+      if (payload._tag === "Send") {
+        const acceptedCursor = session.send(payload.messageId, payload.message);
         await this.#save(session);
         return Response.json({ _tag: "Accepted", acceptedCursor });
       }
-      if (tag === "Observe") {
-        const afterCursor = payload["afterCursor"] === undefined ? 0 : payload["afterCursor"];
-        const observations = session.observe(Number(afterCursor));
+      if (payload._tag === "Observe") {
+        const observations = session.observe(payload.afterCursor);
         return Response.json({ _tag: "Observed", observations });
       }
-      if (tag === "Cancel") {
-        const reason = requiredString(payload["reason"], "reason");
-        const observation = session.requestCancellation(reason);
+      if (payload._tag === "Cancel") {
+        const observation = session.requestCancellation(payload.reason);
         await this.#save(session);
         return Response.json({ _tag: "Cancelled", observation });
       }
-      if (tag === "Result") {
+      if (payload._tag === "Result") {
         return Response.json({
           _tag: "Result",
           result: session.terminalResult ?? { _tag: "Pending", sessionId },
@@ -209,7 +203,7 @@ export class CloudTaskRouter {
 
   async #forward(
     request: Request,
-    body: Record<string, unknown>,
+    body: CloudTaskRequest,
     sessionId: string,
   ): Promise<Response> {
     const stub = this.#namespace().getByName(sessionId);
@@ -229,7 +223,7 @@ export class CloudTaskRouter {
       this.#authenticate(request);
       const payload = await payloadBody(request);
       const tag = wireTag(payload);
-      const task = tag === "Spawn" ? taskFromPayload(payload) : undefined;
+      const task = payload._tag === "Spawn" ? taskFromPayload(payload) : undefined;
       const sessionId = sessionIdFromPayload(payload, task);
       const response = await this.#forward(request, payload, sessionId);
       const body: unknown = await response.json();
@@ -252,7 +246,7 @@ export class CloudflareCloudTaskClient {
     this.#token = token;
   }
 
-  async #request(payload: Record<string, unknown>): Promise<unknown> {
+  async #request(payload: CloudTaskRequest): Promise<CloudTaskResponse> {
     if (this.#binding === undefined)
       throw new ProviderUnavailableError("Cloud-task service binding");
     if (this.#token === undefined)
@@ -290,27 +284,35 @@ export class CloudflareCloudTaskClient {
     return decode(CloudTaskResponseSchema, body);
   }
 
-  spawn(sessionId: SessionId, task: CloudTask): Promise<unknown> {
+  spawn(sessionId: SessionId, task: CloudTask): Promise<CloudTaskResponse> {
     const value = decode(CloudTaskSchema, task);
-    if (record(value)["sessionId"] !== sessionId)
+    if (value.sessionId !== sessionId)
       throw new InvalidRequestError("sessionId does not match CloudTask");
-    return this.#request({ _tag: "Spawn", sessionId, task: value });
+    return this.#request(
+      decode(CloudTaskRequestSchema, { _tag: "Spawn", sessionId, task: value }),
+    );
   }
 
-  send(sessionId: SessionId, messageId: string, message: unknown): Promise<unknown> {
-    return this.#request({ _tag: "Send", sessionId, messageId, message });
+  send(sessionId: SessionId, messageId: string, message: Json): Promise<CloudTaskResponse> {
+    return this.#request(
+      decode(CloudTaskRequestSchema, { _tag: "Send", sessionId, messageId, message }),
+    );
   }
 
-  observe(sessionId: SessionId, afterCursor: number): Promise<unknown> {
-    return this.#request({ _tag: "Observe", sessionId, afterCursor });
+  observe(sessionId: SessionId, afterCursor: number): Promise<CloudTaskResponse> {
+    return this.#request(
+      decode(CloudTaskRequestSchema, { _tag: "Observe", sessionId, afterCursor }),
+    );
   }
 
-  cancel(sessionId: SessionId, reason: string): Promise<unknown> {
-    return this.#request({ _tag: "Cancel", sessionId, reason });
+  cancel(sessionId: SessionId, reason: string): Promise<CloudTaskResponse> {
+    return this.#request(
+      decode(CloudTaskRequestSchema, { _tag: "Cancel", sessionId, reason }),
+    );
   }
 
-  result(sessionId: SessionId): Promise<unknown> {
-    return this.#request({ _tag: "Result", sessionId });
+  result(sessionId: SessionId): Promise<CloudTaskResponse> {
+    return this.#request(decode(CloudTaskRequestSchema, { _tag: "Result", sessionId }));
   }
 }
 
@@ -329,43 +331,42 @@ export class InMemoryCloudTaskDirectory {
       if (presented !== this.#token) throw new UnauthorizedError();
       const payload = await payloadBody(request);
       const tag = wireTag(payload);
-      const task = tag === "Spawn" ? taskFromPayload(payload) : undefined;
+      const task = payload._tag === "Spawn" ? taskFromPayload(payload) : undefined;
       const sessionId = sessionIdFromPayload(payload, task);
-      if (tag === "Spawn") {
+      if (payload._tag === "Spawn") {
+        if (task === undefined) throw new InvalidRequestError("Spawn task is required");
         const existing = this.#sessions.get(sessionId);
-        const session = existing ?? new SessionState(task as CloudTask);
-        const admission = session.spawn(task as CloudTask);
+        const session = existing ?? new SessionState(task);
+        const admission = session.spawn(task);
         this.#sessions.set(sessionId, session);
         return Response.json({ _tag: "Spawned", admission });
       }
       const session = this.#sessions.get(sessionId);
       if (session === undefined) throw new SessionNotFoundError(sessionId);
-      if (tag === "Send") {
-        const message = payload["message"];
-        if (message === undefined) throw new InvalidRequestError("message is required");
+      if (payload._tag === "Send") {
         return Response.json({
           _tag: "Accepted",
-          acceptedCursor: session.send(
-            requiredString(payload["messageId"], "messageId"),
-            String(message),
-          ),
+          acceptedCursor: session.send(payload.messageId, payload.message),
         });
       }
-      if (tag === "Observe")
+      if (payload._tag === "Observe") {
         return Response.json({
           _tag: "Observed",
-          observations: session.observe(Number(payload["afterCursor"] ?? 0)),
+          observations: session.observe(payload.afterCursor),
         });
-      if (tag === "Cancel")
+      }
+      if (payload._tag === "Cancel") {
         return Response.json({
           _tag: "Cancelled",
-          observation: session.requestCancellation(requiredString(payload["reason"], "reason")),
+          observation: session.requestCancellation(payload.reason),
         });
-      if (tag === "Result")
+      }
+      if (payload._tag === "Result") {
         return Response.json({
           _tag: "Result",
           result: session.terminalResult ?? { _tag: "Pending", sessionId },
         });
+      }
       throw new InvalidRequestError(`Unsupported cloud-task operation ${tag}`);
     } catch (cause) {
       return errorResponse(cause);

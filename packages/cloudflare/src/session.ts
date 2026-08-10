@@ -1,3 +1,13 @@
+import * as Schema from "effect/Schema";
+import type { Json } from "effect/Schema";
+import {
+  CommitShaSchema,
+  NonEmptyStringSchema,
+  SessionCompletedResultSchema,
+  SessionStateSchema,
+  TimestampSchema,
+  type SessionState as ProtocolSessionState,
+} from "@work-engine/protocol";
 import {
   CloudTaskSchema,
   SessionAdmissionSchema,
@@ -6,8 +16,6 @@ import {
   decode,
   newId,
   nowIso,
-  record,
-  requiredString,
   type CloudTask,
   type SessionAdmission,
   type SessionId,
@@ -16,50 +24,94 @@ import {
 } from "./contract.ts";
 import { InvalidRequestError, SessionConflictError, SessionTerminalError } from "./errors.ts";
 
-export type SessionLifecycle =
-  | "admitted"
-  | "running"
-  | "cancellation_requested"
-  | "cancelled"
-  | "failed"
-  | "completed";
+const SessionLifecycleSchema = Schema.Literals([
+  "admitted",
+  "running",
+  "cancellation_requested",
+  "cancelled",
+  "failed",
+  "completed",
+] as const);
 
+export type SessionLifecycle = typeof SessionLifecycleSchema.Type;
 export type SessionTerminalLifecycle = "cancelled" | "failed" | "completed";
 
-export interface SessionSideEffect {
-  readonly kind: "checkpoint" | "candidate" | "sandbox_terminated" | "sandbox_replaced";
-  readonly at: string;
-  readonly details: Readonly<Record<string, unknown>>;
-}
+const SessionSideEffectSchema = Schema.Struct({
+  kind: Schema.Literals([
+    "checkpoint",
+    "candidate",
+    "sandbox_terminated",
+    "sandbox_replaced",
+  ] as const),
+  at: TimestampSchema,
+  details: Schema.Record(Schema.String, Schema.Json),
+});
+export type SessionSideEffect = typeof SessionSideEffectSchema.Type;
 
-export interface SessionSnapshot {
-  readonly task: Record<string, unknown>;
-  readonly admission: Record<string, unknown>;
-  readonly status: SessionLifecycle;
-  readonly cursor: number;
-  readonly observations: readonly Record<string, unknown>[];
-  readonly acceptedMessages: Readonly<Record<string, number>>;
-  readonly terminalResult?: Record<string, unknown>;
-  readonly cancellationReason?: string;
-  readonly sideEffects: readonly SessionSideEffect[];
-  readonly liveSandboxId?: string;
-  readonly predecessorSandboxIds: readonly string[];
-  readonly wipCommit?: string;
-  readonly candidateCommit?: string;
-}
+const terminal = (status: SessionLifecycle): status is SessionTerminalLifecycle =>
+  status === "cancelled" || status === "failed" || status === "completed";
+
+const terminalResultTag = (
+  status: SessionLifecycle,
+): SessionResult["_tag"] | undefined => {
+  if (status === "cancelled") return "Cancelled";
+  if (status === "failed") return "Failed";
+  if (status === "completed") return "Completed";
+  return undefined;
+};
+
+const SessionSnapshotBaseSchema = Schema.Struct({
+  task: CloudTaskSchema,
+  admission: SessionAdmissionSchema,
+  status: SessionLifecycleSchema,
+  cursor: Schema.Natural,
+  observations: Schema.Array(SessionObservationSchema),
+  acceptedMessages: Schema.Record(Schema.String, Schema.Natural),
+  terminalResult: Schema.optionalKey(SessionResultSchema),
+  cancellationReason: Schema.optionalKey(NonEmptyStringSchema),
+  sideEffects: Schema.Array(SessionSideEffectSchema),
+  liveSandboxId: Schema.optionalKey(NonEmptyStringSchema),
+  predecessorSandboxIds: Schema.Array(NonEmptyStringSchema),
+  wipCommit: Schema.optionalKey(CommitShaSchema),
+  candidateCommit: Schema.optionalKey(CommitShaSchema),
+});
+
+export const SessionSnapshotSchema = SessionSnapshotBaseSchema.check(
+  Schema.makeFilter((snapshot) => {
+    if (snapshot.task.sessionId !== snapshot.admission.sessionId) {
+      return "task and admission session identities must match";
+    }
+    if (
+      snapshot.terminalResult !== undefined &&
+      snapshot.terminalResult.sessionId !== snapshot.task.sessionId
+    ) {
+      return "terminal result session identity must match the task";
+    }
+    if (terminal(snapshot.status) !== (snapshot.terminalResult !== undefined)) {
+      return "terminal status and terminal result must agree";
+    }
+    const expectedTag = terminalResultTag(snapshot.status);
+    if (
+      expectedTag !== undefined &&
+      snapshot.terminalResult !== undefined &&
+      snapshot.terminalResult._tag !== expectedTag
+    ) {
+      return "terminal status and result tag must agree";
+    }
+    if ((snapshot.status === "cancelled") !== (snapshot.cancellationReason !== undefined)) {
+      return "cancellation reason must match cancelled status";
+    }
+    return true;
+  }),
+);
+export type SessionSnapshot = typeof SessionSnapshotSchema.Type;
 
 export interface SessionStore {
   load(sessionId: string): Promise<SessionSnapshot | undefined>;
   save(snapshot: SessionSnapshot): Promise<void>;
 }
 
-const terminal = (status: SessionLifecycle): status is SessionTerminalLifecycle =>
-  status === "cancelled" || status === "failed" || status === "completed";
-
-const taskKey = (task: CloudTask): string => {
-  const value = record(task);
-  return `${requiredString(value["taskId"], "task.taskId")}\u0000${requiredString(value["profileDigest"], "task.profileDigest")}`;
-};
+const taskKey = (task: CloudTask): string => `${task.taskId}\u0000${task.profileDigest}`;
 
 const cloneSnapshot = (snapshot: SessionSnapshot): SessionSnapshot => ({
   ...snapshot,
@@ -74,88 +126,110 @@ const cloneSnapshot = (snapshot: SessionSnapshot): SessionSnapshot => ({
   predecessorSandboxIds: [...snapshot.predecessorSandboxIds],
 });
 
+interface ObservationDetails {
+  readonly at?: string;
+  readonly startedAt?: string;
+  readonly reason?: string;
+  readonly messageId?: string;
+  readonly message?: Json;
+  readonly event?: Json;
+}
+
 const sessionState = (
-  sessionId: string,
+  sessionId: SessionSnapshot["task"]["sessionId"],
   cursor: number,
   status: SessionLifecycle,
-  details: Readonly<Record<string, unknown>>,
-): Record<string, unknown> => {
-  if (status === "admitted") return { _tag: "Pending", sessionId, cursor };
-  if (status === "running" || status === "cancellation_requested") {
-    return { _tag: "Running", sessionId, cursor, startedAt: details["startedAt"] ?? nowIso() };
+  details: ObservationDetails,
+): ProtocolSessionState => {
+  if (status === "admitted") {
+    return decode(SessionStateSchema, { _tag: "Pending", sessionId, cursor });
   }
-  if (status === "cancelled")
-    return {
+  if (status === "running" || status === "cancellation_requested") {
+    return decode(SessionStateSchema, {
+      _tag: "Running",
+      sessionId,
+      cursor,
+      startedAt: details.startedAt ?? nowIso(),
+    });
+  }
+  if (status === "cancelled") {
+    return decode(SessionStateSchema, {
       _tag: "Cancelled",
       sessionId,
       cursor,
-      cancelledAt: details["at"] ?? nowIso(),
-      reason: details["reason"],
-    };
-  if (status === "failed")
-    return {
+      cancelledAt: details.at ?? nowIso(),
+      reason: details.reason ?? "Session cancelled",
+    });
+  }
+  if (status === "failed") {
+    return decode(SessionStateSchema, {
       _tag: "Failed",
       sessionId,
       cursor,
-      failedAt: details["at"] ?? nowIso(),
-      reason: details["reason"],
-    };
-  if (status === "completed")
-    return { _tag: "Completed", sessionId, cursor, completedAt: details["at"] ?? nowIso() };
-  return { _tag: "Pending", sessionId, cursor };
+      failedAt: details.at ?? nowIso(),
+      reason: details.reason ?? "Session failed",
+    });
+  }
+  return decode(SessionStateSchema, {
+    _tag: "Completed",
+    sessionId,
+    cursor,
+    completedAt: details.at ?? nowIso(),
+  });
 };
 
 const observation = (
-  sessionId: string,
+  sessionId: SessionSnapshot["task"]["sessionId"],
   cursor: number,
   status: SessionLifecycle,
-  details: Readonly<Record<string, unknown>> = {},
-): Record<string, unknown> => {
-  const next: Record<string, unknown> = {
+  details: ObservationDetails = {},
+): SessionObservation =>
+  decode(SessionObservationSchema, {
     _tag: "SessionObservation",
     sessionId,
     cursor,
     observedAt: nowIso(),
     state: sessionState(sessionId, cursor, status, details),
-  };
-  if (typeof details["messageId"] === "string") next["messageId"] = details["messageId"];
-  if (details["message"] !== undefined) next["message"] = details["message"];
-  if (details["event"] !== undefined) next["event"] = details["event"];
-  return next;
-};
+    ...(details.messageId === undefined ? {} : { messageId: details.messageId }),
+    ...(details.message === undefined ? {} : { message: details.message }),
+    ...(details.event === undefined ? {} : { event: details.event }),
+  });
 
-const admission = (task: CloudTask): Record<string, unknown> => {
-  const value = record(task);
-  const next: Record<string, unknown> = {
+const admission = (task: CloudTask): SessionAdmission =>
+  decode(SessionAdmissionSchema, {
     _tag: "SessionAdmission",
-    sessionId: requiredString(value["sessionId"], "task.sessionId"),
-    taskId: requiredString(value["taskId"], "task.taskId"),
-    projectId: requiredString(value["projectId"], "task.projectId"),
-    profileId: requiredString(value["profileId"], "task.profileId"),
-    profileRevision: value["profileRevision"],
-    profileDigest: requiredString(value["profileDigest"], "task.profileDigest"),
-    baseCommit: requiredString(value["baseCommit"], "task.baseCommit"),
+    sessionId: task.sessionId,
+    taskId: task.taskId,
+    projectId: task.projectId,
+    profileId: task.profileId,
+    profileRevision: task.profileRevision,
+    profileDigest: task.profileDigest,
+    baseCommit: task.baseCommit,
     acceptedCursor: 0,
     admittedAt: nowIso(),
-  };
-  if (value["memoryRevision"] !== undefined) next["memoryRevision"] = value["memoryRevision"];
-  return next;
-};
+    ...(task.memoryRevision === undefined ? {} : { memoryRevision: task.memoryRevision }),
+  });
 
 const result = (
-  sessionId: string,
+  sessionId: SessionSnapshot["task"]["sessionId"],
   status: "pending" | "failed" | "cancelled",
   reason?: string,
-): Record<string, unknown> => {
-  if (status === "pending") return { _tag: "Pending", sessionId };
-  if (status === "failed")
-    return { _tag: "Failed", sessionId, reason: reason ?? "Session failed", completedAt: nowIso() };
-  return {
+): SessionResult => {
+  if (status === "pending") return decode(SessionResultSchema, { _tag: "Pending", sessionId });
+  if (status === "failed") {
+    return decode(SessionResultSchema, {
+      _tag: "Failed",
+      sessionId,
+      reason: reason ?? "Session failed",
+      completedAt: nowIso(),
+    });
+  }
+  return decode(SessionResultSchema, {
     _tag: "Cancelled",
     sessionId,
     reason: reason ?? "Session cancelled",
     completedAt: nowIso(),
-  };
+  });
 };
 
 /** Pure lifecycle owner used by the Session Durable Object and focused tests. */
@@ -164,19 +238,18 @@ export class SessionState {
 
   constructor(task: CloudTask, existing?: SessionSnapshot) {
     const decoded = decode(CloudTaskSchema, task);
-    const taskRecord = record(decoded);
-    const sessionId = requiredString(taskRecord["sessionId"], "task.sessionId");
-    if (existing !== undefined) {
-      if (requiredString(existing.task["sessionId"], "snapshot.task.sessionId") !== sessionId) {
+    const snapshot = existing === undefined ? undefined : decode(SessionSnapshotSchema, existing);
+    if (snapshot !== undefined) {
+      if (snapshot.task.sessionId !== decoded.sessionId) {
         throw new SessionConflictError(
           "Persisted Session identity does not match the requested identity",
         );
       }
-      this.#snapshot = cloneSnapshot(existing);
+      this.#snapshot = cloneSnapshot(snapshot);
       return;
     }
-    this.#snapshot = {
-      task: { ...taskRecord },
+    this.#snapshot = decode(SessionSnapshotSchema, {
+      task: decoded,
       admission: admission(decoded),
       status: "admitted",
       cursor: 0,
@@ -184,15 +257,15 @@ export class SessionState {
       acceptedMessages: {},
       sideEffects: [],
       predecessorSandboxIds: [],
-    };
+    });
   }
 
   get snapshot(): SessionSnapshot {
     return cloneSnapshot(this.#snapshot);
   }
 
-  get sessionId(): string {
-    return requiredString(this.#snapshot.task["sessionId"], "task.sessionId");
+  get sessionId(): SessionId {
+    return this.#snapshot.task.sessionId;
   }
 
   get status(): SessionLifecycle {
@@ -200,29 +273,29 @@ export class SessionState {
   }
 
   get terminalResult(): SessionResult | undefined {
-    return this.#snapshot.terminalResult as SessionResult | undefined;
+    return this.#snapshot.terminalResult;
   }
 
   admission(): SessionAdmission {
-    return this.#snapshot.admission as SessionAdmission;
+    return this.#snapshot.admission;
   }
 
   spawn(existingTask: CloudTask): SessionAdmission {
     const incoming = decode(CloudTaskSchema, existingTask);
-    if (taskKey(incoming) !== taskKey(this.#snapshot.task as CloudTask)) {
+    if (taskKey(incoming) !== taskKey(this.#snapshot.task)) {
       throw new SessionConflictError("sessionId is already admitted for a different task");
     }
     return this.admission();
   }
 
-  #append(status: SessionLifecycle, details: Readonly<Record<string, unknown>> = {}): void {
+  #append(status: SessionLifecycle, details: ObservationDetails = {}): void {
     const cursor = this.#snapshot.cursor + 1;
     this.#snapshot = {
       ...this.#snapshot,
       cursor,
       observations: [
         ...this.#snapshot.observations,
-        observation(this.sessionId, cursor, status, details),
+        observation(this.#snapshot.task.sessionId, cursor, status, details),
       ],
     };
   }
@@ -234,9 +307,10 @@ export class SessionState {
     this.#append("running");
   }
 
-  send(messageId: string, message: string): number {
-    if (messageId.length === 0 || message.length === 0)
+  send(messageId: string, message: Json): number {
+    if (messageId.length === 0 || (typeof message === "string" && message.length === 0)) {
       throw new InvalidRequestError("Message cannot be empty");
+    }
     const prior = this.#snapshot.acceptedMessages[messageId];
     if (prior !== undefined) return prior;
     if (terminal(this.#snapshot.status))
@@ -259,59 +333,75 @@ export class SessionState {
     if (!Number.isSafeInteger(afterCursor) || afterCursor < 0) {
       throw new InvalidRequestError("afterCursor must be a non-negative integer");
     }
-    return this.#snapshot.observations
-      .filter((entry) => Number(entry["cursor"]) > afterCursor)
-      .map((entry) => entry as SessionObservation);
+    return this.#snapshot.observations.filter((entry) => entry.cursor > afterCursor);
   }
 
   requestCancellation(reason: string): SessionObservation {
-    if (reason.length === 0) throw new InvalidRequestError("Cancellation reason cannot be empty");
+    const decodedReason = decode(NonEmptyStringSchema, reason);
     if (terminal(this.#snapshot.status)) {
       const existing = this.#snapshot.observations[this.#snapshot.observations.length - 1];
-      if (existing !== undefined) return existing as SessionObservation;
+      if (existing !== undefined) return existing;
       throw new SessionTerminalError();
     }
-    this.#snapshot = { ...this.#snapshot, status: "cancelled", cancellationReason: reason };
-    this.#append("cancelled", { reason, at: nowIso() });
     this.#snapshot = {
       ...this.#snapshot,
-      terminalResult: result(this.sessionId, "cancelled", reason),
+      status: "cancelled",
+      cancellationReason: decodedReason,
     };
-    return this.#snapshot.observations[
-      this.#snapshot.observations.length - 1
-    ] as SessionObservation;
+    this.#append("cancelled", { reason: decodedReason, at: nowIso() });
+    this.#snapshot = {
+      ...this.#snapshot,
+      terminalResult: result(this.sessionId, "cancelled", decodedReason),
+    };
+    const observation = this.#snapshot.observations[this.#snapshot.observations.length - 1];
+    if (observation === undefined) throw new SessionTerminalError();
+    return observation;
   }
 
   fail(reason: string): SessionResult {
-    if (terminal(this.#snapshot.status)) return this.#snapshot.terminalResult as SessionResult;
+    if (terminal(this.#snapshot.status)) {
+      const existing = this.#snapshot.terminalResult;
+      if (existing !== undefined) return existing;
+      throw new SessionTerminalError();
+    }
+    if (reason.length === 0) throw new InvalidRequestError("Failure reason cannot be empty");
+    const nextResult = result(this.#snapshot.task.sessionId, "failed", reason);
     this.#snapshot = { ...this.#snapshot, status: "failed" };
     this.#append("failed", { reason, at: nowIso() });
-    const nextResult = result(this.sessionId, "failed", reason);
     this.#snapshot = { ...this.#snapshot, terminalResult: nextResult };
-    return nextResult as SessionResult;
+    return nextResult;
   }
 
-  complete(completedResult: Record<string, unknown>): SessionResult {
-    if (this.#snapshot.status === "cancelled")
-      return this.#snapshot.terminalResult as SessionResult;
-    if (terminal(this.#snapshot.status)) return this.#snapshot.terminalResult as SessionResult;
-    if (completedResult["_tag"] !== "CompletedResult") {
-      throw new InvalidRequestError(
-        "A trusted CompletedResult is required for terminal completion",
-      );
+  complete(completedResult: unknown): SessionResult {
+    if (this.#snapshot.status === "cancelled" || terminal(this.#snapshot.status)) {
+      const existing = this.#snapshot.terminalResult;
+      if (existing !== undefined) return existing;
+      throw new SessionTerminalError();
     }
+    const decodedResult = decode(SessionCompletedResultSchema, completedResult);
+    if (decodedResult.sessionId !== this.#snapshot.task.sessionId) {
+      throw new InvalidRequestError("CompletedResult session identity does not match the Session");
+    }
+    const nextResult = decode(SessionResultSchema, {
+      _tag: "Completed",
+      sessionId: this.#snapshot.task.sessionId,
+      result: decodedResult,
+    });
     this.#snapshot = { ...this.#snapshot, status: "completed" };
     this.#append("completed", { at: nowIso() });
-    const nextResult = { _tag: "Completed", sessionId: this.sessionId, result: completedResult };
     this.#snapshot = { ...this.#snapshot, terminalResult: nextResult };
-    return nextResult as SessionResult;
+    return nextResult;
   }
 
   recordSideEffect(
     kind: SessionSideEffect["kind"],
-    details: Readonly<Record<string, unknown>>,
+    details: Readonly<Record<string, Json>>,
   ): void {
-    const effect: SessionSideEffect = { kind, at: nowIso(), details: { ...details } };
+    const effect: SessionSideEffect = {
+      kind,
+      at: decode(TimestampSchema, nowIso()),
+      details: { ...details },
+    };
     this.#snapshot = { ...this.#snapshot, sideEffects: [...this.#snapshot.sideEffects, effect] };
     if (this.#snapshot.status === "cancelled" && this.#snapshot.terminalResult !== undefined) {
       this.#snapshot = {
@@ -322,26 +412,29 @@ export class SessionState {
   }
 
   checkpoint(commit: string): void {
-    if (commit.length === 0) throw new InvalidRequestError("Checkpoint commit cannot be empty");
-    this.#snapshot = { ...this.#snapshot, wipCommit: commit };
-    this.recordSideEffect("checkpoint", { commit, ref: "wip" });
+    const decodedCommit = decode(CommitShaSchema, commit);
+    this.#snapshot = { ...this.#snapshot, wipCommit: decodedCommit };
+    this.recordSideEffect("checkpoint", { commit: decodedCommit, ref: "wip" });
   }
 
   recordCandidate(commit: string, ref: string): void {
-    this.#snapshot = { ...this.#snapshot, candidateCommit: commit };
-    this.recordSideEffect("candidate", { commit, ref });
+    const decodedCommit = decode(CommitShaSchema, commit);
+    this.#snapshot = { ...this.#snapshot, candidateCommit: decodedCommit };
+    this.recordSideEffect("candidate", { commit: decodedCommit, ref });
   }
 
   replaceSandbox(predecessor: string, replacement: string): void {
-    if (predecessor.length === 0 || replacement.length === 0) {
-      throw new InvalidRequestError("Sandbox identities cannot be empty");
-    }
+    const decodedPredecessor = decode(NonEmptyStringSchema, predecessor);
+    const decodedReplacement = decode(NonEmptyStringSchema, replacement);
     this.#snapshot = {
       ...this.#snapshot,
-      liveSandboxId: replacement,
-      predecessorSandboxIds: [...this.#snapshot.predecessorSandboxIds, predecessor],
+      liveSandboxId: decodedReplacement,
+      predecessorSandboxIds: [...this.#snapshot.predecessorSandboxIds, decodedPredecessor],
     };
-    this.recordSideEffect("sandbox_replaced", { predecessor, replacement });
+    this.recordSideEffect("sandbox_replaced", {
+      predecessor: decodedPredecessor,
+      replacement: decodedReplacement,
+    });
   }
 }
 
@@ -351,7 +444,8 @@ export const decodeSessionObservation = (value: unknown): SessionObservation =>
   decode(SessionObservationSchema, value);
 export const decodeSessionResult = (value: unknown): SessionResult =>
   decode(SessionResultSchema, value);
+export const decodeSessionSnapshot = (value: unknown): SessionSnapshot =>
+  decode(SessionSnapshotSchema, value);
 
-export const sessionIdFromTask = (task: CloudTask): SessionId =>
-  requiredString(record(task)["sessionId"], "task.sessionId") as SessionId;
+export const sessionIdFromTask = (task: CloudTask): SessionId => task.sessionId;
 export const freshSessionTaskId = (): string => newId("tsk_");
