@@ -99,8 +99,22 @@ const run = async (): Promise<void> => {
   );
   let checkedImports = 0;
   for (const { file, boundary, source } of checkedSources) {
-    if (/oxlint-disable(?:-next-line)?\s+effect\//u.test(source)) {
-      errors.push(`${file} suppresses an Effect rule; fix the boundary instead`);
+    for (const line of source.split("\n")) {
+      if (!/oxlint-disable(?:-next-line)?\s+effect\//u.test(line)) continue;
+      const exception =
+        /oxlint-disable-next-line\s+effect\/[a-z-]+\s+--\s+owner=(protocol|runtime|cloud-runtime|control-plane|terminal-client);\s+removal_date=(\d{4}-\d{2}-\d{2});\s+reason=\S.+$/u.exec(
+          line,
+        );
+      if (exception === null) {
+        errors.push(
+          `${file} has an invalid Effect exception; require one rule, owner, removal_date, and reason`,
+        );
+        continue;
+      }
+      const removalDate = exception[2];
+      if (removalDate === undefined || Date.parse(`${removalDate}T00:00:00.000Z`) <= Date.now()) {
+        errors.push(`${file} has an expired Effect exception (${removalDate ?? "missing date"})`);
+      }
     }
     for (const specifier of importsIn(file, source)) {
       checkedImports += 1;

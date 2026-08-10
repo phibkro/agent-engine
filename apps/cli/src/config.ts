@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Config, ConfigProvider, Effect, Schema } from "effect";
 import type * as Redacted from "effect/Redacted";
 import {
   currentUid,
@@ -144,9 +144,8 @@ export const decodeOperatorConfig = (
   files: ConfigFileSystem = makeBunFileSystem(),
 ): Effect.Effect<OperatorConfig, ConfigError> =>
   Effect.gen(function* () {
-    const env = yield* Schema.decodeUnknownEffect(OperatorEnvironmentSchema, {
-      onExcessProperty: "error",
-    })(environment).pipe(
+    const env = yield* Config.schema(OperatorEnvironmentSchema).pipe(
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
       Effect.mapError((error) => ({
         _tag: "ConfigDecodeFailure" as const,
         path: "environment",

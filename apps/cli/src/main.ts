@@ -76,7 +76,14 @@ export const runCli = (
 
 export const main = (argv: ReadonlyArray<string> = Bun.argv.slice(2)): Effect.Effect<void> =>
   runCli(argv).pipe(
-    Effect.flatMap((exit) => (exit === 0 ? Effect.void : Effect.sync(() => Bun.exit(exit)))),
+    Effect.flatMap((exit) =>
+      exit === 0
+        ? Effect.void
+        : Effect.sync(() => {
+            // oxlint-disable-next-line effect/no-cross-runtime -- owner=terminal-client; removal_date=2026-11-08; reason=Bun exposes the parent exit status through process.exitCode after explicit stream flush
+            process.exitCode = exit;
+          }),
+    ),
   );
 
 if (import.meta.main) {
