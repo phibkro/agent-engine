@@ -70,15 +70,20 @@ export class EnvironmentRouter {
         }
       }
 
-      const limiter = connect
-        ? request.headers.get("Upgrade")?.toLowerCase() === "websocket"
-          ? this.#env.ENVIRONMENT_CONNECT_RATE
-          : this.#env.ENVIRONMENT_HTTP_RATE
-        : undefined;
-      if (limiter !== undefined) {
+      if (connect) {
         const source = request.headers.get("CF-Connecting-IP") ?? "unknown";
-        const allowed = await limiter.limit({ key: `${source}:${environmentId}` });
-        if (!allowed.success) {
+        const limiters = [
+          this.#env.ENVIRONMENT_HTTP_RATE,
+          ...(request.headers.get("Upgrade")?.toLowerCase() === "websocket"
+            ? [this.#env.ENVIRONMENT_CONNECT_RATE]
+            : []),
+        ];
+        const decisions = await Promise.all(
+          limiters
+            .filter((limiter): limiter is RateLimit => limiter !== undefined)
+            .map((limiter) => limiter.limit({ key: `${source}:${environmentId}` })),
+        );
+        if (decisions.some((decision) => !decision.success)) {
           return Response.json({ _tag: "EnvironmentRateLimited" }, { status: 429 });
         }
       }

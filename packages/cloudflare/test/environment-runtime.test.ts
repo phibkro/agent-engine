@@ -3,19 +3,22 @@ import { FetcherEnvironmentCredentialBroker } from "../src/index.ts";
 
 const leaseInput = {
   environmentId: "demo-environment",
+  generationId: "demo-environment-g1",
   repository: { owner: "example", name: "project" },
   provider: "codex" as const,
 };
 
 describe("FetcherEnvironmentCredentialBroker", () => {
-  it("authenticates a bounded lease request and decodes environment variables", async () => {
+  it("authenticates generation-bound lease and revocation requests", async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     const broker = new FetcherEnvironmentCredentialBroker(
       {
         fetch: async (input, init) => {
           requests.push({ input, ...(init === undefined ? {} : { init }) });
           return Response.json({
-            environment: { GITHUB_TOKEN: "short-lived", OPENAI_API_KEY: "provider-lease" },
+            generationToken: "generation-token",
+            brokerOrigin: "https://broker.example",
+            expiresAt: "2026-08-10T01:00:00.000Z",
           });
         },
       },
@@ -24,22 +27,27 @@ describe("FetcherEnvironmentCredentialBroker", () => {
     );
 
     const lease = await broker.lease(leaseInput);
-    expect(lease.environment).toEqual({
-      GITHUB_TOKEN: "short-lived",
-      OPENAI_API_KEY: "provider-lease",
+    await broker.revoke({
+      environmentId: leaseInput.environmentId,
+      generationId: leaseInput.generationId,
     });
-    expect(requests[0]?.input).toBe("https://vault.example/v1/environment-lease");
+    expect(lease).toEqual({
+      generationToken: "generation-token",
+      brokerOrigin: "https://broker.example",
+      expiresAt: "2026-08-10T01:00:00.000Z",
+    });
+    expect(requests.map((request) => request.init?.method)).toEqual(["POST", "DELETE"]);
     expect(requests[0]?.init?.headers).toMatchObject({
       Authorization: "Bearer broker-secret",
     });
   });
 
-  it("rejects malformed or GitHub-less leases", async () => {
+  it("rejects malformed leases", async () => {
     const broker = new FetcherEnvironmentCredentialBroker(
-      { fetch: async () => Response.json({ environment: { "bad-name": "secret" } }) },
+      { fetch: async () => Response.json({ generationToken: "" }) },
       "https://vault.example/v1/environment-lease",
       "broker-secret",
     );
-    await expect(broker.lease(leaseInput)).rejects.toThrow("invalid environment variables");
+    await expect(broker.lease(leaseInput)).rejects.toThrow("invalid");
   });
 });

@@ -16,7 +16,7 @@ export const environmentImageDigest = Config.string("ENVIRONMENT_IMAGE_DIGEST");
 export const r2AccessKeyId = Config.redacted("R2_ACCESS_KEY_ID");
 export const r2SecretAccessKey = Config.redacted("R2_SECRET_ACCESS_KEY");
 
-/** Only the 0002 Session, Project Memory, cache, and control-plane resources are declared. */
+/** The singular Cloudflare graph for 0002 Sessions and 0003 durable Environments. */
 export const graph = Effect.gen(function* () {
   const sessionNamespace = Cloudflare.DurableObject("Session");
   const projectMemoryNamespace = Cloudflare.DurableObject("ProjectMemory");
@@ -24,7 +24,7 @@ export const graph = Effect.gen(function* () {
   const sandboxNamespace = Cloudflare.Container<Sandbox>("Sandbox", {
     context: "./infra/t3code-sandbox",
     instanceType: "standard-2",
-    maxInstances: 1,
+    maxInstances: 3,
   });
   const dependencyCache = yield* Cloudflare.R2.Bucket("DependencyCache", {
     name: "work-engine-dependency-cache",

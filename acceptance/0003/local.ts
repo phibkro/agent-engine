@@ -34,7 +34,11 @@ class LocalTracerRuntime implements EnvironmentRuntime {
 
   async initialize(): Promise<void> {}
   async waitUntilReady(): Promise<void> {}
+  async isReady(): Promise<boolean> {
+    return true;
+  }
 
+  async deleteCheckpoint(): Promise<void> {}
   async mintPairing(): Promise<EnvironmentPairing> {
     return decodeUnknownStrict(EnvironmentPairingSchema, {
       endpoint: "https://local.invalid/v1/environments/local-tracer/connect",
