@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
-import { Effect, type Exit } from "effect";
+import { Effect, Layer, type Exit } from "effect";
 import { executeInvocation, parseInvocation } from "./commands.ts";
 import { makeCloudTaskClient } from "./client.ts";
 import { loadOperatorConfig } from "./config.ts";
+import { CloudTaskClient } from "@work-engine/runtime";
 import {
   exitCodeFor,
   failureEnvelope,
@@ -56,8 +57,14 @@ export const runCli = (
       return exitCodeFor(configResult.failure);
     }
     const config = configResult.success;
-    const client = (dependencies.makeClient ?? makeCloudTaskClient)(config);
-    const result = yield* executeInvocation(parsed, client).pipe(Effect.result);
+    const clientLayer = Layer.succeed(
+      CloudTaskClient,
+      (dependencies.makeClient ?? makeCloudTaskClient)(config),
+    );
+    const result = yield* executeInvocation(parsed).pipe(
+      Effect.provide(clientLayer),
+      Effect.result,
+    );
     if (result._tag === "Failure") {
       const failure: CliFailure = result.failure;
       yield* writeStdout(renderJson(failureEnvelope(parsed.operation, failure)));

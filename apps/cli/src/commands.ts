@@ -7,7 +7,10 @@ import {
   type MessageId,
   type SessionId,
 } from "@work-engine/protocol";
-import type { CloudTaskClient } from "@work-engine/runtime";
+import {
+  CloudTaskClient,
+  type CloudTaskClient as CloudTaskClientShape,
+} from "@work-engine/runtime";
 import {
   isCloudTaskClientError,
   makeCloudTaskClient,
@@ -161,7 +164,7 @@ const clientFailure = (error: unknown): CloudTaskClientError => {
 
 const executeSpawn = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
+  client: CloudTaskClientShape,
 ): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
     const sessionId = yield* parseSessionId(invocation);
@@ -177,7 +180,7 @@ const executeSpawn = (
 
 const executeSend = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
+  client: CloudTaskClientShape,
 ): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
     const sessionId = yield* parseSessionId(invocation);
@@ -188,7 +191,7 @@ const executeSend = (
 
 const executeObserve = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
+  client: CloudTaskClientShape,
 ): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
     const sessionId = yield* parseSessionId(invocation);
@@ -199,7 +202,7 @@ const executeObserve = (
 
 const executeCancel = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
+  client: CloudTaskClientShape,
 ): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
     const sessionId = yield* parseSessionId(invocation);
@@ -209,7 +212,7 @@ const executeCancel = (
 
 const executeResult = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
+  client: CloudTaskClientShape,
 ): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   parseSessionId(invocation).pipe(
     Effect.flatMap((sessionId) => client.result(sessionId).pipe(Effect.mapError(clientFailure))),
@@ -219,26 +222,26 @@ export type CommandFailure = ParseFailure | ConfigError | CloudTaskClientError;
 
 export const executeInvocation = (
   invocation: ParsedInvocation,
-  client: CloudTaskClient,
-): Effect.Effect<unknown, CommandFailure> => {
-  switch (invocation.operation) {
-    case "spawn":
-      return executeSpawn(invocation, client);
-    case "send":
-      return executeSend(invocation, client);
-    case "observe":
-      return executeObserve(invocation, client);
-    case "cancel":
-      return executeCancel(invocation, client);
-    case "result":
-      return executeResult(invocation, client);
-  }
-};
+): Effect.Effect<unknown, CommandFailure, CloudTaskClientShape> =>
+  Effect.flatMap(CloudTaskClient, (client) => {
+    switch (invocation.operation) {
+      case "spawn":
+        return executeSpawn(invocation, client);
+      case "send":
+        return executeSend(invocation, client);
+      case "observe":
+        return executeObserve(invocation, client);
+      case "cancel":
+        return executeCancel(invocation, client);
+      case "result":
+        return executeResult(invocation, client);
+    }
+  });
 
 export const loadClientForInvocation = (
   _invocation: ParsedInvocation,
 ): Effect.Effect<
-  { readonly client: CloudTaskClient; readonly config: OperatorConfig },
+  { readonly client: CloudTaskClientShape; readonly config: OperatorConfig },
   ConfigError
 > =>
   loadOperatorConfig.pipe(
