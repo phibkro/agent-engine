@@ -47,6 +47,8 @@ export interface EffectReceipt {
   readonly receipt: AcceptedReceipt;
 }
 
+export type ResourceClaims = Readonly<Record<SessionId, ResourceClaim>>;
+
 export interface ProjectState {
   readonly projectId: ProjectId;
   readonly eventRevision: EventRevision;
@@ -57,7 +59,8 @@ export interface ProjectState {
   readonly workProcesses: Readonly<Record<WorkProcessId, WorkProcess>>;
   readonly profiles: Readonly<Record<AgentProfileId, AgentProfile>>;
   readonly sessions: Readonly<Record<SessionId, Session>>;
-  readonly resources: Readonly<Record<ResourceId, ResourceClaim>>;
+  /** Claims are keyed by resource and owner Session so compatible owners coexist. */
+  readonly resources: Readonly<Record<ResourceId, ResourceClaims>>;
   readonly handoffs: Readonly<Record<HandoffId, Handoff>>;
   readonly evidence: Readonly<Record<EvidenceId, Evidence>>;
   readonly proposals: Readonly<Record<ProposalId, Proposal>>;
@@ -124,6 +127,33 @@ const copyWith = <K extends string, V>(
   key: K,
   value: V,
 ): Readonly<Record<K, V>> => ({ ...values, [key]: value });
+const withResourceClaim = (
+  resources: Readonly<Record<ResourceId, ResourceClaims>>,
+  claim: ResourceClaim,
+): Readonly<Record<ResourceId, ResourceClaims>> => ({
+  ...resources,
+  [claim.resourceId]: {
+    ...resources[claim.resourceId],
+    [claim.sessionId]: claim,
+  },
+});
+
+const withoutResourceClaim = (
+  resources: Readonly<Record<ResourceId, ResourceClaims>>,
+  resourceId: ResourceId,
+  sessionId: SessionId,
+): Readonly<Record<ResourceId, ResourceClaims>> => {
+  const claims = resources[resourceId];
+  if (claims === undefined) return resources;
+  const nextClaims = { ...claims };
+  delete nextClaims[sessionId];
+  if (Object.keys(nextClaims).length === 0) {
+    const nextResources = { ...resources };
+    delete nextResources[resourceId];
+    return nextResources;
+  }
+  return { ...resources, [resourceId]: nextClaims };
+};
 
 const updateSession = (
   state: ProjectState,
@@ -142,8 +172,11 @@ const appendOutbox = (state: ProjectState, effect: EffectRequest): ProjectState 
 
 const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState => {
   switch (event._tag) {
-    case "ProjectCreated":
-      return { ...state, projectId: event.projectId, policy: event.policy };
+    case "ProjectCreated": {
+      const grants: Record<Grant["grantId"], Grant> = {};
+      for (const grant of event.grants) grants[grant.grantId] = grant;
+      return { ...state, projectId: event.projectId, policy: event.policy, grants };
+    }
     case "WorkSubmitted":
       return {
         ...state,
@@ -158,16 +191,17 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
     case "SessionRequested": {
       const resources =
         event.effect._tag === "StartSessionEffect"
-          ? copyWith(
-              state.resources,
-              event.effect.spec.workspaceLease.resourceId,
-              event.effect.spec.workspaceLease,
-            )
+          ? withResourceClaim(state.resources, event.effect.spec.workspaceLease)
           : state.resources;
+      const work = state.works[event.session.workId];
       return appendOutbox(
         {
           ...state,
           resources,
+          works:
+            work === undefined
+              ? state.works
+              : copyWith(state.works, work.workId, { ...work, lifecycle: "active" }),
           sessions: copyWith(state.sessions, event.session.sessionId, event.session),
         },
         event.effect,
@@ -248,10 +282,17 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
       return state;
     case "ProposalMerged": {
       const proposal = state.proposals[event.receipt.proposalId];
+      const proposerSession =
+        proposal === undefined ? undefined : state.sessions[proposal.proposerSessionId];
+      const work = proposerSession === undefined ? undefined : state.works[proposerSession.workId];
       return {
         ...state,
         canonicalContent: proposal?.candidate ?? state.canonicalContent,
         contentRevision: event.receipt.resultingContentRevision,
+        works:
+          work === undefined
+            ? state.works
+            : copyWith(state.works, work.workId, { ...work, lifecycle: "completed" }),
         proposals:
           proposal === undefined
             ? state.proposals
@@ -262,33 +303,41 @@ const applyEventBody = (state: ProjectState, event: ProjectEvent): ProjectState 
     case "WorkspaceLeaseAcquired":
       return {
         ...state,
-        resources: copyWith(state.resources, event.lease.resourceId, event.lease),
+        resources: withResourceClaim(state.resources, event.lease),
       };
     case "WorkspaceLeaseRenewed": {
-      const lease = state.resources[event.resourceId];
+      const claims = state.resources[event.resourceId];
+      const lease = claims?.[event.sessionId];
       if (lease === undefined) return state;
       return {
         ...state,
-        resources: copyWith(state.resources, event.resourceId, {
+        resources: withResourceClaim(state.resources, {
           ...lease,
           expiresAt: event.expiresAt,
         }),
       };
     }
-    case "WorkspaceLeaseReleased": {
-      const resources = { ...state.resources };
-      delete resources[event.resourceId];
-      return { ...state, resources };
-    }
+    case "WorkspaceLeaseReleased":
+      return {
+        ...state,
+        resources: withoutResourceClaim(state.resources, event.resourceId, event.sessionId),
+      };
   }
 };
 
 /** Fold one accepted event. Decisions belong to the transition function; the fold is deterministic. */
 export const foldEvent = (state: ProjectState, envelope: EventEnvelope): ProjectState => {
+  const last = state.history[state.history.length - 1];
+  const isFirstAtRevision = envelope.eventRevision === state.eventRevision + 1;
+  const isCommandSibling =
+    envelope.eventRevision === state.eventRevision &&
+    last !== undefined &&
+    last.commandId === envelope.commandId;
+  if (!isFirstAtRevision && !isCommandSibling) return state;
   const next = applyEventBody(state, envelope.event);
   return {
     ...next,
-    eventRevision: envelope.eventRevision,
+    eventRevision: isFirstAtRevision ? envelope.eventRevision : state.eventRevision,
     history: [...state.history, envelope],
   };
 };
@@ -306,8 +355,9 @@ export const hasActiveLease = (
   resourceId: ResourceId,
   at: string,
 ): ResourceClaim | undefined => {
-  const claim = state.resources[resourceId];
-  return claim !== undefined && claim.expiresAt > at ? claim : undefined;
+  const claims = state.resources[resourceId];
+  if (claims === undefined) return undefined;
+  return Object.values(claims).find((claim) => claim.expiresAt > at);
 };
 
 export const activeSession = (state: ProjectState, sessionId: SessionId): Session | undefined =>

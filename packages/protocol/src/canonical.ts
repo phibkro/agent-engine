@@ -11,8 +11,6 @@ export type CanonicalJsonValue =
 export const canonicalize = (value: CanonicalJsonValue): string =>
   canonicalizeEx(value, {
     allowCircular: false,
-    filterUndefined: false,
-    undefinedInArrayToNull: false,
   });
 export const canonicalJson = canonicalize;
 export const canonicalJsonBytes = (value: CanonicalJsonValue): Uint8Array =>
@@ -31,15 +29,8 @@ export const sha256Bytes = sha256;
 export const digestCanonical = async (value: CanonicalJsonValue): Promise<Sha256Digest> =>
   sha256(canonicalJsonBytes(value));
 export const canonicalDigest = digestCanonical;
-const utf8PathCompare = (left: string, right: string): number => {
-  const a = new TextEncoder().encode(left);
-  const b = new TextEncoder().encode(right);
-  const limit = Math.min(a.length, b.length);
-  for (let index = 0; index < limit; index += 1) {
-    if (a[index] !== b[index]) return a[index]! - b[index]!;
-  }
-  return a.length - b.length;
-};
+const utf8PathCompare = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 export const sortManifestEntries = <Entry extends { readonly path: string }>(
   entries: readonly Entry[],

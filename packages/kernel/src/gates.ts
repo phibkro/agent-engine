@@ -30,6 +30,14 @@ export interface GateDecision {
 }
 
 const pathWithin = (path: string, scope: string): boolean => {
+  const pathSegments = path.split("/");
+  const scopeSegments = scope.split("/");
+  if (
+    pathSegments.some((segment) => segment === "." || segment === "..") ||
+    scopeSegments.some((segment) => segment === "." || segment === "..")
+  ) {
+    return false;
+  }
   const normalizedScope = scope.endsWith("/") ? scope.slice(0, -1) : scope;
   return path === normalizedScope || path.startsWith(`${normalizedScope}/`);
 };
@@ -133,11 +141,13 @@ const gateSatisfied = (
       };
     }
     case "gat_human_approved": {
-      const matches = evidence.filter(
+      const matches = Object.values(state.evidence).filter(
         (candidate) =>
+          proposal.status === "approved" &&
           candidate.kind === "human_approval" &&
           candidate.role === "human_approval" &&
           candidate.producerActorId !== undefined &&
+          candidate.proposalSubmissionEventRevision === proposal.submissionEventRevision &&
           candidate.candidateDigest === proposal.candidate.digest &&
           candidate.payloadDigest === proposal.candidate.digest &&
           evidenceMatchesSubject(candidate, proposal, "proposal", proposal.proposalId),

@@ -1,4 +1,4 @@
-import { ActorIdSchema, ContentRevisionSchema, EventRevisionSchema } from "@work-engine/protocol";
+import { ContentRevisionSchema, EventRevisionSchema } from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfileId,
@@ -20,7 +20,6 @@ import type {
   ProjectCommand,
   ProjectEvent,
   ProjectId,
-  ProposalId,
   RejectedReceipt,
   RejectionCode,
   ResourceId,
@@ -30,7 +29,7 @@ import type {
   WorkId,
 } from "@work-engine/protocol";
 import { deriveGates } from "./gates.ts";
-import { emptyProjectState, foldEvent, hasActiveLease, type ProjectState } from "./state.ts";
+import { emptyProjectState, foldEvent, type ProjectState } from "./state.ts";
 
 export interface TransitionContext {
   /** Trusted authority-supplied identity for a CreateProject acceptance. */
@@ -38,22 +37,17 @@ export interface TransitionContext {
   /** Trusted authenticated actor for a CreateProject acceptance. */
   readonly actor?: AuthenticatedActor;
   /** Trusted observation time used for Grant/lease validity checks. */
-  readonly now?: Timestamp;
+  readonly now: Timestamp;
+  /** Trusted transport-minted Grants for this command. */
+  readonly grants?: readonly Grant[];
 }
 
 export interface TransitionOutcome {
   readonly state: ProjectState | undefined;
   readonly result: CommandResult;
 }
-
 const eventRevision = (value: number): EventRevision => EventRevisionSchema.make(value);
 const contentRevision = (value: number): ContentRevision => ContentRevisionSchema.make(value);
-const defaultActor: AuthenticatedActor = {
-  _tag: "AuthenticatedActor",
-  actorId: ActorIdSchema.make("operator"),
-  kind: "operator",
-  presentedGrants: [],
-};
 
 const jsonDetails = (
   reason: string,
@@ -85,26 +79,32 @@ const reject = (
 const accepted = (
   state: ProjectState,
   commandId: CommandId,
-  event: ProjectEvent,
+  events: readonly ProjectEvent[] | ProjectEvent,
   effectRequests: readonly EffectRequest[] = [],
+  commandEffect?: EffectId,
 ): TransitionOutcome => {
+  const eventList: readonly ProjectEvent[] = Array.isArray(events) ? events : [events];
   const nextRevision = eventRevision(state.eventRevision + 1);
-  const envelope: EventEnvelope = {
+  const envelopes: readonly EventEnvelope[] = eventList.map((event) => ({
     _tag: "EventEnvelope",
     eventRevision: nextRevision,
     commandId,
     event,
-  };
+  }));
   const receipt: AcceptedReceipt = {
     _tag: "Accepted",
     eventRevision: nextRevision,
     eventIds: [commandId],
     effectRequests,
   };
-  let next = foldEvent(state, envelope);
+  let next = state;
+  for (const envelope of envelopes) next = foldEvent(next, envelope);
   const effectReceipts = { ...next.effectReceipts };
-  for (const effect of effectRequests)
-    effectReceipts[effect.effectId] = { effectId: effect.effectId, receipt };
+  const effectIds = new Set([
+    ...effectRequests.map((effect) => effect.effectId),
+    ...(commandEffect === undefined ? [] : [commandEffect]),
+  ]);
+  for (const effectId of effectIds) effectReceipts[effectId] = { effectId, receipt };
   next = {
     ...next,
     commandReceipts: { ...next.commandReceipts, [commandId]: receipt },
@@ -126,11 +126,11 @@ const commandEffectId = (command: ProjectCommand): EffectId | undefined => {
     case "OpenManagerSession":
     case "StartWorkerSession":
     case "CancelSession":
+    case "ReportSessionStarted":
+    case "ReportSessionTerminal":
       return command.effectId;
     case "AcquireWorkspaceLease":
       return command.lease.effectId;
-    default:
-      return undefined;
   }
 };
 
@@ -139,31 +139,51 @@ const scopeMatches = (
   projectId: ProjectId,
   workId?: WorkId,
   sessionId?: SessionId,
-  proposalId?: ProposalId,
+  proposalId?: string,
 ): boolean =>
   (scope.projectId === undefined || scope.projectId === projectId) &&
-  (workId === undefined || scope.workId === undefined || scope.workId === workId) &&
-  (sessionId === undefined || scope.sessionId === undefined || scope.sessionId === sessionId) &&
-  (proposalId === undefined || scope.proposalId === undefined || scope.proposalId === proposalId);
+  (scope.workId === undefined || (workId !== undefined && scope.workId === workId)) &&
+  (scope.sessionId === undefined || (sessionId !== undefined && scope.sessionId === sessionId)) &&
+  (scope.proposalId === undefined || (proposalId !== undefined && scope.proposalId === proposalId));
 
-const grantValidAt = (grant: Grant, now: Timestamp | undefined): boolean =>
-  now === undefined || (grant.validFrom <= now && now <= grant.validUntil);
+type AuthorizationScope = {
+  readonly workId?: WorkId;
+  readonly sessionId?: SessionId;
+  readonly proposalId?: string;
+};
+
+const sessionScope = (
+  state: ProjectState,
+  sessionId: SessionId,
+  proposalId?: string,
+): AuthorizationScope => {
+  const workId = state.sessions[sessionId]?.workId;
+  return {
+    sessionId,
+    ...(workId === undefined ? {} : { workId }),
+    ...(proposalId === undefined ? {} : { proposalId }),
+  };
+};
+
+const grantValidAt = (grant: Grant, now: Timestamp): boolean =>
+  grant.validFrom <= now && now <= grant.validUntil;
 
 const authorized = (
   state: ProjectState,
   actor: AuthenticatedActor,
   capability: Grant["capability"],
   context: TransitionContext,
-  scope: {
-    readonly workId?: WorkId;
-    readonly sessionId?: SessionId;
-    readonly proposalId?: ProposalId;
-  } = {},
+  scope: AuthorizationScope = {},
 ): Grant | undefined => {
-  for (const grantId of actor.presentedGrants) {
-    const grant = state.grants[grantId];
+  const grants = [
+    ...actor.presentedGrants.flatMap((grantId) => {
+      const grant = state.grants[grantId];
+      return grant === undefined ? [] : [grant];
+    }),
+    ...(context.grants ?? []),
+  ];
+  for (const grant of grants) {
     if (
-      grant !== undefined &&
       grant.subjectActorId === actor.actorId &&
       grant.capability === capability &&
       scopeMatches(grant.scope, state.projectId, scope.workId, scope.sessionId, scope.proposalId) &&
@@ -174,7 +194,6 @@ const authorized = (
   }
   return undefined;
 };
-
 const ensureExpectedRevision = (
   state: ProjectState,
   envelope: CommandEnvelope,
@@ -242,13 +261,27 @@ const sessionBase = (
   status: "requested",
   ...(predecessorSessionId === undefined ? {} : { predecessorSessionId }),
 });
-
-const leaseConflicts = (state: ProjectState, resourceId: ResourceId, at: Timestamp): boolean =>
-  hasActiveLease(state, resourceId, at) !== undefined;
+const leaseConflicts = (
+  state: ProjectState,
+  resourceId: ResourceId,
+  mode: "read" | "write",
+  sessionId: SessionId,
+  at: Timestamp,
+): boolean => {
+  const claims = state.resources[resourceId];
+  if (claims === undefined) return false;
+  return Object.values(claims).some(
+    (claim) =>
+      claim.expiresAt > at &&
+      (claim.sessionId === sessionId || (mode === "write" && claim.mode === "write")),
+  );
+};
 
 const validManifest = (manifest: ContentManifest): boolean => {
   for (let index = 1; index < manifest.entries.length; index += 1) {
-    if (manifest.entries[index - 1]!.path >= manifest.entries[index]!.path) return false;
+    const previous = manifest.entries[index - 1]!.path;
+    const current = manifest.entries[index]!.path;
+    if (previous >= current) return false;
   }
   return true;
 };
@@ -308,7 +341,11 @@ const dispatchCommand = (
         "a Project cannot be created twice",
       );
     case "SubmitWork": {
-      if (authorized(state, actor, "work.submit", context) === undefined) {
+      if (
+        authorized(state, actor, "work.submit", context, {
+          workId: command.workId,
+        }) === undefined
+      ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks work.submit");
       }
       if (state.works[command.workId] !== undefined) {
@@ -353,7 +390,7 @@ const dispatchCommand = (
       if (command.attempt > state.policy.maxAttempts) {
         return reject(state, envelope.commandId, "policy_rejected", "attempt exceeds policy limit");
       }
-      if (leaseConflicts(state, command.resourceId, context.now ?? command.deadline)) {
+      if (leaseConflicts(state, command.resourceId, "read", command.sessionId, context.now)) {
         return reject(
           state,
           envelope.commandId,
@@ -376,8 +413,8 @@ const dispatchCommand = (
         _tag: "WorkspaceLease" as const,
         resourceId: command.resourceId,
         sessionId: command.sessionId,
-        mode: "write" as const,
-        acquiredAt: context.now ?? command.deadline,
+        mode: "read" as const,
+        acquiredAt: context.now,
         expiresAt: command.deadline,
         effectId: command.effectId,
       };
@@ -426,8 +463,9 @@ const dispatchCommand = (
         const predecessor = state.sessions[command.predecessorSessionId];
         if (
           predecessor === undefined ||
-          predecessor.status === "started" ||
-          predecessor.status === "requested"
+          (predecessor.status !== "completed" &&
+            predecessor.status !== "failed" &&
+            predecessor.status !== "interrupted")
         ) {
           return reject(
             state,
@@ -456,7 +494,7 @@ const dispatchCommand = (
       if (command.attempt > state.policy.maxAttempts) {
         return reject(state, envelope.commandId, "policy_rejected", "attempt exceeds policy limit");
       }
-      if (leaseConflicts(state, command.resourceId, context.now ?? command.deadline)) {
+      if (leaseConflicts(state, command.resourceId, "write", command.sessionId, context.now)) {
         return reject(
           state,
           envelope.commandId,
@@ -481,7 +519,7 @@ const dispatchCommand = (
         resourceId: command.resourceId,
         sessionId: command.sessionId,
         mode: "write" as const,
-        acquiredAt: context.now ?? command.deadline,
+        acquiredAt: context.now,
         expiresAt: command.deadline,
         effectId: command.effectId,
       };
@@ -514,8 +552,13 @@ const dispatchCommand = (
     }
     case "ReportSessionStarted": {
       if (
-        authorized(state, actor, "session.started", context, { sessionId: command.sessionId }) ===
-        undefined
+        authorized(
+          state,
+          actor,
+          "session.started",
+          context,
+          sessionScope(state, command.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.started");
       }
@@ -530,17 +573,28 @@ const dispatchCommand = (
           "only a requested session can start",
         );
       }
-      return accepted(state, envelope.commandId, {
-        _tag: "SessionStarted",
-        sessionId: command.sessionId,
-        workspaceViewId: command.workspaceViewId,
-        startedAt: command.startedAt,
-      });
+      return accepted(
+        state,
+        envelope.commandId,
+        {
+          _tag: "SessionStarted",
+          sessionId: command.sessionId,
+          workspaceViewId: command.workspaceViewId,
+          startedAt: command.startedAt,
+        },
+        [],
+        command.effectId,
+      );
     }
     case "CancelSession": {
       if (
-        authorized(state, actor, "session.cancel", context, { sessionId: command.sessionId }) ===
-        undefined
+        authorized(
+          state,
+          actor,
+          "session.cancel",
+          context,
+          sessionScope(state, command.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.cancel");
       }
@@ -578,8 +632,13 @@ const dispatchCommand = (
     }
     case "ReportSessionTerminal": {
       if (
-        authorized(state, actor, "session.terminal", context, { sessionId: command.sessionId }) ===
-        undefined
+        authorized(
+          state,
+          actor,
+          "session.terminal",
+          context,
+          sessionScope(state, command.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks session.terminal");
       }
@@ -606,14 +665,18 @@ const dispatchCommand = (
           "only a started session can complete",
         );
       }
-      return accepted(state, envelope.commandId, eventForTerminal(command));
+      return accepted(state, envelope.commandId, eventForTerminal(command), [], command.effectId);
     }
     case "RecordHandoff": {
       const handoff = command.handoff;
       if (
-        authorized(state, actor, "handoff.record", context, {
-          sessionId: handoff.producerSessionId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "handoff.record",
+          context,
+          sessionScope(state, handoff.producerSessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks handoff.record");
       }
@@ -644,9 +707,17 @@ const dispatchCommand = (
       const evidence = command.evidence;
       if (
         evidence.producerSessionId === undefined ||
-        authorized(state, actor, "evidence.record", context, {
-          sessionId: evidence.producerSessionId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "evidence.record",
+          context,
+          sessionScope(
+            state,
+            evidence.producerSessionId,
+            evidence.subject.subjectType === "proposal" ? evidence.subject.subjectId : undefined,
+          ),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks evidence.record");
       }
@@ -666,14 +737,19 @@ const dispatchCommand = (
           "recorded evidence needs a producer session",
         );
       }
+      if (evidence.kind === "human_approval" || evidence.role === "human_approval") {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "human approval evidence must be accepted by ApproveProposal",
+        );
+      }
       const evidenceShapeValid =
         (evidence.kind !== "machine_check" ||
           (evidence.check !== undefined && evidence.candidateDigest !== undefined)) &&
         (evidence.kind !== "scope_check" || evidence.scope !== undefined) &&
-        (evidence.kind !== "session_terminal" || evidence.terminalStatus !== undefined) &&
-        (evidence.kind !== "candidate_manifest" || evidence.candidateDigest !== undefined) &&
-        (evidence.kind !== "human_approval" ||
-          (evidence.producerActorId !== undefined && evidence.candidateDigest !== undefined));
+        (evidence.kind !== "candidate_manifest" || evidence.candidateDigest !== undefined);
       if (!evidenceShapeValid) {
         return reject(
           state,
@@ -695,9 +771,13 @@ const dispatchCommand = (
     case "SubmitProposal": {
       const proposal = command.proposal;
       if (
-        authorized(state, actor, "proposal.submit", context, {
-          sessionId: proposal.proposerSessionId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "proposal.submit",
+          context,
+          sessionScope(state, proposal.proposerSessionId, proposal.proposalId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks proposal.submit");
       }
@@ -716,6 +796,14 @@ const dispatchCommand = (
           envelope.commandId,
           "invalid_transition",
           "proposal provenance is invalid",
+        );
+      }
+      if (proposal.status !== "submitted") {
+        return reject(
+          state,
+          envelope.commandId,
+          "invalid_transition",
+          "new proposals must start submitted",
         );
       }
       if (!validManifest(proposal.candidate)) {
@@ -779,9 +867,13 @@ const dispatchCommand = (
         );
       if (
         actor.kind !== "operator" ||
-        authorized(state, actor, "proposal.approve", context, {
-          proposalId: proposal.proposalId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "proposal.approve",
+          context,
+          sessionScope(state, proposal.proposerSessionId, proposal.proposalId),
+        ) === undefined
       ) {
         return reject(
           state,
@@ -797,7 +889,9 @@ const dispatchCommand = (
         evidence.producerActorId !== actor.actorId ||
         evidence.subject.subjectType !== "proposal" ||
         evidence.subject.subjectId !== proposal.proposalId ||
+        evidence.proposalSubmissionEventRevision !== proposal.submissionEventRevision ||
         evidence.candidateDigest !== proposal.candidate.digest ||
+        evidence.payloadDigest !== proposal.candidate.digest ||
         evidence.projectId !== state.projectId
       ) {
         return reject(
@@ -834,9 +928,13 @@ const dispatchCommand = (
         );
       if (
         actor.kind !== "operator" ||
-        authorized(state, actor, "proposal.reject", context, {
-          proposalId: proposal.proposalId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "proposal.reject",
+          context,
+          sessionScope(state, proposal.proposerSessionId, proposal.proposalId),
+        ) === undefined
       ) {
         return reject(
           state,
@@ -871,22 +969,17 @@ const dispatchCommand = (
           "merge identity already exists",
         );
       }
-      if (
-        actor.kind === "project_manager" ||
-        actor.kind === "worker_session" ||
-        actor.kind === "session_host"
-      ) {
-        return reject(
-          state,
-          envelope.commandId,
-          "unauthorized",
-          "agent-scoped actors cannot Merge",
-        );
+      if (actor.kind !== "operator") {
+        return reject(state, envelope.commandId, "unauthorized", "only an operator may Merge");
       }
-      const grant = authorized(state, actor, state.policy.mergeCapability, context, {
-        proposalId: proposal.proposalId,
-      });
-      if (grant === undefined) {
+      const grant = authorized(
+        state,
+        actor,
+        state.policy.mergeCapability,
+        context,
+        sessionScope(state, proposal.proposerSessionId, proposal.proposalId),
+      );
+      if (grant === undefined || grant.grantId !== command.grantId) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks proposal.merge");
       }
       if (proposal.basisContentRevision !== state.contentRevision) {
@@ -926,6 +1019,7 @@ const dispatchCommand = (
           "all five Merge Gates must be satisfied",
         );
       }
+      const gateEvidenceIds = decision.evaluations.flatMap((evaluation) => evaluation.evidenceIds);
       const receipt = {
         _tag: "MergeReceipt" as const,
         mergeId: command.mergeId,
@@ -935,26 +1029,42 @@ const dispatchCommand = (
         policyId: state.policy.policyId,
         policyRevision: state.policy.revision,
         gateKeys: state.policy.requiredGates,
-        evidenceIds: proposal.evidenceIds,
+        evidenceIds: gateEvidenceIds,
         priorEventRevision: state.eventRevision,
         resultingEventRevision: eventRevision(state.eventRevision + 1),
         priorContentRevision: state.contentRevision,
         resultingContentRevision: contentRevision(state.contentRevision + 1),
         candidateDigest: proposal.candidate.digest,
       };
-      return accepted(state, envelope.commandId, { _tag: "ProposalMerged", receipt });
+      return accepted(state, envelope.commandId, [
+        {
+          _tag: "GatesEvaluated",
+          proposalId: proposal.proposalId,
+          policyId: decision.policyId,
+          policyRevision: decision.policyRevision,
+          gateKeys: state.policy.requiredGates,
+          satisfied: decision.satisfied,
+          evidenceIds: gateEvidenceIds,
+        },
+        { _tag: "ProposalMerged", receipt },
+      ]);
     }
     case "AcquireWorkspaceLease": {
       const lease = command.lease;
       if (
-        authorized(state, actor, "workspace.lease", context, { sessionId: lease.sessionId }) ===
-        undefined
+        authorized(
+          state,
+          actor,
+          "workspace.lease",
+          context,
+          sessionScope(state, lease.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.lease");
       }
       if (state.sessions[lease.sessionId] === undefined)
         return reject(state, envelope.commandId, "invalid_transition", "session does not exist");
-      if (leaseConflicts(state, lease.resourceId, lease.acquiredAt)) {
+      if (leaseConflicts(state, lease.resourceId, lease.mode, lease.sessionId, context.now)) {
         return reject(
           state,
           envelope.commandId,
@@ -962,23 +1072,35 @@ const dispatchCommand = (
           "workspace resource is already leased",
         );
       }
-      return accepted(state, envelope.commandId, { _tag: "WorkspaceLeaseAcquired", lease });
+      const acquiredLease = { ...lease, acquiredAt: context.now };
+      return accepted(
+        state,
+        envelope.commandId,
+        {
+          _tag: "WorkspaceLeaseAcquired",
+          lease: acquiredLease,
+        },
+        [],
+        lease.effectId,
+      );
     }
     case "RenewWorkspaceLease": {
-      const lease = state.resources[command.resourceId];
+      const claims = state.resources[command.resourceId];
+      const lease = claims?.[command.sessionId];
       if (
-        authorized(state, actor, "workspace.heartbeat", context, {
-          sessionId: command.sessionId,
-        }) === undefined
+        authorized(
+          state,
+          actor,
+          "workspace.heartbeat",
+          context,
+          sessionScope(state, command.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.heartbeat");
       }
-      if (lease === undefined || lease.sessionId !== command.sessionId)
+      if (lease === undefined)
         return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
-      if (
-        (context.now ?? lease.expiresAt) >= lease.expiresAt ||
-        command.expiresAt <= lease.expiresAt
-      ) {
+      if (context.now >= lease.expiresAt || command.expiresAt <= lease.expiresAt) {
         return reject(
           state,
           envelope.commandId,
@@ -994,14 +1116,20 @@ const dispatchCommand = (
       });
     }
     case "ReleaseWorkspaceLease": {
-      const lease = state.resources[command.resourceId];
+      const claims = state.resources[command.resourceId];
+      const lease = claims?.[command.sessionId];
       if (
-        authorized(state, actor, "workspace.lease", context, { sessionId: command.sessionId }) ===
-        undefined
+        authorized(
+          state,
+          actor,
+          "workspace.lease",
+          context,
+          sessionScope(state, command.sessionId),
+        ) === undefined
       ) {
         return reject(state, envelope.commandId, "unauthorized", "actor lacks workspace.lease");
       }
-      if (lease === undefined || lease.sessionId !== command.sessionId)
+      if (lease === undefined)
         return reject(state, envelope.commandId, "lease_expired", "workspace lease is missing");
       return accepted(state, envelope.commandId, {
         _tag: "WorkspaceLeaseReleased",
@@ -1015,7 +1143,7 @@ const dispatchCommand = (
 export const transition = (
   state: ProjectState | undefined,
   input: CommandEnvelope | CreateProjectRequest,
-  context: TransitionContext = {},
+  context: TransitionContext,
 ): TransitionOutcome => {
   if (!("projectId" in input)) {
     if (state !== undefined) {
@@ -1035,7 +1163,18 @@ export const transition = (
         },
       };
     }
-    const actor = context.actor ?? defaultActor;
+    const actor = context.actor;
+    if (actor === undefined) {
+      return {
+        state: undefined,
+        result: {
+          _tag: "Rejected",
+          eventRevision: eventRevision(0),
+          code: "unauthorized",
+          details: { reason: "an authenticated Project creator is required" },
+        },
+      };
+    }
     if (actor.kind !== "operator" && actor.kind !== "system") {
       return {
         state: undefined,
@@ -1052,6 +1191,7 @@ export const transition = (
       _tag: "ProjectCreated",
       projectId,
       policy: input.command.policy,
+      grants: input.command.grants ?? [],
     });
   }
   if (state === undefined) {
@@ -1074,8 +1214,9 @@ export const reduceCommand = transition;
 export const createProject = (
   request: CreateProjectRequest,
   projectId: ProjectId,
-  actor?: AuthenticatedActor,
+  actor: AuthenticatedActor,
+  now: Timestamp,
 ): TransitionOutcome => {
-  const context: TransitionContext = actor === undefined ? { projectId } : { projectId, actor };
+  const context: TransitionContext = { projectId, actor, now };
   return transition(undefined, request, context);
 };

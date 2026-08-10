@@ -404,6 +404,8 @@ export const EvidenceSchema = Schema.TaggedStruct("Evidence", {
   observedAt: TimestampSchema,
   payloadDigest: Sha256DigestSchema,
   limitations: Schema.Array(NonEmptyStringSchema),
+  /** Required by ApproveProposal for immutable approval provenance. */
+  proposalSubmissionEventRevision: optional(EventRevisionSchema),
   candidateDigest: optional(Sha256DigestSchema),
   check: optional(EvidenceCheckSchema),
   scope: optional(EvidenceScopeSchema),
@@ -668,6 +670,7 @@ export const ProjectEventSchema = Schema.Union([
   Schema.TaggedStruct("ProjectCreated", {
     projectId: ProjectIdSchema,
     policy: PolicySchema,
+    grants: Schema.Array(GrantSchema),
   }),
   Schema.TaggedStruct("WorkSubmitted", { work: WorkSchema }),
   Schema.TaggedStruct("SessionRequested", { session: SessionSchema, effect: EffectRequestSchema }),
