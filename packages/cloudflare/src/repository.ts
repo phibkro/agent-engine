@@ -2,7 +2,6 @@ import {
   RepositoryGrantSchema,
   type CandidateReceipt,
   type CheckpointReceipt,
-  type CommitSha,
   type RepositoryGrant,
   type RepositoryIdentity,
   type VerifiedWorkspace,
@@ -86,7 +85,7 @@ export interface RepositoryGrantInput {
 
 export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGrant => {
   const refs = sessionRefs(input.projectId, input.sessionId);
-  return {
+  return decode(RepositoryGrantSchema, {
     _tag: "RepositoryGrant",
     grantId: input.grantId,
     sessionId: input.sessionId,
@@ -98,7 +97,7 @@ export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGran
     candidateRef: refs.candidate,
     expiresAt: input.expiresAt,
     issuedAt: input.issuedAt ?? nowIso(),
-  } as RepositoryGrant;
+  });
 };
 
 const grantIsValid = (grant: RepositoryGrant, sessionId: string, now: string): boolean => {
@@ -128,10 +127,10 @@ const baseOf = (grant: RepositoryGrant): string => requiredString(asGrantRecord(
 
 /** Trusted publisher. All refs are derived from the grant; callers cannot select arbitrary refs. */
 export class TrustedRepositoryPublisher {
-  readonly #transport: RepositoryTransport | undefined;
-  readonly #now: () => string;
-  readonly #published = new Map<string, CandidateReceipt>();
-  readonly #checkpoints = new Map<string, CheckpointReceipt>();
+  #transport: RepositoryTransport | undefined;
+  #now: () => string;
+  #published = new Map<string, CandidateReceipt>();
+  #checkpoints = new Map<string, CheckpointReceipt>();
 
   constructor(transport: RepositoryTransport | undefined, options: RepositoryPublisherOptions = {}) {
     this.#transport = transport;
@@ -266,8 +265,8 @@ export class TrustedRepositoryPublisher {
 
 /** Fetcher-backed adapter. It never claims success when the Outbound Worker is absent. */
 export class CloudflareRepositoryPublisher {
-  readonly #binding: Fetcher | undefined;
-  readonly #transport: TrustedRepositoryPublisher;
+  #binding: Fetcher | undefined;
+  #transport: TrustedRepositoryPublisher;
 
   constructor(binding: Fetcher | undefined, options: RepositoryPublisherOptions = {}) {
     this.#binding = binding;
@@ -295,7 +294,7 @@ export class CloudflareRepositoryPublisher {
 }
 
 class FetcherRepositoryTransport implements RepositoryTransport {
-  readonly #binding: Fetcher;
+  #binding: Fetcher;
   constructor(binding: Fetcher) {
     this.#binding = binding;
   }

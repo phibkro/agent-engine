@@ -103,7 +103,7 @@ describe("0002 CLI public interface", () => {
     expect(requests[0]?.url).toBe(
       `https://work.example/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`,
     );
-    const headers = new Headers(requests[0]?.init.headers);
+    const headers = requests[0]?.init.headers as Headers;
     expect(headers.get("CF-Access-Client-Id")).toBe("access-client");
     expect(headers.get("CF-Access-Client-Secret")).toBe("access-secret");
     expect(headers.get("Content-Type")).toBe("application/json");

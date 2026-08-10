@@ -1,7 +1,4 @@
-import {
-  ProjectMemoryDurableObject,
-  SessionDurableObject,
-} from "@work-engine/cloudflare";
+import type { ExecutionContext } from "@cloudflare/workers-types";
 import type { ControlPlaneEnv } from "./env.ts";
 import { handleRequest } from "./routes.ts";
 

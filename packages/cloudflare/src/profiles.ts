@@ -24,7 +24,7 @@ const profileClassFor = (profile: Profile): ProfileClassName => {
 };
 
 export class ProfileRegistry {
-  readonly #profiles = new Map<string, Profile>();
+  #profiles = new Map<string, Profile>();
 
   register(profile: Profile): void {
     const decoded = decode(ProfileSchema, profile);

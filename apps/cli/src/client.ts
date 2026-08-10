@@ -25,8 +25,13 @@ export const AccessHeader = {
 
 export type CloudTaskClientError = CloudTaskError;
 
+export type CloudTaskFetch = (
+  input: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export interface CloudTaskHttpOptions {
-  readonly fetch?: typeof globalThis.fetch;
+  readonly fetch?: CloudTaskFetch;
 }
 
 export const CloudTaskRoute = {
@@ -99,7 +104,7 @@ const headersFor = (config: OperatorConfig, body: boolean): Headers => {
 
 const request = <S extends Schema.ConstraintDecoder<unknown>>(
   config: OperatorConfig,
-  fetcher: typeof globalThis.fetch,
+  fetcher: CloudTaskFetch,
   operation: string,
   sessionId: SessionId,
   method: "GET" | "POST",
@@ -148,7 +153,7 @@ const makeRequestBody = (
 
 const makeClient = (
   config: OperatorConfig,
-  fetcher: typeof globalThis.fetch,
+  fetcher: CloudTaskFetch,
 ): CloudTaskClient => ({
   spawn: (sessionId: SessionId, task: CloudTask) =>
     Effect.gen(function* () {

@@ -4,6 +4,7 @@ import {
   ProjectMemoryProvenanceSchema,
   ProjectMemoryProposalSchema,
   ProjectMemoryRevisionSchema,
+  MemoryRevisionSchema,
   type MemoryRevision,
   type ProjectMemoryFact,
   type ProjectMemoryProposal,
@@ -218,8 +219,8 @@ export interface ProjectMemoryStore {
 }
 
 export class DurableObjectProjectMemoryStore implements ProjectMemoryStore {
-  readonly #state: DurableObjectState;
-  readonly #projectId: string;
+  #state: DurableObjectState;
+  #projectId: string;
 
   constructor(state: DurableObjectState, projectId: string) {
     this.#state = state;
@@ -241,7 +242,7 @@ export class DurableObjectProjectMemoryStore implements ProjectMemoryStore {
 }
 
 export class ProjectMemoryDurableObject implements DurableObject {
-  readonly #state: DurableObjectState;
+  #state: DurableObjectState;
   #memory: ProjectMemoryState | undefined;
 
   constructor(state: DurableObjectState, _env: unknown) {
@@ -270,7 +271,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
       const body = payload === undefined ? {} : record(payload);
       if (url.pathname.endsWith("/read")) {
         const facts = memory.readContext(
-          revisionValue(body["atRevision"]),
+          MemoryRevisionSchema.make(revisionValue(body["atRevision"])),
           typeof body["query"] === "string" ? body["query"] : "",
         );
         return Response.json({ _tag: "ProjectMemoryRead", facts });
@@ -280,7 +281,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
         if (sessionId === null || sessionId.length === 0) throw new MemoryUnauthorizedError();
         const proposal = memory.proposeMemory(
           sessionId,
-          revisionValue(body["expectedRevision"]),
+          MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
           requiredString(body["claim"], "claim"),
           body["provenance"],
         );
@@ -291,7 +292,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
         if (request.headers.get("X-Project-Memory-Coordinator") === null) throw new MemoryUnauthorizedError();
         const revision = memory.acceptMemory(
           requiredString(body["proposalId"], "proposalId"),
-          revisionValue(body["expectedRevision"]),
+          MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
         );
         await this.#save(memory);
         return Response.json(revision);
@@ -311,8 +312,8 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
 
 /** Session-facing binding; projectId/sessionId are constructor authority, never request fields. */
 export class SessionProjectMemoryBinding {
-  readonly #memory: ProjectMemoryState;
-  readonly #sessionId: string;
+  #memory: ProjectMemoryState;
+  #sessionId: string;
 
   constructor(memory: ProjectMemoryState, sessionId: string) {
     this.#memory = memory;
@@ -334,7 +335,7 @@ export class SessionProjectMemoryBinding {
 
 /** Coordinator-only binding. It does not expose Session-facing proposal attribution. */
 export class CoordinatorProjectMemoryBinding {
-  readonly #memory: ProjectMemoryState;
+  #memory: ProjectMemoryState;
 
   constructor(memory: ProjectMemoryState) {
     this.#memory = memory;
@@ -347,10 +348,10 @@ export class CoordinatorProjectMemoryBinding {
 
 /** Production adapter; missing Durable Object binding is an explicit typed failure. */
 export class CloudflareProjectMemory {
-  readonly #namespace: DurableObjectNamespace | undefined;
-  readonly #projectId: string;
-  readonly #sessionId: string | undefined;
-  readonly #coordinator: boolean;
+  #namespace: DurableObjectNamespace | undefined;
+  #projectId: string;
+  #sessionId: string | undefined;
+  #coordinator: boolean;
 
   constructor(
     namespace: DurableObjectNamespace | undefined,

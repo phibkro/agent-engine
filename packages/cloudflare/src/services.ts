@@ -18,7 +18,6 @@ import {
   type RepositoryPublisherError,
 } from "@work-engine/runtime";
 import {
-  CloudflareCloudTaskClient,
   type CloudTask,
   type DependencyCacheManifest,
   type MemoryRevision,
@@ -33,6 +32,7 @@ import {
 import { record, requiredString, nowIso } from "./contract.ts";
 import { CacheDigestMismatchError, CloudRuntimeError } from "./errors.ts";
 import { R2DependencyCache, type CacheExpectation } from "./cache.ts";
+import { CloudflareCloudTaskClient } from "./cloud-task.ts";
 import { CloudflareProjectMemory } from "./project-memory.ts";
 import { CloudflareRepositoryPublisher } from "./repository.ts";
 import { ProfileRegistry as LocalProfileRegistry } from "./profiles.ts";

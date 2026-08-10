@@ -49,23 +49,23 @@ export const runCli = (
       writeStdout(renderJson(envelope));
       return exitCodeFor(parsed);
     }
-    const configResult = yield* (dependencies.loadConfig ?? loadOperatorConfig).pipe(Effect.either);
-    if (configResult._tag === "Left") {
-      writeStdout(renderJson(failureEnvelope("result", configResult.left)));
-      return exitCodeFor(configResult.left);
+    const configResult = yield* (dependencies.loadConfig ?? loadOperatorConfig).pipe(Effect.result);
+    if (configResult._tag === "Failure") {
+      writeStdout(renderJson(failureEnvelope("result", configResult.failure)));
+      return exitCodeFor(configResult.failure);
     }
-    const config = configResult.right;
+    const config = configResult.success;
     const client = (dependencies.makeClient ?? makeCloudTaskClient)(config);
-    const result = yield* executeInvocation(parsed, client).pipe(Effect.either);
-    if (result._tag === "Left") {
-      const failure: CliFailure = result.left;
+    const result = yield* executeInvocation(parsed, client).pipe(Effect.result);
+    if (result._tag === "Failure") {
+      const failure: CliFailure = result.failure;
       writeStdout(renderJson(failureEnvelope(parsed.operation, failure)));
       return exitCodeFor(failure);
     }
-    writeStdout(renderJson(successEnvelope(parsed.operation, result.right)));
+    writeStdout(renderJson(successEnvelope(parsed.operation, result.success)));
     return 0;
   }).pipe(
-    Effect.catchAll((error) => {
+    Effect.catchCause((error) => {
       const failure = unexpectedFailure(error);
       writeStderr(JSON.stringify(failureEnvelope("result", failure)));
       return Effect.succeed(exitCodeFor(failure));

@@ -417,17 +417,6 @@
   ],
   "boundaries": [
     {
-      "id": "kernel",
-      "owner": "packages/kernel",
-      "owns": [
-        "Project state",
-        "admissible transitions",
-        "semantic laws",
-        "deterministic derivations"
-      ],
-      "excludes": ["I/O", "Effect runtime execution", "platform imports", "encoded unknown data"]
-    },
-    {
       "id": "protocol",
       "owner": "packages/protocol",
       "owns": [
@@ -449,26 +438,15 @@
       "excludes": ["live Layer selection", "Cloudflare", "Herdr", "OMP"]
     },
     {
-      "id": "project-authority",
+      "id": "cloud-runtime",
       "owner": "packages/cloudflare",
       "owns": [
-        "Project Durable Object transaction",
-        "D1, R2, Queue, and Workflow adapters",
-        "Cloudflare auth and transport",
-        "Container lifecycle adapter"
+        "Session and Project Memory Durable Objects",
+        "Cloudflare service adapters",
+        "repository publication authority",
+        "cache and Sandbox lifecycle"
       ],
-      "excludes": ["new domain semantics", "terminal presentation"]
-    },
-    {
-      "id": "session-host",
-      "owner": "packages/session-host",
-      "owns": [
-        "Herdr and OMP process integration",
-        "worktree custody",
-        "lifecycle observations",
-        "Evidence capture"
-      ],
-      "excludes": ["Project authority", "operator approval", "Merge policy"]
+      "excludes": ["terminal presentation", "harness-specific agent behavior"]
     },
     {
       "id": "control-plane",
@@ -545,10 +523,6 @@
       "owner": "toolchain"
     },
     {
-      "path": "packages/kernel/",
-      "owner": "semantic-kernel"
-    },
-    {
       "path": "packages/protocol/",
       "owner": "semantic-kernel"
     },
@@ -561,10 +535,6 @@
       "owner": "cloud-runtime"
     },
     {
-      "path": "packages/session-host/",
-      "owner": "session-host"
-    },
-    {
       "path": "apps/control-plane/",
       "owner": "cloud-runtime"
     },
@@ -575,34 +545,6 @@
     {
       "path": "infra/alchemy.run.ts",
       "owner": "cloud-runtime"
-    },
-    {
-      "path": "infra/project-container/Dockerfile",
-      "owner": "session-host"
-    },
-    {
-      "path": "infra/project-container/versions.json",
-      "owner": "session-host"
-    },
-    {
-      "path": "infra/project-container/herdr.toml",
-      "owner": "session-host"
-    },
-    {
-      "path": "fixtures/tracer-0001/",
-      "owner": "acceptance"
-    },
-    {
-      "path": "fixtures/tracer-0001/manifest.json",
-      "owner": "acceptance"
-    },
-    {
-      "path": "acceptance/0001/",
-      "owner": "acceptance"
-    },
-    {
-      "path": "acceptance/0001/evidence.json",
-      "owner": "acceptance"
     }
   ],
   "batches": [
@@ -645,32 +587,26 @@
     {
       "id": "semantic-kernel",
       "depends_on": ["toolchain"],
-      "owns": ["packages/kernel/", "packages/protocol/", "packages/runtime/"],
-      "done_when": "Decoded commands drive accepted and rejected pure transitions; ProjectAuthority, ArtifactStore, and SessionHost contracts are exported and contract-tested; laws cover authority, idempotency, revision safety, retry identity, Gate derivation, and provenance."
+      "owns": ["packages/protocol/", "packages/runtime/"],
+      "done_when": "Strict schemas and Effect service contracts define the complete 0002 Cloud Task, Session, Project Memory, repository publication, cache, and Profile boundaries."
     },
     {
       "id": "cloud-runtime",
       "depends_on": ["semantic-kernel"],
       "owns": ["packages/cloudflare/", "apps/control-plane/", "infra/alchemy.run.ts"],
-      "done_when": "The Project Durable Object, transactional outbox, R2 ordering, D1 projection, deterministic Workflow identity, Queue, Session Workflow, auth/query Grants, attach-resolution lifecycle, Container lease, compatibility date/flags, Cron reconciliation, and Worker composition root satisfy the frozen protocol/runtime contracts."
-    },
-    {
-      "id": "session-host",
-      "depends_on": ["semantic-kernel"],
-      "owns": ["packages/session-host/", "infra/project-container/"],
-      "done_when": "The digest-pinned Container starts pinned Herdr/OMP without resume, isolates every Session UID from sibling credentials and the Herdr socket, idempotently starts one process, freezes and checks one candidate snapshot, persists Workspace/Handoff manifests, reports typed lifecycle observations, and treats process loss as Session interruption."
+      "done_when": "Flue Session Durable Objects, one Sandbox per Session, revisioned Project Memory, content-addressed cache restore, governed GitHub publication, reusable Profiles, and authenticated Cloud Task routing uphold the frozen 0002 contract."
     },
     {
       "id": "terminal-client",
       "depends_on": ["semantic-kernel"],
       "owns": ["apps/cli/"],
-      "done_when": "The work CLI and MCP roots use only the frozen protocol schemas, bind actor identity, honor the fixed JSON/exit-code contract, obtain a fresh attach resolution, verify plain SSH, and attach Herdr through the documented Cloudflare proxy."
+      "done_when": "The work CLI exposes only the five authenticated 0002 Session operations with strict wire decoding, stable JSON envelopes, and private credential-file loading."
     },
     {
       "id": "acceptance",
-      "depends_on": ["cloud-runtime", "session-host", "terminal-client"],
-      "owns": ["fixtures/tracer-0001/", "acceptance/0001/"],
-      "done_when": "The exact fixture, negative controls, evidence bundle, local preflight, and deployed Cloudflare tracer satisfy every acceptance step and falsifier in design-specs/0001-cloud-herdr-omp-tracer.md."
+      "depends_on": ["cloud-runtime", "terminal-client"],
+      "owns": ["acceptance/0002/"],
+      "done_when": "Paired treatment and harness-native baseline trials emit raw evidence and a deterministic threshold report against design-specs/0002-cloud-flue-session-workers.md."
     }
   ],
   "verification": [
@@ -700,39 +636,29 @@
       "requires": ["semantic-kernel"]
     },
     {
-      "command": "bun run test:kernel",
-      "proves": "Kernel examples and properties enforce transition, authority, idempotency, revision, retry, and derivation contracts.",
+      "command": "bun run test:protocol",
+      "proves": "Strict wire schemas reject malformed boundaries and uphold revision, grant, cache, and paired-trial invariants.",
       "requires": ["semantic-kernel"]
     },
     {
       "command": "bun run test:cloudflare",
-      "proves": "Worker, Durable Object, D1, R2, Queue, Workflow, Container lease, and reconciliation adapters uphold the runtime contract under workerd.",
+      "proves": "Cloud Task routing, Session lifecycle, Project Memory authority, cache, repository, Profile, and Sandbox adapters uphold the 0002 contract.",
       "requires": ["cloud-runtime"]
     },
     {
-      "command": "bun run test:session-host",
-      "proves": "The real pinned Herdr/OMP image satisfies lifecycle, worktree, Evidence, interruption, and capability boundaries.",
-      "requires": ["session-host"]
+      "command": "bun run test:cli",
+      "proves": "The terminal client preserves exact commands, routes, authentication, strict decoding, JSON envelopes, and exit codes.",
+      "requires": ["terminal-client"]
     },
     {
       "command": "bun run build",
-      "proves": "The CLI, MCP server, Container image context, and Worker closure build without forbidden runtime imports.",
-      "requires": ["cloud-runtime", "session-host", "terminal-client"]
-    },
-    {
-      "command": "bun run accept:0001:local",
-      "proves": "A real local OMP fixture journey reaches Proposal, rejects unauthorized Merge, then accepts operator-authorized Merge.",
-      "requires": ["acceptance", "Cloudflare credentials"]
-    },
-    {
-      "command": "bun run accept:0001:cloud",
-      "proves": "A deployed Cloudflare preview supports real Container SSH, Herdr remote attach, OMP execution, durable Evidence, governed Merge, and Container-loss recovery.",
-      "requires": ["acceptance", "operator deployment authority", "Cloudflare credentials"]
+      "proves": "The CLI and Cloudflare Worker closure build without forbidden runtime imports.",
+      "requires": ["cloud-runtime", "terminal-client"]
     },
     {
       "command": "bun run check",
-      "proves": "Exactly fmt:check, lint, audit:sources, typecheck, test:kernel, test:cloudflare, test:session-host, and build compose through one deterministic command; acceptance runs are excluded.",
-      "requires": ["semantic-kernel", "cloud-runtime", "session-host", "terminal-client"]
+      "proves": "Exactly fmt:check, lint, audit:sources, typecheck, protocol/cloudflare/CLI tests, and build compose through one deterministic command.",
+      "requires": ["semantic-kernel", "cloud-runtime", "terminal-client"]
     }
   ],
   "deviations": [

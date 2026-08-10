@@ -78,8 +78,8 @@ const sessionIdFromPayload = (payload: Record<string, unknown>, task?: CloudTask
 
 /** One Session DO owns private lifecycle, cursor, messages, cancellation, and terminal result. */
 export class SessionDurableObject implements DurableObject {
-  readonly #state: DurableObjectState;
-  readonly #env: CloudflareRuntimeEnv;
+  #state: DurableObjectState;
+  #env: CloudflareRuntimeEnv;
 
   constructor(state: DurableObjectState, env: CloudflareRuntimeEnv) {
     this.#state = state;
@@ -155,9 +155,9 @@ export interface CloudTaskRouterOptions {
 
 /** Authenticated adapter. A valid sessionId is never accepted as authorization. */
 export class CloudTaskRouter {
-  readonly #env: CloudflareRuntimeEnv;
-  readonly #expectedToken: string | undefined;
-  readonly #expectedCaller: string | undefined;
+  #env: CloudflareRuntimeEnv;
+  #expectedToken: string | undefined;
+  #expectedCaller: string | undefined;
 
   constructor(env: CloudflareRuntimeEnv, options: CloudTaskRouterOptions = {}) {
     this.#env = env;
@@ -211,8 +211,8 @@ export class CloudTaskRouter {
 
 /** Production cloud-task client; unavailable bindings are typed failures, never local execution. */
 export class CloudflareCloudTaskClient {
-  readonly #binding: Fetcher | undefined;
-  readonly #token: string | undefined;
+  #binding: Fetcher | undefined;
+  #token: string | undefined;
 
   constructor(binding: Fetcher | undefined, token: string | undefined) {
     this.#binding = binding;
@@ -260,8 +260,8 @@ export class CloudflareCloudTaskClient {
 
 /** Focused-test directory with the same idempotent SessionState semantics, not a provider fallback. */
 export class InMemoryCloudTaskDirectory {
-  readonly #sessions = new Map<string, SessionState>();
-  readonly #token: string;
+  #sessions = new Map<string, SessionState>();
+  #token: string;
 
   constructor(token = "test-token") {
     this.#token = token;

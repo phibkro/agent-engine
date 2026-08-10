@@ -124,10 +124,10 @@ export type {
 };
 
 /** Decode every public/persisted boundary with strict excess-property rejection. */
-export const decode = <S extends Schema.Top>(schema: S, value: unknown): S["Type"] =>
+export const decode = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(value);
 
-export const encode = <S extends Schema.Top>(schema: S, value: S["Type"]): unknown =>
+export const encode = <S extends Schema.ConstraintEncoder<unknown>>(schema: S, value: S["Type"]): unknown =>
   Schema.encodeSync(schema)(value);
 
 export const json = (value: unknown): string => JSON.stringify(value);
@@ -159,6 +159,6 @@ export const nowIso = (): string => new Date().toISOString();
 export const newId = (prefix: string): string => `${prefix}${crypto.randomUUID()}`;
 
 export const sha256 = async (bytes: Uint8Array): Promise<string> => {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 };

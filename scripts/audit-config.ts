@@ -90,12 +90,12 @@ const expectedScripts: Readonly<Record<string, string>> = {
   "audit:imports": "bun scripts/audit-imports.ts",
   "audit:config": "bun scripts/audit-config.ts",
   typecheck: "bun scripts/typecheck.ts",
-  "test:kernel": "bun run --cwd packages/kernel test",
+  "test:protocol": "bun run --cwd packages/protocol test",
   "test:cloudflare": "bun run --cwd packages/cloudflare test",
-  "test:session-host": "bun run --cwd packages/session-host test",
+  "test:cli": "bun run --cwd apps/cli test",
   build: "bun run --cwd apps/cli build && bun run --cwd apps/control-plane build",
   check:
-    "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:kernel && bun run test:cloudflare && bun run test:session-host && bun run build",
+    "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run build",
 };
 
 const run = async (): Promise<void> => {
@@ -169,11 +169,9 @@ const run = async (): Promise<void> => {
       errors.push("tsconfig compilerOptions.strict must be true");
     const paths = asRecord(compilerOptions["paths"]);
     for (const alias of [
-      "@work-engine/kernel",
       "@work-engine/protocol",
       "@work-engine/runtime",
       "@work-engine/cloudflare",
-      "@work-engine/session-host",
       "@work-engine/control-plane",
       "@work-engine/cli",
     ]) {

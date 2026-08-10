@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CacheDigestMismatchError,
   InMemoryCloudTaskDirectory,
+  MemoryRevisionSchema,
   ProjectMemoryState,
   SessionState,
   TrustedRepositoryPublisher,
@@ -14,6 +15,7 @@ import type { CloudTask, DependencyCacheManifest } from "../src/index.ts";
 
 const uuid = "00000000-0000-4000-8000-000000000001";
 const digest = (hex: string): string => `sha256:${hex.repeat(64 / hex.length)}`;
+const initialMemoryRevision = MemoryRevisionSchema.make(0);
 const task = (): CloudTask => ({
   _tag: "CloudTask",
   taskId: `tsk_${uuid}`,
@@ -68,13 +70,12 @@ describe("Project Memory authority", () => {
       source: "worker",
       observedAt: "2026-08-10T00:00:00.000Z",
     };
-    const proposal = memory.proposeMemory(task().sessionId, 0, "build uses Bun", provenance);
-    const revision = memory.acceptMemory(proposal.proposalId, 0);
-    expect(memory.readContext(0)).toHaveLength(0);
+    const proposal = memory.proposeMemory(task().sessionId, initialMemoryRevision, "build uses Bun", provenance);
+    const revision = memory.acceptMemory(proposal.proposalId, initialMemoryRevision);
+    expect(memory.readContext(initialMemoryRevision)).toHaveLength(0);
     expect(memory.readContext(revision.memoryRevision)).toHaveLength(1);
-    const stale = memory.proposeMemory(task().sessionId, 0, "stale claim", provenance);
-    expect(() => memory.acceptMemory(stale.proposalId, 0)).toThrow(/Expected memory revision/iu);
-    expect(memory.readContext(revision.memoryRevision)).toHaveLength(1);
+    const stale = memory.proposeMemory(task().sessionId, initialMemoryRevision, "stale claim", provenance);
+    expect(() => memory.acceptMemory(stale.proposalId, initialMemoryRevision)).toThrow(/Expected memory revision/iu);
   });
 });
 

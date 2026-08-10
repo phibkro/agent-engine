@@ -6,7 +6,7 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "lib": ["ES2022"],
-    "types": ["bun"],
+    "types": ["bun", "@cloudflare/workers-types"],
     "plugins": [
       {
         "name": "@effect/language-service",
@@ -31,11 +31,9 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "paths": {
-      "@work-engine/kernel": ["./packages/kernel/src/index.ts"],
       "@work-engine/protocol": ["./packages/protocol/src/index.ts"],
       "@work-engine/runtime": ["./packages/runtime/src/index.ts"],
       "@work-engine/cloudflare": ["./packages/cloudflare/src/index.ts"],
-      "@work-engine/session-host": ["./packages/session-host/src/index.ts"],
       "@work-engine/control-plane": ["./apps/control-plane/src/index.ts"],
       "@work-engine/cli": ["./apps/cli/src/index.ts"]
     }

@@ -601,8 +601,10 @@ export const decodeUnknownStrict = <S extends Schema.ConstraintDecoder<unknown>>
   input: unknown,
 ): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
 
-export const encodeUnknownStrict = <S extends Schema.Top>(schema: S, input: unknown): unknown =>
-  Schema.encodeSync(schema)(input);
+export const encodeUnknownStrict = <S extends Schema.ConstraintEncoder<unknown>>(
+  schema: S,
+  input: S["Type"],
+): unknown => Schema.encodeSync(schema)(input);
 
 export const decodeCloudTaskRequest = (input: unknown): CloudTaskRequest =>
   decodeUnknownStrict(CloudTaskRequestSchema, input);

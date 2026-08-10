@@ -65,7 +65,8 @@ export interface TrustedCacheWriter {
 }
 
 /** R2 cache adapter. Only this trusted setup boundary can write payloads. */
-  readonly #bucket: R2Bucket | undefined;
+export class R2DependencyCache {
+  #bucket: R2Bucket | undefined;
 
   constructor(bucket: R2Bucket | undefined) {
     this.#bucket = bucket;
@@ -105,7 +106,7 @@ export interface TrustedCacheWriter {
 
 /** Session-facing cache boundary deliberately omits write. */
 export class SessionDependencyCache {
-  readonly #cache: Pick<R2DependencyCache, "restore">;
+  #cache: Pick<R2DependencyCache, "restore">;
   constructor(cache: Pick<R2DependencyCache, "restore">) {
     this.#cache = cache;
   }

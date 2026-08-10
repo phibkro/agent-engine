@@ -6,6 +6,7 @@ export default defineConfig({
     pool: cloudflarePool({
       main: "./test/worker.ts",
       miniflare: {
+        compatibilityDate: "2026-08-08",
         bindings: {
           CLOUD_TASK_AUTH_TOKEN: "test-token",
           CLOUD_TASK_ROUTER_SECRET: "test-router-secret",

@@ -17,7 +17,7 @@ export interface SandboxProvider {
 
 /** Cloudflare Sandbox adapter. Missing provider bindings fail explicitly; no local shell fallback exists. */
 export class CloudflareSandboxProvider implements SandboxProvider {
-  readonly #binding: Fetcher | undefined;
+  #binding: Fetcher | undefined;
 
   constructor(binding: Fetcher | undefined) {
     this.#binding = binding;
@@ -55,9 +55,9 @@ export class CloudflareSandboxProvider implements SandboxProvider {
 
 /** Serializes replacement identities and requires predecessor termination before acceptance. */
 export class SessionSandboxLifecycle {
-  readonly #provider: SandboxProvider;
+  #provider: SandboxProvider;
   #live: SandboxAllocation | undefined;
-  readonly #predecessors: SandboxAllocation[] = [];
+  #predecessors: SandboxAllocation[] = [];
 
   constructor(provider: SandboxProvider) {
     this.#provider = provider;
