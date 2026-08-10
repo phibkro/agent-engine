@@ -35,6 +35,7 @@ test("accepts an exact environment creation request and rejects malformed author
 test("decodes one durable ready environment with a generation-scoped checkpoint", () => {
   const snapshot = {
     _tag: "EnvironmentSnapshot",
+    schemaVersion: "work-engine/v2",
     environmentId: "demo-environment",
     ownerId: "operator-1",
     repository: { owner: "example", name: "project" },

@@ -587,6 +587,9 @@ export const TrialArmSchema = Schema.Struct({
 });
 export type TrialArm = typeof TrialArmSchema.Type;
 
+const equivalentCacheManifest = Schema.toEquivalence(DependencyCacheManifestSchema);
+const equivalentVerificationCommands = Schema.toEquivalence(StringArraySchema);
+
 export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
   trialId: NonEmptyStringSchema,
   taskId: TaskIdSchema,
@@ -599,11 +602,11 @@ export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
   Schema.makeFilter((manifest) => {
     const { baseline, treatment } = manifest;
     const sameBudget = canonicalize(baseline.budget) === canonicalize(treatment.budget);
-    const sameCache =
-      JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
-    const sameCommands =
-      JSON.stringify(baseline.verificationCommands) ===
-      JSON.stringify(treatment.verificationCommands);
+    const sameCache = equivalentCacheManifest(baseline.cacheManifest, treatment.cacheManifest);
+    const sameCommands = equivalentVerificationCommands(
+      baseline.verificationCommands,
+      treatment.verificationCommands,
+    );
     return (
       (baseline.model === treatment.model &&
         baseline.baseCommit === treatment.baseCommit &&
