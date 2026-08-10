@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "work-engine/founding-sources/v1",
+  "importedAt": "2026-08-10",
+  "sources": [
+    {
+      "role": "north-star-vision",
+      "sourcePath": "/home/nori/Downloads/Project Agent Runtime(1).md",
+      "repositoryPath": "docs/founding/vision.md",
+      "sha256": "4453ffe39c9345c2071514fcc2457291d796872cc794b96dd0665be8fb32ed89"
+    },
+    {
+      "role": "draft-v0.5-ontology",
+      "sourcePath": "/home/nori/Downloads/Project Agent Runtime.md",
+      "repositoryPath": "docs/founding/ontology.md",
+      "sha256": "fc8e68a5bf3279b404d8c477ece2f6d9c7f6efc8a596e84d93535f2c5b1bd049"
+    }
+  ]
+}

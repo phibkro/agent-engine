@@ -1,0 +1,8 @@
+.worktrees/
+node_modules/
+dist/
+coverage/
+.wrangler/
+.alchemy/
+.env*
+!.env.example
