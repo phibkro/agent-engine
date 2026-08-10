@@ -1,3 +1,5 @@
+export * from "./wire.ts";
+
 import type * as Effect from "effect/Effect";
 import type {
   ArtifactReceipt,
