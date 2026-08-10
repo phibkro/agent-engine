@@ -1,659 +1,254 @@
 import { Effect, Schema } from "effect";
 import {
-  AgentProfileIdSchema,
-  ApproveProposalSchema,
-  CancelSessionSchema,
-  CommandIdSchema,
-  CreateProjectSchema,
-  CreateProjectRequestSchema,
-  EffectIdSchema,
-  EvidenceIdSchema,
-  EvidenceSchema,
-  EventRevisionSchema,
-  GrantIdSchema,
-  MergeIdSchema,
-  MergeProposalSchema,
-  OpenManagerSessionSchema,
-  PolicyIdSchema,
-  PolicySchema,
-  ProjectIdSchema,
-  ProposalIdSchema,
-  RejectProposalSchema,
-  ResourceIdSchema,
+  CloudTaskSchema,
+  MessageIdSchema,
   SessionIdSchema,
-  Sha256DigestSchema,
-  TimestampSchema,
-  SchemaVersionSchema,
-  SubmitWorkSchema,
-  WorkIdSchema,
-  WorkProcessIdSchema,
-  type CommandResult,
-  type CreateProjectRequest,
-  type EventRevision,
-  type ProjectCommand,
-  type ProjectId,
-  type ProjectObservation,
-  type WorkId,
+  type CloudTask,
+  type MessageId,
+  type SessionId,
 } from "@work-engine/protocol";
-import { AttachResolutionRequestSchema, type ProjectCreateResult } from "@work-engine/runtime";
-import { runAttach, type AttachOutcome } from "./attach.ts";
+import type { CloudTaskClient } from "@work-engine/runtime";
+import {
+  isCloudTaskClientError,
+  makeCloudTaskClient,
+  type CloudTaskClientError,
+} from "./client.ts";
 import { loadOperatorConfig, type ConfigError, type OperatorConfig } from "./config.ts";
-import { makeRemoteClient, type RemoteClient } from "./client.ts";
-import type { CliFailure } from "./output.ts";
 import { readTextFile } from "./platform.ts";
 
+export const SessionOperation = {
+  spawn: "spawn",
+  send: "send",
+  observe: "observe",
+  cancel: "cancel",
+  result: "result",
+} as const;
+export type SessionOperation = (typeof SessionOperation)[keyof typeof SessionOperation];
+
 export interface ParsedInvocation {
-  readonly command: string;
-  readonly json: boolean;
-  readonly flags: ReadonlyMap<string, string | true>;
-  readonly positional: ReadonlyArray<string>;
+  readonly operation: SessionOperation;
+  readonly options: Readonly<Record<string, string>>;
 }
 
-export type ParseError = { readonly _tag: "UsageFailure"; readonly reason: string };
+export type ParseFailure = {
+  readonly _tag: "UsageFailure";
+  readonly reason: string;
+};
 
-const COMMANDS: ReadonlySet<string> = new Set([
-  "project create",
-  "submit",
-  "attach",
-  "status",
-  "session start",
-  "session cancel",
-  "evidence show",
-  "proposal show",
-  "approve",
-  "reject",
-  "merge",
-  "why",
-  "mcp",
-]);
+const OPTION_NAMES: Readonly<Record<SessionOperation, Readonly<Record<string, true>>>> = {
+  spawn: { "session-id": true, "task-file": true },
+  send: { "session-id": true, "message-id": true, message: true },
+  observe: { "session-id": true, after: true },
+  cancel: { "session-id": true, reason: true },
+  result: { "session-id": true },
+};
 
-const commandName = (
+const REQUIRED_OPTIONS: Readonly<Record<SessionOperation, ReadonlyArray<string>>> = {
+  spawn: ["session-id", "task-file"],
+  send: ["session-id", "message-id", "message"],
+  observe: ["session-id"],
+  cancel: ["session-id", "reason"],
+  result: ["session-id"],
+};
+
+const usage = (reason: string): ParseFailure => ({ _tag: "UsageFailure", reason });
+
+const OPERATION_BY_NAME: Readonly<Record<string, SessionOperation>> = {
+  spawn: SessionOperation.spawn,
+  send: SessionOperation.send,
+  observe: SessionOperation.observe,
+  cancel: SessionOperation.cancel,
+  result: SessionOperation.result,
+};
+
+const operationOf = (value: string): SessionOperation | undefined => OPERATION_BY_NAME[value];
+
+export const parseInvocation = (
   argv: ReadonlyArray<string>,
-): { readonly command: string; readonly consumed: number } | ParseError => {
-  const first = argv[0];
-  if (first === undefined) return { _tag: "UsageFailure", reason: "a work command is required" };
-  if (first === "project" || first === "session" || first === "evidence" || first === "proposal") {
-    const second = argv[1];
-    if (second === undefined)
-      return { _tag: "UsageFailure", reason: `${first} requires a subcommand` };
-    const command = `${first} ${second}`;
-    if (COMMANDS.has(command)) return { command, consumed: 2 };
-    return { _tag: "UsageFailure", reason: `unknown command ${command}` };
-  }
-  if (COMMANDS.has(first)) return { command: first, consumed: 1 };
-  return { _tag: "UsageFailure", reason: `unknown command ${first}` };
-};
+): ParsedInvocation | ParseFailure => {
+  if (argv[0] !== "session") return usage("expected one of: session spawn|send|observe|cancel|result");
+  const operationValue = argv[1];
+  if (operationValue === undefined) return usage("missing session operation");
+  const operation = operationOf(operationValue);
+  if (operation === undefined) return usage(`unknown session operation: ${operationValue}`);
 
-export const parseInvocation = (argv: ReadonlyArray<string>): ParsedInvocation | ParseError => {
-  const named = commandName(argv);
-  if ("_tag" in named) return named;
-  const flags = new Map<string, string | true>();
-  const positional: string[] = [];
-  let json = false;
-  for (let index = named.consumed; index < argv.length; index += 1) {
+  const options: Record<string, string> = {};
+  for (let index = 2; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === undefined) continue;
-    if (argument === "--json") {
-      json = true;
-      continue;
+    if (argument === undefined || !argument.startsWith("--")) {
+      return usage(`unexpected argument: ${argument ?? ""}`);
     }
-    if (!argument.startsWith("--")) {
-      positional.push(argument);
-      continue;
+    const withoutPrefix = argument.slice(2);
+    const equals = withoutPrefix.indexOf("=");
+    const name = equals === -1 ? withoutPrefix : withoutPrefix.slice(0, equals);
+    if (OPTION_NAMES[operation][name] !== true) return usage(`unknown option: --${name}`);
+    if (options[name] !== undefined) return usage(`duplicate option: --${name}`);
+    const inlineValue = equals === -1 ? undefined : withoutPrefix.slice(equals + 1);
+    const value = inlineValue ?? argv[index + 1];
+    if (value === undefined || value.length === 0 || (inlineValue === undefined && value.startsWith("--"))) {
+      return usage(`missing value for --${name}`);
     }
-    const equal = argument.indexOf("=");
-    const key = equal >= 0 ? argument.slice(2, equal) : argument.slice(2);
-    if (key.length === 0) return { _tag: "UsageFailure", reason: "empty option name" };
-    if (equal >= 0) {
-      const value = argument.slice(equal + 1);
-      if (value.length === 0)
-        return { _tag: "UsageFailure", reason: `option --${key} requires a value` };
-      flags.set(key, value);
-      continue;
-    }
-    const next = argv[index + 1];
-    if (next !== undefined && !next.startsWith("--")) {
-      flags.set(key, next);
-      index += 1;
-    } else {
-      flags.set(key, true);
-    }
+    options[name] = value;
+    if (inlineValue === undefined) index += 1;
   }
-  return { command: named.command, json, flags, positional };
+  for (const name of REQUIRED_OPTIONS[operation]) {
+    if (options[name] === undefined) return usage(`missing required option: --${name}`);
+  }
+  return { operation, options };
 };
 
-const fail = (reason: string): Effect.Effect<never, ParseError> =>
-  Effect.fail({ _tag: "UsageFailure", reason });
-
-const flag = (invocation: ParsedInvocation, name: string): string | undefined => {
-  const value = invocation.flags.get(name);
-  return typeof value === "string" ? value : undefined;
-};
-
-const requiredFlag = (
+const requiredOption = (
   invocation: ParsedInvocation,
   name: string,
-): Effect.Effect<string, ParseError> => {
-  const value = flag(invocation, name);
-  return value === undefined ? fail(`--${name} is required`) : Effect.succeed(value);
-};
-
-const positionalOrFlag = (
-  invocation: ParsedInvocation,
-  position: number,
-  name: string,
-): Effect.Effect<string, ParseError> => {
-  const value = flag(invocation, name) ?? invocation.positional[position];
+): Effect.Effect<string, ParseFailure> => {
+  const value = invocation.options[name];
   return value === undefined
-    ? fail(`${name === "project" ? "a Project id" : `--${name}`} is required`)
+    ? Effect.fail(usage(`missing required option: --${name}`))
     : Effect.succeed(value);
 };
+
+const optionalOption = (
+  invocation: ParsedInvocation,
+  name: string,
+): string | undefined => invocation.options[name];
 
 const parseWith = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   value: unknown,
-  name: string,
-): Effect.Effect<S["Type"], ParseError> =>
+  label: string,
+): Effect.Effect<S["Type"], ParseFailure> =>
   Schema.decodeUnknownEffect(schema, { onExcessProperty: "error" })(value).pipe(
-    Effect.mapError((error) => ({
-      _tag: "UsageFailure" as const,
-      reason: `invalid ${name}: ${String(error)}`,
-    })),
+    Effect.mapError((error) => usage(`${label}: ${String(error)}`)),
   );
 
-const parseNatural = (value: string, name: string): Effect.Effect<number, ParseError> => {
-  const number = Number(value);
-  return Number.isSafeInteger(number) && number >= 0
-    ? Effect.succeed(number)
-    : fail(`${name} must be a non-negative safe integer`);
-};
+const parseSessionId = (
+  invocation: ParsedInvocation,
+): Effect.Effect<SessionId, ParseFailure> =>
+  requiredOption(invocation, "session-id").pipe(
+    Effect.flatMap((value) => parseWith(SessionIdSchema, value, "session id")),
+  );
+const parseMessageId = (
+  invocation: ParsedInvocation,
+): Effect.Effect<MessageId, ParseFailure> =>
+  requiredOption(invocation, "message-id").pipe(
+    Effect.flatMap((value) => parseWith(MessageIdSchema, value, "message id")),
+  );
 
-const timestamp = (millisecondsFromNow: number): string =>
-  new Date(Date.now() + millisecondsFromNow).toISOString();
+const parseNatural = (
+  value: string,
+  label: string,
+): Effect.Effect<number, ParseFailure> => {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0
+    ? Effect.succeed(parsed)
+    : Effect.fail(usage(`${label} must be a non-negative integer`));
+};
 
 const readJsonFile = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   path: string,
-  name: string,
-): Effect.Effect<S["Type"], ParseError> =>
+): Effect.Effect<S["Type"], ParseFailure> =>
   Effect.gen(function* () {
     const text = yield* readTextFile(path).pipe(
-      Effect.mapError((error) => ({
-        _tag: "UsageFailure" as const,
-        reason: `cannot read ${name}: ${error instanceof Error ? error.message : String(error)}`,
-      })),
+      Effect.mapError((error) => usage(`cannot read ${path}: ${String(error)}`)),
     );
     const parsed = yield* Effect.try({
       try: () => JSON.parse(text) as unknown,
-      catch: (error) => ({
-        _tag: "UsageFailure" as const,
-        reason: `invalid ${name}: ${error instanceof Error ? error.message : String(error)}`,
-      }),
+      catch: (error) => usage(`invalid JSON in ${path}: ${String(error)}`),
     });
-    return yield* parseWith(schema, parsed, name);
+    return yield* parseWith(schema, parsed, path);
   });
 
-const acceptedResult = (result: CommandResult): Effect.Effect<CommandResult, CliFailure> => {
-  if (result._tag === "Rejected") {
-    return Effect.fail({
-      _tag: "DomainFailure",
-      reason: `${result.code}: ${JSON.stringify(result.details)}`,
-    } as const);
-  }
-  return Effect.succeed(result);
+export const readCloudTask = (path: string): Effect.Effect<CloudTask, ParseFailure> =>
+  readJsonFile(CloudTaskSchema, path);
+
+const clientFailure = (error: unknown): CloudTaskClientError => {
+  if (isCloudTaskClientError(error)) return error;
+  return { _tag: "CloudTaskUnavailable", reason: String(error) };
 };
 
-const acceptedCreateResult = (
-  result: ProjectCreateResult,
-): Effect.Effect<ProjectCreateResult, CliFailure> => {
-  if (result.result._tag === "Rejected") {
-    return Effect.fail({
-      _tag: "DomainFailure",
-      reason: `${result.result.code}: ${JSON.stringify(result.result.details)}`,
-    } as const);
-  }
-  return Effect.succeed(result);
-};
-
-const observationRevision = (
+const executeSpawn = (
   invocation: ParsedInvocation,
-  observation: ProjectObservation,
-): Effect.Effect<EventRevision, ParseError> => {
-  const value = flag(invocation, "expected-revision");
-  return value === undefined
-    ? Effect.succeed(observation.eventRevision)
-    : parseNatural(value, "--expected-revision").pipe(
-        Effect.flatMap((revision) => parseWith(EventRevisionSchema, revision, "expected revision")),
+  client: CloudTaskClient,
+): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
+  Effect.gen(function* () {
+    const sessionId = yield* parseSessionId(invocation);
+    const taskFile = yield* requiredOption(invocation, "task-file");
+    const task = yield* readCloudTask(taskFile);
+    if (task.sessionId !== sessionId) {
+      return yield* Effect.fail(
+        usage("task.sessionId must equal the caller-provided --session-id"),
       );
-};
+    }
+    return yield* client.spawn(sessionId, task).pipe(Effect.mapError(clientFailure));
+  });
 
-const actorCommand = (
-  client: RemoteClient,
+const executeSend = (
   invocation: ParsedInvocation,
-  projectId: ProjectId,
-  command: ProjectCommand,
-  observation?: ProjectObservation,
-): Effect.Effect<CommandResult, CliFailure> =>
+  client: CloudTaskClient,
+): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
-    const revision =
-      observation === undefined
-        ? yield* parseNatural(
-            flag(invocation, "expected-revision") ?? "0",
-            "--expected-revision",
-          ).pipe(
-            Effect.flatMap((value) => parseWith(EventRevisionSchema, value, "expected revision")),
-          )
-        : yield* observationRevision(invocation, observation);
-    const id = yield* parseWith(CommandIdSchema, `cmd_${crypto.randomUUID()}`, "command id");
-    return yield* client
-      .dispatch(projectId, id, revision, command)
-      .pipe(Effect.flatMap(acceptedResult));
+    const sessionId = yield* parseSessionId(invocation);
+    const messageId = yield* parseMessageId(invocation);
+    const message = yield* requiredOption(invocation, "message");
+    return yield* client.send(sessionId, messageId, message).pipe(Effect.mapError(clientFailure));
   });
 
-export const buildCreateProjectRequest = (
+const executeObserve = (
   invocation: ParsedInvocation,
-): Effect.Effect<CreateProjectRequest, ParseError> =>
+  client: CloudTaskClient,
+): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
-    const policyId = yield* parseWith(
-      PolicyIdSchema,
-      flag(invocation, "policy-id") ?? "pol_tracer_0001_v1",
-      "policy id",
-    );
-    const revision = yield* parseNatural(
-      flag(invocation, "policy-revision") ?? "0",
-      "--policy-revision",
-    );
-    const maxAttempts = yield* parseNatural(
-      flag(invocation, "max-attempts") ?? "2",
-      "--max-attempts",
-    );
-    const policy = yield* parseWith(
-      PolicySchema,
-      {
-        _tag: "Policy",
-        policyId,
-        revision,
-        requiredGates: [
-          "gat_session_completed",
-          "gat_candidate_present",
-          "gat_scope_valid",
-          "gat_check_passed",
-          "gat_human_approved",
-        ],
-        mergeCapability: "proposal.merge",
-        maxAttempts,
-      },
-      "policy",
-    );
-    const command = yield* parseWith(
-      CreateProjectSchema,
-      { _tag: "CreateProject", policy },
-      "create command",
-    );
-    return yield* parseWith(
-      CreateProjectRequestSchema,
-      {
-        schemaVersion: SchemaVersionSchema.make("work-engine/v1"),
-        commandId: yield* parseWith(CommandIdSchema, `cmd_${crypto.randomUUID()}`, "command id"),
-        command,
-      },
-      "create request",
-    );
+    const sessionId = yield* parseSessionId(invocation);
+    const after = optionalOption(invocation, "after");
+    const afterCursor = after === undefined ? 0 : yield* parseNatural(after, "after");
+    return yield* client.observe(sessionId, afterCursor).pipe(Effect.mapError(clientFailure));
   });
 
-const buildSubmitWork = (invocation: ParsedInvocation): Effect.Effect<ProjectCommand, ParseError> =>
-  Effect.gen(function* () {
-    const workId = yield* parseWith(
-      WorkIdSchema,
-      flag(invocation, "work-id") ?? `wrk_${crypto.randomUUID()}`,
-      "Work id",
-    );
-    const processId = yield* parseWith(
-      WorkProcessIdSchema,
-      flag(invocation, "work-process-id") ?? `wpr_${crypto.randomUUID()}`,
-      "Work Process id",
-    );
-    const objective = yield* requiredFlag(invocation, "objective");
-    const kind = yield* requiredFlag(invocation, "kind");
-    const requiredCheck = yield* requiredFlag(invocation, "required-check");
-    const writableScope = (flag(invocation, "writable-scope") ?? "src/greeting.ts")
-      .split(",")
-      .filter(Boolean);
-    const title = flag(invocation, "title");
-    const value: Record<string, unknown> = {
-      _tag: "SubmitWork",
-      workId,
-      workProcessId: processId,
-      objective,
-      kind,
-      writableScope,
-      requiredCheck,
-    };
-    if (title !== undefined) value["title"] = title;
-    return yield* parseWith(SubmitWorkSchema, value, "submit command");
-  });
-
-const buildManagerSession = (
+const executeCancel = (
   invocation: ParsedInvocation,
-): Effect.Effect<ProjectCommand, ParseError> =>
+  client: CloudTaskClient,
+): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
   Effect.gen(function* () {
-    const sessionId = yield* parseWith(
-      SessionIdSchema,
-      flag(invocation, "session-id") ?? `ses_${crypto.randomUUID()}`,
-      "Session id",
-    );
-    const workId = yield* parseWith(
-      WorkIdSchema,
-      yield* requiredFlag(invocation, "work"),
-      "Work id",
-    );
-    const profileId = yield* parseWith(
-      AgentProfileIdSchema,
-      flag(invocation, "profile") ?? `prf_${crypto.randomUUID()}`,
-      "Profile id",
-    );
-    const attempt = yield* parseNatural(flag(invocation, "attempt") ?? "0", "--attempt");
-    const contextReference = flag(invocation, "context") ?? "project-observation/current";
-    const deadline = yield* parseWith(
-      TimestampSchema,
-      flag(invocation, "deadline") ?? timestamp(30 * 60 * 1000),
-      "deadline",
-    );
-    const outputLimit = yield* parseNatural(
-      flag(invocation, "output-limit") ?? `${10 * 1024 * 1024}`,
-      "--output-limit",
-    );
-    const toolBudget = yield* parseNatural(
-      flag(invocation, "tool-budget") ?? "100",
-      "--tool-budget",
-    );
-    const resourceId = yield* parseWith(
-      ResourceIdSchema,
-      flag(invocation, "resource") ?? `res_${crypto.randomUUID()}`,
-      "Resource id",
-    );
-    const effectId = yield* parseWith(
-      EffectIdSchema,
-      flag(invocation, "effect") ?? `efx_${crypto.randomUUID()}`,
-      "Effect id",
-    );
-    return yield* parseWith(
-      OpenManagerSessionSchema,
-      {
-        _tag: "OpenManagerSession",
-        sessionId,
-        workId,
-        profileId,
-        attempt,
-        contextReference,
-        deadline,
-        outputLimit,
-        toolBudget,
-        resourceId,
-        effectId,
-      },
-      "session start command",
-    );
+    const sessionId = yield* parseSessionId(invocation);
+    const reason = yield* requiredOption(invocation, "reason");
+    return yield* client.cancel(sessionId, reason).pipe(Effect.mapError(clientFailure));
   });
 
-const buildCancelSession = (
+const executeResult = (
   invocation: ParsedInvocation,
-): Effect.Effect<ProjectCommand, ParseError> =>
-  Effect.gen(function* () {
-    const sessionId = yield* parseWith(
-      SessionIdSchema,
-      yield* requiredFlag(invocation, "session"),
-      "Session id",
-    );
-    const effectId = yield* parseWith(
-      EffectIdSchema,
-      flag(invocation, "effect") ?? `efx_${crypto.randomUUID()}`,
-      "Effect id",
-    );
-    const reason = flag(invocation, "reason") ?? "operator requested cancellation";
-    return yield* parseWith(
-      CancelSessionSchema,
-      { _tag: "CancelSession", sessionId, effectId, reason },
-      "session cancel command",
-    );
-  });
-
-const buildApproval = (invocation: ParsedInvocation): Effect.Effect<ProjectCommand, ParseError> =>
-  Effect.gen(function* () {
-    const proposalId = yield* parseWith(
-      ProposalIdSchema,
-      yield* requiredFlag(invocation, "proposal"),
-      "Proposal id",
-    );
-    const evidencePath = yield* requiredFlag(invocation, "evidence");
-    const evidence = yield* readJsonFile(EvidenceSchema, evidencePath, "approval evidence");
-    return yield* parseWith(
-      ApproveProposalSchema,
-      { _tag: "ApproveProposal", proposalId, evidence },
-      "approval command",
-    );
-  });
-
-const buildRejection = (invocation: ParsedInvocation): Effect.Effect<ProjectCommand, ParseError> =>
-  Effect.gen(function* () {
-    const proposalId = yield* parseWith(
-      ProposalIdSchema,
-      yield* requiredFlag(invocation, "proposal"),
-      "Proposal id",
-    );
-    const reason = yield* requiredFlag(invocation, "reason");
-    return yield* parseWith(
-      RejectProposalSchema,
-      { _tag: "RejectProposal", proposalId, reason },
-      "rejection command",
-    );
-  });
-
-const buildMerge = (invocation: ParsedInvocation): Effect.Effect<ProjectCommand, ParseError> =>
-  Effect.gen(function* () {
-    const mergeId = yield* parseWith(
-      MergeIdSchema,
-      flag(invocation, "merge-id") ?? `mrg_${crypto.randomUUID()}`,
-      "Merge id",
-    );
-    const proposalId = yield* parseWith(
-      ProposalIdSchema,
-      yield* requiredFlag(invocation, "proposal"),
-      "Proposal id",
-    );
-    const grantId = yield* parseWith(
-      GrantIdSchema,
-      yield* requiredFlag(invocation, "grant"),
-      "Grant id",
-    );
-    const candidateDigest = yield* parseWith(
-      Sha256DigestSchema,
-      yield* requiredFlag(invocation, "candidate"),
-      "candidate digest",
-    );
-    return yield* parseWith(
-      MergeProposalSchema,
-      { _tag: "MergeProposal", mergeId, proposalId, grantId, candidateDigest },
-      "merge command",
-    );
-  });
-
-const observationFor = (
-  client: RemoteClient,
-  projectId: ProjectId,
-): Effect.Effect<ProjectObservation, CliFailure> => client.observe(projectId);
-
-const projectIdFor = (invocation: ParsedInvocation): Effect.Effect<ProjectId, ParseError> =>
-  positionalOrFlag(invocation, 0, "project").pipe(
-    Effect.flatMap((value) => parseWith(ProjectIdSchema, value, "Project id")),
+  client: CloudTaskClient,
+): Effect.Effect<unknown, ParseFailure | CloudTaskClientError> =>
+  parseSessionId(invocation).pipe(
+    Effect.flatMap((sessionId) => client.result(sessionId).pipe(Effect.mapError(clientFailure))),
   );
 
-const attachWorkIdFor = (invocation: ParsedInvocation): Effect.Effect<WorkId, ParseError> => {
-  const value = flag(invocation, "work") ?? invocation.positional[1];
-  return value === undefined
-    ? fail("--work is required")
-    : parseWith(WorkIdSchema, value, "Work id");
-};
-
-const findEvent = (
-  observation: ProjectObservation,
-  eventTag: "EvidenceRecorded" | "ProposalSubmitted",
-  id: string,
-): unknown =>
-  observation.history.find((entry) => {
-    if (eventTag === "EvidenceRecorded" && entry.event._tag === eventTag) {
-      return entry.event.evidence.evidenceId === id;
-    }
-    if (eventTag === "ProposalSubmitted" && entry.event._tag === eventTag) {
-      return entry.event.proposal.proposalId === id;
-    }
-    return false;
-  }) ?? null;
-
-const why = (
-  observation: ProjectObservation,
-  invocation: ParsedInvocation,
-): Effect.Effect<unknown, CliFailure> =>
-  Effect.gen(function* () {
-    const revisionValue = flag(invocation, "event-revision");
-    const targetRevision =
-      revisionValue === undefined
-        ? undefined
-        : yield* parseNatural(revisionValue, "--event-revision");
-    const selected =
-      targetRevision === undefined
-        ? observation.history
-        : observation.history.filter((entry) => entry.eventRevision === targetRevision);
-    if (selected.length === 0) {
-      return yield* Effect.fail({
-        _tag: "DomainFailure",
-        reason: "canonical event reference was not found",
-      } as const);
-    }
-    return {
-      _tag: "Why",
-      projectId: observation.projectId,
-      sourceDigest: observation.sourceDigest,
-      references: selected.map((entry) => ({
-        eventRevision: entry.eventRevision,
-        eventId: entry.commandId,
-        eventTag: entry.event._tag,
-      })),
-    };
-  });
-
-export type CommandResultData =
-  | ProjectCreateResult
-  | CommandResult
-  | ProjectObservation
-  | AttachOutcome
-  | unknown;
+export type CommandFailure = ParseFailure | ConfigError | CloudTaskClientError;
 
 export const executeInvocation = (
   invocation: ParsedInvocation,
-  client: RemoteClient,
-  config: OperatorConfig,
-): Effect.Effect<CommandResultData, CliFailure> => {
-  switch (invocation.command) {
-    case "project create":
-      return Effect.gen(function* () {
-        const request = yield* buildCreateProjectRequest(invocation);
-        return yield* client.createProject(request).pipe(Effect.flatMap(acceptedCreateResult));
-      });
-    case "submit":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const command = yield* buildSubmitWork(invocation);
-        return yield* actorCommand(client, invocation, projectId, command);
-      });
-    case "status":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        return yield* observationFor(client, projectId);
-      });
-    case "session start":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const command = yield* buildManagerSession(invocation);
-        return yield* actorCommand(client, invocation, projectId, command);
-      });
-    case "session cancel":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const command = yield* buildCancelSession(invocation);
-        return yield* actorCommand(client, invocation, projectId, command);
-      });
-    case "evidence show":
-    case "proposal show":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const observation = yield* observationFor(client, projectId);
-        const id = yield* requiredFlag(
-          invocation,
-          invocation.command === "evidence show" ? "evidence" : "proposal",
-        );
-        const canonicalId =
-          invocation.command === "evidence show"
-            ? yield* parseWith(EvidenceIdSchema, id, "Evidence id")
-            : yield* parseWith(ProposalIdSchema, id, "Proposal id");
-        const found = findEvent(
-          observation,
-          invocation.command === "evidence show" ? "EvidenceRecorded" : "ProposalSubmitted",
-          canonicalId,
-        );
-        if (found === null) {
-          return yield* Effect.fail({
-            _tag: "DomainFailure",
-            reason: "canonical reference was not found",
-          } as const);
-        }
-        return found;
-      });
-    case "approve":
-    case "reject":
-    case "merge":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const observation = yield* observationFor(client, projectId);
-        const command =
-          invocation.command === "approve"
-            ? yield* buildApproval(invocation)
-            : invocation.command === "reject"
-              ? yield* buildRejection(invocation)
-              : yield* buildMerge(invocation);
-        return yield* actorCommand(client, invocation, projectId, command, observation);
-      });
-    case "why":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        return yield* why(yield* observationFor(client, projectId), invocation);
-      });
-    case "attach":
-      return Effect.gen(function* () {
-        const projectId = yield* projectIdFor(invocation);
-        const workId = yield* attachWorkIdFor(invocation);
-        const request = yield* parseWith(
-          AttachResolutionRequestSchema,
-          { _tag: "AttachResolutionRequest", workId },
-          "attach request",
-        );
-        const resolution = yield* client.attachResolution(projectId, request);
-        return yield* runAttach(resolution, projectId, workId, config, { json: invocation.json });
-      });
-    default:
-      return fail(`unsupported command ${invocation.command}`);
+  client: CloudTaskClient,
+): Effect.Effect<unknown, CommandFailure> => {
+  switch (invocation.operation) {
+    case "spawn":
+      return executeSpawn(invocation, client);
+    case "send":
+      return executeSend(invocation, client);
+    case "observe":
+      return executeObserve(invocation, client);
+    case "cancel":
+      return executeCancel(invocation, client);
+    case "result":
+      return executeResult(invocation, client);
   }
 };
 
 export const loadClientForInvocation = (
-  invocation: ParsedInvocation,
-): Effect.Effect<{ readonly client: RemoteClient; readonly config: OperatorConfig }, ConfigError> =>
-  Effect.gen(function* () {
-    const config = yield* loadOperatorConfig;
-    if (invocation.command === "mcp")
-      return yield* Effect.fail({
-        _tag: "OperatorRequired",
-        reason: "MCP uses a Session capability file",
-      } as const);
-    return { config, client: makeRemoteClient(config) };
-  });
+  _invocation: ParsedInvocation,
+): Effect.Effect<{ readonly client: CloudTaskClient; readonly config: OperatorConfig }, ConfigError> =>
+  loadOperatorConfig.pipe(
+    Effect.map((config) => ({
+      config,
+      client: makeCloudTaskClient(config),
+    })),
+  );
