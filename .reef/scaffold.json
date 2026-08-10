@@ -551,7 +551,11 @@
       "owner": "cloud-runtime"
     },
     {
-      "path": "acceptance/0002/",
+      "path": "infra/t3code-sandbox/",
+      "owner": "cloud-runtime"
+    },
+    {
+      "path": "acceptance/",
       "owner": "acceptance"
     }
   ],
@@ -602,8 +606,8 @@
     {
       "id": "cloud-runtime",
       "depends_on": ["semantic-kernel"],
-      "owns": ["packages/cloudflare/", "apps/control-plane/", "infra/alchemy.run.ts"],
-      "done_when": "Flue Session Durable Objects, one Sandbox per Session, revisioned Project Memory, content-addressed cache restore, governed GitHub publication, reusable Profiles, and authenticated Cloud Task routing uphold the frozen 0002 contract."
+      "owns": ["packages/cloudflare/", "apps/control-plane/", "infra/alchemy.run.ts", "infra/t3code-sandbox/"],
+      "done_when": "The 0002 Session runtime and the 0003 durable T3Code Environment runtime, authenticated routing, checkpoint recovery, and Cloudflare resource graph uphold their frozen contracts."
     },
     {
       "id": "terminal-client",
@@ -614,8 +618,8 @@
     {
       "id": "acceptance",
       "depends_on": ["cloud-runtime", "terminal-client"],
-      "owns": ["acceptance/0002/"],
-      "done_when": "Paired treatment and harness-native baseline trials emit raw evidence and a deterministic threshold report against design-specs/0002-cloud-flue-session-workers.md."
+      "owns": ["acceptance/"],
+      "done_when": "The 0002 comparative evaluator and 0003 local lifecycle tracer emit explicit, deterministic evidence without claiming unperformed deployment."
     }
   ],
   "verification": [
@@ -646,12 +650,12 @@
     },
     {
       "command": "bun run test:protocol",
-      "proves": "Strict wire schemas reject malformed boundaries and uphold revision, grant, cache, and paired-trial invariants.",
+      "proves": "Strict wire schemas reject malformed boundaries and uphold revision, grant, cache, paired-trial, and Environment lifecycle invariants.",
       "requires": ["semantic-kernel"]
     },
     {
       "command": "bun run test:cloudflare",
-      "proves": "Cloud Task routing, Session lifecycle, Project Memory authority, cache, repository, Profile, and Sandbox adapters uphold the 0002 contract.",
+      "proves": "Cloud Task, Session, Project Memory, cache, repository, Profile, and durable Environment adapters and routing uphold the 0002 and 0003 contracts.",
       "requires": ["cloud-runtime"]
     },
     {
@@ -661,7 +665,7 @@
     },
     {
       "command": "bun run test:acceptance",
-      "proves": "Paired repeated evidence is aggregated deterministically, raw rows are preserved, and a known-bad treatment cannot produce expansion.",
+      "proves": "The 0002 comparative evidence evaluator and 0003 local Environment lifecycle tracer produce deterministic, bounded evidence.",
       "requires": ["acceptance"]
     },
     {

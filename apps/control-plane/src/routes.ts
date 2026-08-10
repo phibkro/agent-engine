@@ -1,4 +1,4 @@
-import { CloudTaskRouter } from "@work-engine/cloudflare";
+import { CloudTaskRouter, EnvironmentRouter } from "@work-engine/cloudflare";
 import type { ControlPlaneEnv } from "./env.ts";
 
 export const handleRequest = async (
@@ -9,6 +9,9 @@ export const handleRequest = async (
   const url = new URL(request.url);
   if (request.method === "GET" && url.pathname === "/health") {
     return Response.json({ status: "ok", runtime: "agent-runtime-0002" });
+  }
+  if (url.pathname.startsWith("/v1/environments/")) {
+    return new EnvironmentRouter(env).fetch(request);
   }
   if (!url.pathname.startsWith("/v1/cloud-tasks")) {
     return Response.json(

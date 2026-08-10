@@ -24,8 +24,9 @@
     "test:protocol": "bun run --cwd packages/protocol test",
     "test:cloudflare": "bun run --cwd packages/cloudflare test",
     "test:cli": "bun run --cwd apps/cli test",
-    "test:acceptance": "vitest run acceptance/0002/evaluate.test.ts",
+    "test:acceptance": "vitest run acceptance",
     "accept:0002:report": "bun acceptance/0002/report.ts",
+    "accept:0003:local": "bun acceptance/0003/local.ts",
     "build": "bun run --cwd apps/cli build && bun run --cwd apps/control-plane build",
     "check": "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run test:acceptance && bun run build"
   },

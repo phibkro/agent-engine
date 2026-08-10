@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "bun build src/index.ts --outfile dist/worker.js --target browser"
+    "build": "bun build src/index.ts --outfile dist/worker.js --target browser --external 'cloudflare:*'"
   },
   "dependencies": {
     "@work-engine/cloudflare": "0.0.0"
