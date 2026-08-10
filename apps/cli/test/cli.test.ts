@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import * as Redacted from "effect/Redacted";
 import { makeCloudTaskClient, type CloudTaskClientError } from "../src/client.ts";
 import {
@@ -7,11 +7,14 @@ import {
   OperatorCredentialFileSchema,
   type ConfigFileSystem,
 } from "../src/config.ts";
+import { executeInvocation, parseInvocation } from "../src/commands.ts";
 import { handleMcpRequest, runMcp } from "../src/mcp.ts";
-import { parseInvocation } from "../src/commands.ts";
 import { exitCodeFor, failureEnvelope, renderJson } from "../src/output.ts";
+import {
+  CloudTaskClient as CloudTaskClientService,
+  type CloudTaskClient,
+} from "@work-engine/runtime";
 import { AcceptedCursorSchema, MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
-import type { CloudTaskClient } from "@work-engine/runtime";
 
 const config = {
   baseUrl: "https://work.example",
@@ -248,6 +251,36 @@ describe("0002 CLI public interface", () => {
         error: { code: -32700, message: "Invalid JSON-RPC input" },
       },
     ]);
+  });
+
+  test("executes commands from the provided live client Layer", async () => {
+    const client: CloudTaskClient = {
+      spawn: () => Effect.die("unused"),
+      send: () => Effect.succeed(AcceptedCursorSchema.make(7)),
+      observe: () => Effect.die("unused"),
+      cancel: () => Effect.die("unused"),
+      result: () => Effect.die("unused"),
+    };
+    const invocation = parseInvocation([
+      "session",
+      "send",
+      "--session-id",
+      sessionId,
+      "--message-id",
+      messageId,
+      "--message",
+      "continue",
+    ]);
+    expect("_tag" in invocation).toBe(false);
+    if ("_tag" in invocation) return;
+
+    await expect(
+      Effect.runPromise(
+        executeInvocation(invocation).pipe(
+          Effect.provide(Layer.succeed(CloudTaskClientService, client)),
+        ),
+      ),
+    ).resolves.toBe(7);
   });
 
   test("renders typed failures without a fallback reason", () => {
