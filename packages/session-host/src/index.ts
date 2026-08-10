@@ -9,3 +9,7 @@ export * from "./host.ts";
 export * from "./commands.ts";
 export * from "./router.ts";
 export * from "./daemon.ts";
+
+export * from "./execution.ts";
+export * from "./bun-platform.ts";
+export * from "./posix-path.ts";

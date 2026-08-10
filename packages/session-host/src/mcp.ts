@@ -1,10 +1,9 @@
-import { readFile } from "node:fs/promises";
 import * as Schema from "effect/Schema";
 import type { SessionId, WorkId } from "@work-engine/protocol";
 import { decodeUnknownStrict } from "@work-engine/protocol";
+import { BunFileSystem } from "./bun-platform.ts";
 import { SessionCredentialManager } from "./security.ts";
 import type { CandidateFinalizeRequest, FrozenCandidate } from "./custody.ts";
-
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 const McpCallSchema = Schema.Struct({
   jsonrpc: Schema.Literal("2.0"),
@@ -61,6 +60,7 @@ export interface SessionMcpServerOptions {
   readonly capabilityFile: string;
   readonly credentials: SessionCredentialManager;
   readonly handlers: SessionMcpHandlers;
+  readonly fileSystem?: BunFileSystem;
 }
 
 /**
@@ -68,8 +68,11 @@ export interface SessionMcpServerOptions {
  * rejection, and Merge are not registered and are denied even if requested.
  */
 export class SessionMcpServer {
-  constructor(private readonly options: SessionMcpServerOptions) {}
+  private readonly fileSystem: BunFileSystem;
 
+  constructor(private readonly options: SessionMcpServerOptions) {
+    this.fileSystem = options.fileSystem ?? new BunFileSystem();
+  }
   async handle(request: unknown): Promise<unknown> {
     let decoded: SessionMcpRequest;
     try {
@@ -153,8 +156,8 @@ export class SessionMcpServer {
 
   private async readCapabilityToken(): Promise<string> {
     try {
-      return (await readFile(this.options.capabilityFile, "utf8")).trim();
-    } catch (error) {
+      return (await this.fileSystem.readFileString(this.options.capabilityFile)).trim();
+    } catch {
       throw new McpAuthorityError({
         _tag: "McpCapabilityInvalid",
         sessionId: this.options.sessionId,

@@ -1,6 +1,3 @@
-import { mkdir, chmod, chown, copyFile, readFile, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
-import * as Effect from "effect/Effect";
 import type {
   ArtifactReceipt,
   ContentManifest,
@@ -21,8 +18,17 @@ import {
 } from "@work-engine/protocol";
 import type { ArtifactStore } from "@work-engine/runtime";
 import { CustodyFailureError, workspaceViewId } from "./errors.ts";
+import type { EffectExecutor } from "./execution.ts";
+import { BunFileSystem, currentUserId } from "./bun-platform.ts";
 import type { CommandResult, CommandRunner } from "./process.ts";
-import { NodeCommandRunner, scrubHerdrEnvironment } from "./process.ts";
+import { BunCommandRunner, scrubHerdrEnvironment } from "./process.ts";
+import {
+  dirnamePath,
+  joinPath,
+  pathSeparator,
+  relativePath,
+  resolvePath,
+} from "./posix-path.ts";
 
 export interface WorkspaceSession {
   readonly sessionId: SessionId;
@@ -62,7 +68,9 @@ export interface WorkspaceCustodyOptions {
   readonly snapshotRoot: string;
   readonly artifactStore: ArtifactStore;
   readonly baseManifest: ContentManifest;
+  readonly effectExecutor: EffectExecutor;
   readonly commandRunner?: CommandRunner;
+  readonly fileSystem?: BunFileSystem;
   readonly requiredCheck?: string;
   readonly writableScope?: readonly string[];
   readonly hostUid?: number;
@@ -89,30 +97,38 @@ interface InternalWorkspaceSession {
 export class WorkspaceCustodian {
   private readonly sessions = new Map<SessionId, InternalWorkspaceSession>();
   private readonly runner: CommandRunner;
+  private readonly fileSystem: BunFileSystem;
   private readonly requiredCheck: string;
   private readonly hostUid: number;
   private readonly hostGid: number;
 
   constructor(private readonly options: WorkspaceCustodyOptions) {
-    this.runner = options.commandRunner ?? new NodeCommandRunner();
+    this.runner = options.commandRunner ?? new BunCommandRunner();
+    this.fileSystem = options.fileSystem ?? new BunFileSystem(this.runner);
     this.requiredCheck = options.requiredCheck ?? "bun run check";
-    this.hostUid = options.hostUid ?? process.getuid?.() ?? 0;
-    this.hostGid = options.hostGid ?? process.getgid?.() ?? this.hostUid;
+    this.hostUid = options.hostUid ?? currentUserId("uid");
+    this.hostGid = options.hostGid ?? currentUserId("gid");
   }
 
   async prepare(spec: SessionStartSpec): Promise<WorkspaceSession> {
     const existing = this.sessions.get(spec.sessionId);
     if (existing !== undefined) return existing;
-    await mkdir(this.options.baseRoot, { recursive: true, mode: 0o700 });
-    await mkdir(this.options.worktreeRoot, { recursive: true, mode: 0o700 });
-    await mkdir(this.options.snapshotRoot, { recursive: true, mode: 0o700 });
-    const baseRepositoryPath = join(
+    await this.fileSystem.makeDirectory(this.options.baseRoot, { recursive: true, mode: 0o700 });
+    await this.fileSystem.makeDirectory(this.options.worktreeRoot, {
+      recursive: true,
+      mode: 0o700,
+    });
+    await this.fileSystem.makeDirectory(this.options.snapshotRoot, {
+      recursive: true,
+      mode: 0o700,
+    });
+    const baseRepositoryPath = joinPath(
       this.options.baseRoot,
       digestHex(this.options.baseManifest.digest),
     );
     await this.materializeBase(baseRepositoryPath);
-    const worktreePath = join(this.options.worktreeRoot, spec.sessionId);
-    await rm(worktreePath, { recursive: true, force: true });
+    const worktreePath = joinPath(this.options.worktreeRoot, spec.sessionId);
+    await this.fileSystem.remove(worktreePath, { recursive: true, force: true });
     await this.runGit(["worktree", "add", "--detach", worktreePath, "HEAD"], baseRepositoryPath);
     await this.writeMcpConfig(worktreePath, spec.sessionId);
     const session: InternalWorkspaceSession = {
@@ -162,7 +178,7 @@ export class WorkspaceCustodian {
       await this.changedPaths(session.worktreePath),
       session.writableScope,
     );
-    const snapshotPath = join(this.options.snapshotRoot, request.sessionId);
+    const snapshotPath = joinPath(this.options.snapshotRoot, request.sessionId);
     await this.revoke(request.sessionId);
     await this.copyTrackedFiles(session.worktreePath, snapshotPath);
     await this.makeReadOnly(snapshotPath);
@@ -213,9 +229,9 @@ export class WorkspaceCustodian {
   async removeSession(sessionId: SessionId): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
-    await rm(session.worktreePath, { recursive: true, force: true });
+    await this.fileSystem.remove(session.worktreePath, { recursive: true, force: true });
     if (session.snapshotPath !== undefined)
-      await rm(session.snapshotPath, { recursive: true, force: true });
+      await this.fileSystem.remove(session.snapshotPath, { recursive: true, force: true });
     this.sessions.delete(sessionId);
   }
 
@@ -224,15 +240,15 @@ export class WorkspaceCustodian {
   }
 
   private async materializeBase(baseRepositoryPath: string): Promise<void> {
-    const marker = join(baseRepositoryPath, ".git", "HEAD");
+    const marker = joinPath(baseRepositoryPath, ".git", "HEAD");
     try {
-      await readFile(marker);
+      await this.fileSystem.readFile(marker);
       return;
     } catch (error) {
       if (!isMissingFile(error)) throw error;
     }
-    await mkdir(baseRepositoryPath, { recursive: true, mode: 0o700 });
-    for (const entry of sortManifestEntries(this.options.baseManifest.entries)) {
+    await this.fileSystem.makeDirectory(baseRepositoryPath, { recursive: true, mode: 0o700 });
+    await forEachSequential(sortManifestEntries(this.options.baseManifest.entries), async (entry) => {
       const path = safePath(baseRepositoryPath, entry.path);
       const bytes = await this.getArtifact(entry.digest);
       if (bytes.byteLength !== entry.bytes) {
@@ -248,9 +264,9 @@ export class WorkspaceCustodian {
           reason: `digest mismatch for ${entry.path}`,
         });
       }
-      await mkdir(resolve(path, ".."), { recursive: true, mode: 0o700 });
-      await writeFile(path, bytes, { mode: 0o600 });
-    }
+      await this.fileSystem.makeDirectory(dirnamePath(path), { recursive: true, mode: 0o700 });
+      await this.fileSystem.writeFile(path, bytes, { mode: 0o600 });
+    });
     await this.runGit(["init", "--initial-branch=main"], baseRepositoryPath);
     await this.runGit(["config", "user.email", "work-engine@localhost"], baseRepositoryPath);
     await this.runGit(["config", "user.name", "Work Engine"], baseRepositoryPath);
@@ -259,49 +275,53 @@ export class WorkspaceCustodian {
   }
 
   private async copyTrackedFiles(worktreePath: string, snapshotPath: string): Promise<void> {
-    await mkdir(snapshotPath, { recursive: true, mode: 0o700 });
+    await this.fileSystem.makeDirectory(snapshotPath, { recursive: true, mode: 0o700 });
     const listed = await this.runGit(["ls-files", "-z"], worktreePath);
     const paths = decodeNulSeparated(listed.stdout);
-    for (const path of paths) {
+    await forEachSequential(paths, async (path) => {
       const source = safePath(worktreePath, path);
       const target = safePath(snapshotPath, path);
-      await mkdir(resolve(target, ".."), { recursive: true, mode: 0o700 });
-      await copyFile(source, target);
-      await chmod(target, 0o400);
-    }
+      await this.fileSystem.makeDirectory(dirnamePath(target), { recursive: true, mode: 0o700 });
+      await this.fileSystem.copyFile(source, target);
+      await this.fileSystem.chmod(target, 0o400);
+    });
   }
 
   private async makeReadOnly(path: string): Promise<void> {
-    await chmod(path, 0o555);
+    await this.fileSystem.chmod(path, 0o555);
     const listed = await this.runner.run(["find", path, "-type", "f"], {
-      env: scrubHerdrEnvironment(process.env),
+      env: scrubHerdrEnvironment(Bun.env),
     });
     if (listed.exitCode !== 0)
       throw new CustodyFailureError({
         _tag: "SnapshotUnavailable",
         reason: "cannot enumerate snapshot files",
       });
-    for (const file of decodeLines(listed.stdout)) await chmod(file, 0o444);
+    await forEachSequential(decodeLines(listed.stdout), (file) => this.fileSystem.chmod(file, 0o444));
     const directories = await this.runner.run(["find", path, "-type", "d"], {
-      env: scrubHerdrEnvironment(process.env),
+      env: scrubHerdrEnvironment(Bun.env),
     });
     if (directories.exitCode !== 0)
       throw new CustodyFailureError({
         _tag: "SnapshotUnavailable",
         reason: "cannot enumerate snapshot directories",
       });
-    for (const directory of decodeLines(directories.stdout).reverse())
-      await chmod(directory, 0o555);
+    await forEachSequential(
+      decodeLines(directories.stdout).toReversed(),
+      (directory) => this.fileSystem.chmod(directory, 0o555),
+    );
   }
 
   private async ensureHostOwnership(path: string): Promise<void> {
     try {
-      await chown(path, this.hostUid, this.hostGid);
+      await this.fileSystem.chown(path, this.hostUid, this.hostGid);
       const listed = await this.runner.run(["find", path, "-print"], {
-        env: scrubHerdrEnvironment(process.env),
+        env: scrubHerdrEnvironment(Bun.env),
       });
       if (listed.exitCode !== 0) throw new Error("cannot enumerate ownership");
-      for (const item of decodeLines(listed.stdout)) await chown(item, this.hostUid, this.hostGid);
+      await forEachSequential(decodeLines(listed.stdout), (item) =>
+        this.fileSystem.chown(item, this.hostUid, this.hostGid),
+      );
     } catch (error) {
       throw new CustodyFailureError({ _tag: "SnapshotUnavailable", reason: errorMessage(error) });
     }
@@ -326,7 +346,7 @@ export class WorkspaceCustodian {
 
   private async manifestFor(root: string): Promise<ContentManifest> {
     const listed = await this.runner.run(["find", root, "-type", "f", "-print"], {
-      env: scrubHerdrEnvironment(process.env),
+      env: scrubHerdrEnvironment(Bun.env),
     });
     if (listed.exitCode !== 0)
       throw new CustodyFailureError({
@@ -334,12 +354,12 @@ export class WorkspaceCustodian {
         reason: "cannot enumerate candidate files",
       });
     const entries: ContentManifestEntry[] = [];
-    for (const absolute of decodeLines(listed.stdout)) {
-      const path = relative(root, absolute).split(sep).join("/");
-      if (path.length === 0 || path === ".mcp.json") continue;
-      const bytes = new Uint8Array(await readFile(absolute));
+    await forEachSequential(decodeLines(listed.stdout), async (absolute) => {
+      const path = relativePath(root, absolute).split(pathSeparator).join("/");
+      if (path.length === 0 || path === ".mcp.json") return;
+      const bytes = new Uint8Array(await this.fileSystem.readFile(absolute));
       entries.push({ path, digest: await sha256(bytes), bytes: bytes.byteLength });
-    }
+    });
     const sorted = sortManifestEntries(entries);
     const digest = await digestManifest(sorted);
     return ContentManifestSchema.make({ _tag: "ContentManifest", digest, entries: sorted });
@@ -355,7 +375,7 @@ export class WorkspaceCustodian {
       });
     return this.runner.run([executable, ...args], {
       cwd: snapshotPath,
-      env: scrubHerdrEnvironment(process.env),
+      env: scrubHerdrEnvironment(Bun.env),
     });
   }
 
@@ -366,7 +386,7 @@ export class WorkspaceCustodian {
   ): Promise<CommandResult> {
     const result = await this.runner.run(["git", ...args], {
       cwd,
-      env: scrubHerdrEnvironment(process.env),
+      env: scrubHerdrEnvironment(Bun.env),
     });
     if (requireSuccess && result.exitCode !== 0) {
       throw new CustodyFailureError({
@@ -380,7 +400,7 @@ export class WorkspaceCustodian {
 
   private async getArtifact(digest: Sha256Digest): Promise<Uint8Array> {
     try {
-      return await Effect.runPromise(this.options.artifactStore.get(digest));
+      return await this.options.effectExecutor.execute(this.options.artifactStore.get(digest));
     } catch (error) {
       throw new CustodyFailureError({
         _tag: "BaseArtifactUnavailable",
@@ -393,7 +413,9 @@ export class WorkspaceCustodian {
     const expected = await sha256(content);
     let receipt: ArtifactReceipt;
     try {
-      receipt = await Effect.runPromise(this.options.artifactStore.put(content, mediaType));
+      receipt = await this.options.effectExecutor.execute(
+        this.options.artifactStore.put(content, mediaType),
+      );
     } catch (error) {
       throw new CustodyFailureError({ _tag: "ArtifactUploadFailed", reason: errorMessage(error) });
     }
@@ -406,7 +428,7 @@ export class WorkspaceCustodian {
     }
     let head: ArtifactReceipt;
     try {
-      head = await Effect.runPromise(this.options.artifactStore.head(expected));
+      head = await this.options.effectExecutor.execute(this.options.artifactStore.head(expected));
     } catch (error) {
       throw new CustodyFailureError({
         _tag: "ArtifactVerificationFailed",
@@ -440,15 +462,12 @@ export class WorkspaceCustodian {
         "work-engine": {
           command,
           args: ["mcp", "--session", sessionId],
-          env: { WORK_ENGINE_CAPABILITY_FILE: join(worktreePath, ".work-engine-capability") },
+          env: { WORK_ENGINE_CAPABILITY_FILE: joinPath(worktreePath, ".work-engine-capability") },
         },
       },
     };
-    const path = join(worktreePath, ".mcp.json");
-    await writeFile(path, JSON.stringify(config, null, 2) + "\n", {
-      encoding: "utf8",
-      mode: 0o600,
-    });
+    const path = joinPath(worktreePath, ".mcp.json");
+    await this.fileSystem.writeFile(path, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
     const excluded = await this.runGit(
       ["rev-parse", "--git-path", "info/exclude"],
       worktreePath,
@@ -457,9 +476,9 @@ export class WorkspaceCustodian {
     if (excluded.exitCode === 0) {
       const excludePath = new TextDecoder().decode(excluded.stdout).trim();
       if (excludePath.length > 0) {
-        const current = await readFile(excludePath, "utf8").catch(() => "");
+        const current = await this.fileSystem.readFileString(excludePath).catch(() => "");
         if (!current.split(/\r?\n/u).includes(".mcp.json"))
-          await writeFile(
+          await this.fileSystem.writeFile(
             excludePath,
             `${current}${current.endsWith("\n") || current.length === 0 ? "" : "\n"}.mcp.json\n`,
             { mode: 0o600 },
@@ -483,11 +502,22 @@ export const validateWritableScope = (
 const safePath = (root: string, path: string): string => {
   if (path.startsWith("/") || path.includes("\\") || path.split("/").includes(".."))
     throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
-  const resolved = resolve(root, path);
-  const rootResolved = resolve(root);
-  if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${sep}`))
+  const resolved = resolvePath(root, path);
+  const rootResolved = resolvePath(root);
+  if (resolved !== rootResolved && !resolved.startsWith(`${rootResolved}${pathSeparator}`))
     throw new CustodyFailureError({ _tag: "WorkspacePathRejected", path });
   return resolved;
+};
+
+const forEachSequential = async <A>(
+  values: readonly A[],
+  operation: (value: A) => Promise<void>,
+  index = 0,
+): Promise<void> => {
+  const value = values[index];
+  if (value === undefined) return;
+  await operation(value);
+  await forEachSequential(values, operation, index + 1);
 };
 
 const decodeLines = (bytes: Uint8Array): readonly string[] =>
@@ -502,9 +532,13 @@ const decodeNulSeparated = (bytes: Uint8Array): readonly string[] =>
     .split("\0")
     .filter((path) => path.length > 0);
 const sortUtf8 = (paths: readonly string[]): readonly string[] =>
-  [...new Set(paths)].sort(compareUtf8PathBytes);
+  [...new Set(paths)].toSorted(compareUtf8PathBytes);
 const digestHex = (value: string): string => value.replace(/[^a-z0-9]/giu, "").slice(-64);
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 const isMissingFile = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+  (typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT") ||
+  (error instanceof Error && /(?:ENOENT|no such file|not found)/iu.test(error.message));

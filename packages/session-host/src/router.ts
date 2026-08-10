@@ -1,22 +1,22 @@
-import * as Effect from "effect/Effect";
 import type {
-  SessionHostCancelRequest,
   SessionStartSpec,
   WorkspaceLease,
 } from "@work-engine/protocol";
-import { SessionHostWireResponseSchema } from "@work-engine/runtime";
-import type {
-  SessionHostError,
-  SessionHostWireFailure,
-  SessionHostWireResponse,
-} from "@work-engine/runtime";
 import {
   SessionHostCancelRequestSchema,
+  SessionHostWireResponseSchema,
+  type SessionHostCancelRequest,
+  type SessionHostError,
+  type SessionHostWireFailure,
+  type SessionHostWireResponse,
+} from "@work-engine/runtime";
+import {
   SessionStartSpecSchema,
   WorkspaceLeaseSchema,
   decodeUnknownStrict,
 } from "@work-engine/protocol";
 import { SessionHostService } from "./host.ts";
+import type { EffectExecutor } from "./execution.ts";
 
 export const SESSION_HOST_ROUTES = {
   ensureReady: "/v1/session-host/workspaces/ensure-ready",
@@ -32,6 +32,7 @@ export interface SessionHostAccessCredentials {
 export interface SessionHostRouterOptions {
   readonly host: SessionHostService;
   readonly access: SessionHostAccessCredentials;
+  readonly effectExecutor: EffectExecutor;
 }
 
 /** HTTP adapter for the three shared SessionHost routes. */
@@ -58,16 +59,20 @@ export class SessionHostRouter {
       const input = (await request.json()) as unknown;
       if (url.pathname === SESSION_HOST_ROUTES.ensureReady) {
         const lease = decodeUnknownStrict(WorkspaceLeaseSchema, input);
-        return this.success(await Effect.runPromise(this.options.host.ensureReady(lease)));
+        return this.success(
+          await this.options.effectExecutor.execute(this.options.host.ensureReady(lease)),
+        );
       }
       if (url.pathname === SESSION_HOST_ROUTES.start) {
         const spec = decodeUnknownStrict(SessionStartSpecSchema, input);
-        return this.success(await Effect.runPromise(this.options.host.start(spec)));
+        return this.success(
+          await this.options.effectExecutor.execute(this.options.host.start(spec)),
+        );
       }
       if (url.pathname === SESSION_HOST_ROUTES.cancel) {
         const cancellation = decodeUnknownStrict(SessionHostCancelRequestSchema, input);
         return this.success(
-          await Effect.runPromise(
+          await this.options.effectExecutor.execute(
             this.options.host.cancel(cancellation.sessionId, cancellation.reason),
           ),
         );

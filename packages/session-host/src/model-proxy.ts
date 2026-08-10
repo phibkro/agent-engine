@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import type { SessionId } from "@work-engine/protocol";
 import { decodeUnknownStrict } from "@work-engine/protocol";
-import { SessionCredentialManager } from "./security.ts";
+import type { SessionCredentialManager } from "./security.ts";
 
 const optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(schema);
 

@@ -1,5 +1,3 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import * as Schema from "effect/Schema";
 import type {
   EffectId,
@@ -14,9 +12,11 @@ import {
   SessionIdSchema,
   SessionStartSpecSchema,
   TimestampSchema,
+  decodeUnknownStrict,
+  sha256,
 } from "@work-engine/protocol";
-import { decodeUnknownStrict } from "@work-engine/protocol";
-import { sha256 } from "@work-engine/protocol";
+import { BunFileSystem, sleep, uniqueId } from "./bun-platform.ts";
+import { dirnamePath } from "./posix-path.ts";
 
 const optional = <S extends Schema.Top>(schema: S) => Schema.optionalKey(schema);
 
@@ -86,10 +86,15 @@ export class MemoryStartClaimStore implements StartClaimStore {
  */
 export class JsonFileStartClaimStore implements StartClaimStore {
   private readonly lockPath: string;
+  private readonly fileSystem: BunFileSystem;
   private loaded = false;
   private readonly claims = new Map<string, StartClaim>();
 
-  constructor(private readonly path: string) {
+  constructor(
+    private readonly path: string,
+    fileSystem: BunFileSystem = new BunFileSystem(),
+  ) {
+    this.fileSystem = fileSystem;
     this.lockPath = `${path}.lock`;
   }
 
@@ -127,7 +132,7 @@ export class JsonFileStartClaimStore implements StartClaimStore {
   private async load(force = false): Promise<void> {
     if (this.loaded && !force) return;
     try {
-      const source = await readFile(this.path, "utf8");
+      const source = await this.fileSystem.readFileString(this.path);
       const decoded = decodeUnknownStrict(StartClaimStoreFileSchema, JSON.parse(source) as unknown);
       this.claims.clear();
       for (const claim of decoded.claims) this.claims.set(claim.key, claim);
@@ -139,32 +144,36 @@ export class JsonFileStartClaimStore implements StartClaimStore {
   }
 
   private async flush(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    await this.fileSystem.makeDirectory(dirnamePath(this.path), { recursive: true, mode: 0o700 });
     const payload = JSON.stringify({
       _tag: "StartClaimStoreFile",
       claims: [...this.claims.values()],
     });
-    const temporary = `${this.path}.${process.pid}.${Date.now()}.tmp`;
-    await writeFile(temporary, payload, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.path);
+    const temporary = `${this.path}.${uniqueId()}.tmp`;
+    await this.fileSystem.writeFile(temporary, payload, { mode: 0o600 });
+    await this.fileSystem.rename(temporary, this.path);
   }
 
   private async withLock<A>(operation: () => Promise<A>): Promise<A> {
-    await mkdir(dirname(this.lockPath), { recursive: true, mode: 0o700 });
+    await this.fileSystem.makeDirectory(dirnamePath(this.lockPath), {
+      recursive: true,
+      mode: 0o700,
+    });
     const deadline = Date.now() + 5_000;
-    while (true) {
+    const acquire = async (): Promise<void> => {
       try {
-        await mkdir(this.lockPath, { mode: 0o700 });
-        break;
+        await this.fileSystem.makeDirectory(this.lockPath, { mode: 0o700 });
       } catch (error) {
         if (!isAlreadyExists(error) || Date.now() >= deadline) throw error;
-        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        await sleep(10);
+        await acquire();
       }
-    }
+    };
+    await acquire();
     try {
       return await operation();
     } finally {
-      await rm(this.lockPath, { recursive: true, force: true });
+      await this.fileSystem.remove(this.lockPath, { recursive: true, force: true });
     }
   }
 }
@@ -199,8 +208,16 @@ export const claimDigest = async (claim: StartClaim) =>
   sha256(new TextEncoder().encode(claimToJson(claim)));
 
 const isMissingFile = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+  (typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT") ||
+  (error instanceof Error && /(?:ENOENT|no such file|not found)/iu.test(error.message));
 const isAlreadyExists = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+  (typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST") ||
+  (error instanceof Error && /(?:EEXIST|file exists|already exists)/iu.test(error.message));
 
 export type { ClaimKey };

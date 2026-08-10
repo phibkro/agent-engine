@@ -1,9 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { once } from "node:events";
-import { Readable } from "node:stream";
 import type { SessionStartSpec, SessionId } from "@work-engine/protocol";
 import type { StartClaim } from "./persistence.ts";
 import { CustodyFailureError } from "./errors.ts";
+
+export type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface CommandResult {
   readonly exitCode: number;
@@ -13,7 +12,7 @@ export interface CommandResult {
 
 export interface CommandOptions {
   readonly cwd?: string;
-  readonly env?: NodeJS.ProcessEnv;
+  readonly env?: Environment;
   readonly uid?: number;
   readonly gid?: number;
   readonly timeoutMs?: number;
@@ -23,26 +22,24 @@ export interface CommandRunner {
   run(argv: readonly string[], options?: CommandOptions): Promise<CommandResult>;
 }
 
-const collect = async (stream: Readable | null): Promise<Uint8Array> => {
+const collect = async (stream: ReadableStream<Uint8Array> | null): Promise<Uint8Array> => {
   if (stream === null) return new Uint8Array();
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream)
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return new Uint8Array(Buffer.concat(chunks));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 };
 
-export class NodeCommandRunner implements CommandRunner {
+export class BunCommandRunner implements CommandRunner {
   async run(argv: readonly string[], options: CommandOptions = {}): Promise<CommandResult> {
     const [executable, ...args] = argv;
-    if (executable === undefined || executable.length === 0) {
+    if (executable === undefined || executable.length === 0)
       throw new Error("command requires an executable");
-    }
-    const child = spawn(executable, args, {
+    if (options.uid !== undefined || options.gid !== undefined)
+      throw new Error("Bun command execution does not support uid/gid options");
+    const child = Bun.spawn([executable, ...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      ...(options.env === undefined ? {} : { env: options.env }),
-      ...(options.uid === undefined ? {} : { uid: options.uid }),
-      ...(options.gid === undefined ? {} : { gid: options.gid }),
-      stdio: ["ignore", "pipe", "pipe"],
+      ...(options.env === undefined ? {} : { env: { ...options.env } }),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
     });
     const stdoutPromise = collect(child.stdout);
     const stderrPromise = collect(child.stderr);
@@ -55,8 +52,11 @@ export class NodeCommandRunner implements CommandRunner {
   }
 }
 
-const waitForExit = async (child: ChildProcess, timeoutMs: number | undefined): Promise<number> => {
-  const exit = once(child, "close").then(([code]) => (typeof code === "number" ? code : 1));
+const waitForExit = async (
+  child: Bun.Subprocess<"ignore", "pipe", "pipe">,
+  timeoutMs: number | undefined,
+): Promise<number> => {
+  const exit = child.exited;
   if (timeoutMs === undefined) return exit;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<number>((resolve) => {
@@ -132,7 +132,7 @@ export interface HerdrSessionControllerOptions {
   readonly workspaceDirectory: string;
   readonly herdrBinary?: string;
   readonly roleFor?: (spec: SessionStartSpec) => "manager" | "worker";
-  readonly environment?: NodeJS.ProcessEnv;
+  readonly environment?: Environment;
 }
 
 interface HerdrIdentifier {
@@ -252,8 +252,7 @@ export class HerdrSessionController implements SessionProcessController {
         reason: decodeOutput(tab.stderr, "Herdr tab create failed"),
       });
     }
-    const identifiers = parseTabIdentifiers(tab.stdout, workspaceId);
-    return identifiers;
+    return parseTabIdentifiers(tab.stdout, workspaceId);
   }
 
   private async runHerdr(args: readonly string[]): Promise<CommandResult> {
@@ -261,13 +260,13 @@ export class HerdrSessionController implements SessionProcessController {
       [this.herdrBinary, "--session", this.options.sessionName, ...args],
       {
         cwd: this.options.runtimeDirectory,
-        env: scrubHerdrEnvironment(this.options.environment ?? process.env),
+        env: scrubHerdrEnvironment(this.options.environment ?? Bun.env),
       },
     );
   }
 }
 
-export const scrubHerdrEnvironment = (environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv => {
+export const scrubHerdrEnvironment = (environment: Environment): Environment => {
   const next = { ...environment };
   delete next.HERDR_ENV;
   delete next.HERDR_BIN_PATH;

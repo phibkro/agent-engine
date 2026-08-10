@@ -4,7 +4,6 @@ import type {
   CommandResult,
   EffectId,
   ProjectCommand,
-  SessionHostCancelRequest,
   SessionHostReceipt,
   SessionId,
   SessionStartSpec,
@@ -13,7 +12,6 @@ import type {
   WorkspaceReady,
 } from "@work-engine/protocol";
 import {
-  SessionHostCancelRequestSchema,
   SessionHostReceiptSchema,
   SessionStartSpecSchema,
   WorkspaceLeaseSchema,
@@ -22,7 +20,12 @@ import {
   decodeCommandResult,
   decodeUnknownStrict,
 } from "@work-engine/protocol";
-import type { SessionHost, SessionHostError } from "@work-engine/runtime";
+import {
+  SessionHostCancelRequestSchema,
+  type SessionHost,
+  type SessionHostCancelRequest,
+  type SessionHostError,
+} from "@work-engine/runtime";
 import {
   HostFailure,
   CustodyFailureError,
@@ -165,11 +168,11 @@ export class SessionHostService implements SessionHost {
     this.accepting = false;
     await this.terminalCallbacks.flushPending?.();
     const claims = await this.options.claims.list();
-    for (const claim of claims) {
-      if (claim.state === "terminal") continue;
+    await forEachSequential(claims, async (claim) => {
+      if (claim.state === "terminal") return;
       await this.options.processController.cancel(claim.sessionId, reason).catch(() => undefined);
       await this.reportTerminalAsync(claim.sessionId, "interrupted", reason).catch(() => undefined);
-    }
+    });
     await this.terminalCallbacks.flushPending?.();
   }
 
@@ -432,4 +435,15 @@ const withTimeout = async <A>(promise: Promise<A>, timeoutMs: number): Promise<A
   } finally {
     clearTimeout(timer);
   }
+};
+
+const forEachSequential = async <A>(
+  values: readonly A[],
+  operation: (value: A) => Promise<void>,
+  index = 0,
+): Promise<void> => {
+  const value = values[index];
+  if (value === undefined) return;
+  await operation(value);
+  await forEachSequential(values, operation, index + 1);
 };

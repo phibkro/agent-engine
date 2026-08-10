@@ -1,12 +1,4 @@
-import { chmod, chown, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import * as Effect from "effect/Effect";
-import type {
-  SessionId,
-  SessionStartSpec,
-  WorkspaceLease,
-  WorkspaceReady,
-} from "@work-engine/protocol";
+import type { SessionId, SessionStartSpec, WorkspaceLease, WorkspaceReady } from "@work-engine/protocol";
 import { SessionHostRouter, type SessionHostAccessCredentials } from "./router.ts";
 import { SessionHostService } from "./host.ts";
 import { ModelProxy, type ModelProvider } from "./model-proxy.ts";
@@ -19,6 +11,10 @@ import {
   type SessionIdentity,
   type SessionIdentityProvider,
 } from "./security.ts";
+import { BunFileSystem } from "./bun-platform.ts";
+import type { Environment } from "./process.ts";
+import { joinPath } from "./posix-path.ts";
+import type { EffectExecutor } from "./execution.ts";
 
 export interface ContainerVersions {
   readonly herdr: string;
@@ -35,7 +31,7 @@ export interface SessionRuntime {
   readonly capabilityTokenFile: string;
   readonly modelTokenFile: string;
   readonly ompHome: string;
-  readonly environment: NodeJS.ProcessEnv;
+  readonly environment: Environment;
   readonly mcp: SessionMcpServer;
 }
 
@@ -46,13 +42,16 @@ export interface SessionRuntimeManagerOptions {
   readonly homeRoot: string;
   readonly hostUid?: number;
   readonly hostGid?: number;
+  readonly fileSystem?: BunFileSystem;
   readonly handlers: (sessionId: SessionId, capabilityFile: string) => SessionMcpHandlers;
 }
-
 export class SessionRuntimeManager {
   private readonly sessions = new Map<SessionId, SessionRuntime>();
+  private readonly fileSystem: BunFileSystem;
 
-  constructor(private readonly options: SessionRuntimeManagerOptions) {}
+  constructor(private readonly options: SessionRuntimeManagerOptions) {
+    this.fileSystem = options.fileSystem ?? new BunFileSystem();
+  }
   get modelProxy(): ModelProxy {
     return this.options.modelProxy;
   }
@@ -68,23 +67,28 @@ export class SessionRuntimeManager {
       identity.uid,
       identity.gid,
     );
-    const ompHome = join(this.options.homeRoot, spec.sessionId, ".omp");
-    await mkdir(join(ompHome, "agent"), { recursive: true, mode: 0o700 });
+    const ompHome = joinPath(this.options.homeRoot, spec.sessionId, ".omp");
+    await this.fileSystem.makeDirectory(joinPath(ompHome, "agent"), {
+      recursive: true,
+      mode: 0o700,
+    });
     await writeOwned(
-      join(ompHome, "agent", "models.yml"),
+      this.fileSystem,
+      joinPath(ompHome, "agent", "models.yml"),
       modelsConfig(credentials.modelToken),
       identity.uid,
       identity.gid,
     );
     await writeOwned(
-      join(ompHome, "agent", "config.yml"),
+      this.fileSystem,
+      joinPath(ompHome, "agent", "config.yml"),
       "modelRoles:\n  default: work-engine/gpt-oss-120b\n",
       identity.uid,
       identity.gid,
     );
     const environment = scrubSessionEnvironment({
-      ...process.env,
-      HOME: join(this.options.homeRoot, spec.sessionId),
+      ...Bun.env,
+      HOME: joinPath(this.options.homeRoot, spec.sessionId),
       USER: identity.username,
       WORK_ENGINE_CAPABILITY_FILE: credentials.capabilityFile,
       WORK_ENGINE_MODEL_TOKEN_FILE: credentials.modelTokenFile,
@@ -95,6 +99,7 @@ export class SessionRuntimeManager {
       capabilityFile: credentials.capabilityFile,
       credentials: this.options.credentials,
       handlers: this.options.handlers(spec.sessionId, credentials.capabilityFile),
+      fileSystem: this.fileSystem,
     });
     const runtime: SessionRuntime = {
       sessionId: spec.sessionId,
@@ -135,6 +140,7 @@ export interface SessionHostDaemonOptions {
   readonly runtimeDirectory: string;
   readonly herdrSocketPath: string;
   readonly sessionRuntime: SessionRuntimeManager;
+  readonly effectExecutor: EffectExecutor;
   readonly mcpBySession?: (sessionId: SessionId) => SessionMcpServer | undefined;
   readonly port?: number;
 }
@@ -152,12 +158,17 @@ export class SessionHostDaemon {
 
   constructor(private readonly options: SessionHostDaemonOptions) {
     this.modelProxy = options.sessionRuntime.modelProxy;
-    this.router = new SessionHostRouter({ host: options.host, access: options.access });
+    this.router = new SessionHostRouter({
+      host: options.host,
+      access: options.access,
+      effectExecutor: options.effectExecutor,
+    });
   }
 
   async ready(lease: WorkspaceLease): Promise<WorkspaceReady> {
-    return Effect.runPromise(this.options.host.ensureReady(lease));
+    return this.options.effectExecutor.execute(this.options.host.ensureReady(lease));
   }
+
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -180,25 +191,16 @@ export class SessionHostDaemon {
   async start(): Promise<{ readonly port: number }> {
     await ensurePrivateRuntime(this.options.runtimeDirectory, this.options.herdrSocketPath);
     const port = this.options.port ?? 8788;
-    const bun = (
-      globalThis as unknown as {
-        Bun?: {
-          serve(options: { port: number; fetch: (request: Request) => Promise<Response> }): {
-            stop(): void;
-          };
-        };
-      }
-    ).Bun;
-    if (bun === undefined) throw new Error("Bun runtime is required for the in-container daemon");
-    this.server = bun.serve({ port, fetch: (request) => this.fetch(request) });
+    this.server = Bun.serve({ port, fetch: (request) => this.fetch(request) });
     return { port };
   }
 
   async stop(reason = "sigterm"): Promise<void> {
     this.accepting = false;
     await this.options.host.shutdown(reason);
-    for (const runtime of this.options.sessionRuntime.list())
-      await this.options.sessionRuntime.terminate(runtime.sessionId);
+    await forEachSequential(this.options.sessionRuntime.list(), (runtime) =>
+      this.options.sessionRuntime.terminate(runtime.sessionId),
+    );
     this.server?.stop();
     this.server = undefined;
   }
@@ -242,10 +244,11 @@ export const makeDefaultSessionRuntimeManager = (
       options.identityProvider ??
       new LinuxSessionIdentityProvider({
         homeRoot: options.homeRoot,
-        capabilityRoot: join(options.homeRoot, ".capabilities"),
-        modelRoot: join(options.homeRoot, ".model"),
+        capabilityRoot: joinPath(options.homeRoot, ".capabilities"),
+        modelRoot: joinPath(options.homeRoot, ".model"),
         hostUid: options.hostUid,
         hostGid: options.hostGid,
+        fileSystem: options.fileSystem,
       }),
     credentials: options.credentials ?? new SessionCredentialManager(),
     modelProxy: options.modelProxy,
@@ -254,14 +257,26 @@ export const makeDefaultSessionRuntimeManager = (
 const modelsConfig = (token: string): string =>
   `providers:\n  work-engine:\n    baseUrl: http://127.0.0.1:8788/v1\n    api: openai-completions\n    apiKey: ${token}\n    models:\n      - id: gpt-oss-120b\n        name: Work Engine GPT-OSS 120B\n        contextWindow: 128000\n        maxTokens: 8192\n`;
 const writeOwned = async (
+  fileSystem: BunFileSystem,
   path: string,
   content: string,
   uid: number,
   gid: number,
 ): Promise<void> => {
-  await writeFile(path, content, { encoding: "utf8", mode: 0o600 });
-  await chmod(path, 0o600);
-  await chown(path, uid, gid);
+  await fileSystem.writeFile(path, content, { mode: 0o600 });
+  await fileSystem.chmod(path, 0o600);
+  await fileSystem.chown(path, uid, gid);
+};
+
+const forEachSequential = async <A>(
+  values: readonly A[],
+  operation: (value: A) => Promise<void>,
+  index = 0,
+): Promise<void> => {
+  const value = values[index];
+  if (value === undefined) return;
+  await operation(value);
+  await forEachSequential(values, operation, index + 1);
 };
 const json = (body: unknown, status: number): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });

@@ -1,6 +1,3 @@
-import { mkdtemp, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { expect, it } from "vitest";
 import * as Effect from "effect/Effect";
 import type {
@@ -26,18 +23,25 @@ import {
 } from "@work-engine/protocol";
 import type { ArtifactError, ArtifactStore } from "@work-engine/runtime";
 import {
+  BunCommandRunner,
+  BunFileSystem,
   InMemoryReadinessProbe,
   MemoryStartClaimStore,
   SessionHostService,
+  type EffectExecutor,
   type SessionHostLifecycleCallbacks,
   type SessionProcess,
   type SessionProcessController,
   WorkspaceCustodian,
   ensurePrivateRuntime,
+  joinPath,
   scrubSessionEnvironment,
+  uniqueId,
   validateWritableScope,
-} from "@work-engine/session-host";
+} from "../src/index.ts";
 
+const executeEffect = Effect.runPromise;
+const effectExecutor: EffectExecutor = { execute: executeEffect };
 const projectId = ProjectIdSchema.make("prj_00000000-0000-4000-8000-000000000001");
 const workId = WorkIdSchema.make("wrk_00000000-0000-4000-8000-000000000002");
 const profileId = AgentProfileIdSchema.make("prf_00000000-0000-4000-8000-000000000003");
@@ -120,14 +124,26 @@ const hostFor = (
     ...(lifecycle === undefined ? {} : { lifecycle }),
   });
 
+const tempDirectory = async (prefix: string): Promise<string> => {
+  const root = joinPath(Bun.env.TMPDIR ?? "/tmp", `${prefix}${uniqueId()}`);
+  await new BunFileSystem().makeDirectory(root, { recursive: true, mode: 0o700 });
+  return root;
+};
+
+const modeOf = async (path: string): Promise<number> => {
+  const result = await new BunCommandRunner().run(["stat", "-c", "%a", path]);
+  if (result.exitCode !== 0) throw new Error(new TextDecoder().decode(result.stderr));
+  return Number.parseInt(new TextDecoder().decode(result.stdout).trim(), 10);
+};
+
 it("returns the identical receipt and one process for duplicate start delivery", async () => {
   const controller = new FakeController();
   const host = hostFor(controller);
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000005");
   const effectId = EffectIdSchema.make("efx_00000000-0000-4000-8000-000000000006");
   const spec = specFor(sessionId, effectId);
-  const first = await Effect.runPromise(host.start(spec));
-  const duplicate = await Effect.runPromise(host.start(spec));
+  const first = await executeEffect(host.start(spec));
+  const duplicate = await executeEffect(host.start(spec));
   expect(duplicate).toEqual(first);
   expect(controller.starts).toBe(1);
 });
@@ -168,7 +184,7 @@ it("reconciles a persisted claim without spawning a second OMP", async () => {
     processController: controller,
     readiness: new InMemoryReadinessProbe(ready),
   });
-  const receipt = await Effect.runPromise(host.start(spec));
+  const receipt = await executeEffect(host.start(spec));
   expect(receipt).toEqual(claim.receipt);
   expect(controller.starts).toBe(0);
 });
@@ -182,9 +198,9 @@ it("scrubs Herdr variables and keeps the trusted runtime private", async () => {
     PATH: "/usr/bin",
   });
   expect(environment).toEqual({ PATH: "/usr/bin" });
-  const root = await mkdtemp(join(tmpdir(), "work-engine-runtime-"));
-  await ensurePrivateRuntime(root, join(root, "missing.sock"));
-  expect((await stat(root)).mode & 0o777).toBe(0o700);
+  const root = await tempDirectory("work-engine-runtime-");
+  await ensurePrivateRuntime(root, joinPath(root, "missing.sock"));
+  expect(await modeOf(root)).toBe(700);
 });
 
 it("enforces first-terminal-wins across cancellation and completion", async () => {
@@ -192,10 +208,10 @@ it("enforces first-terminal-wins across cancellation and completion", async () =
   const host = hostFor(controller);
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000009");
   const spec = specFor(sessionId, EffectIdSchema.make("efx_00000000-0000-4000-8000-000000000010"));
-  await Effect.runPromise(host.start(spec));
+  await executeEffect(host.start(spec));
   const [cancel, complete] = await Promise.all([
-    Effect.runPromise(host.cancel(sessionId, "operator-cancelled")),
-    Effect.runPromise(host.reportTerminal(sessionId, "completed", "done")),
+    executeEffect(host.cancel(sessionId, "operator-cancelled")),
+    executeEffect(host.reportTerminal(sessionId, "completed", "done")),
   ]);
   expect(cancel).toEqual(complete);
   const snapshot = await host.snapshot();
@@ -206,10 +222,10 @@ it("reports process loss as an interrupted Session", async () => {
   const controller = new FakeController();
   const host = hostFor(controller);
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000011");
-  await Effect.runPromise(
+  await executeEffect(
     host.start(specFor(sessionId, EffectIdSchema.make("efx_00000000-0000-4000-8000-000000000012"))),
   );
-  await Effect.runPromise(host.observeProcessLoss(sessionId));
+  await executeEffect(host.observeProcessLoss(sessionId));
   expect((await host.snapshot()).claims[0]?.terminalStatus).toBe("interrupted");
 });
 
@@ -226,7 +242,7 @@ it("flushes frozen work and terminal reports before SIGTERM shutdown", async () 
     },
   });
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000013");
-  await Effect.runPromise(
+  await executeEffect(
     host.start(specFor(sessionId, EffectIdSchema.make("efx_00000000-0000-4000-8000-000000000014"))),
   );
   await host.shutdown("sigterm");
@@ -234,13 +250,13 @@ it("flushes frozen work and terminal reports before SIGTERM shutdown", async () 
 });
 
 it("rejects candidate paths outside the writable scope", () => {
-  expect(() =>
-    validateWritableScope(["src/greeting.ts", "README.md"], ["src/greeting.ts"]),
-  ).toThrow(/README/);
+  expect(() => validateWritableScope(["src/greeting.ts", "README.md"], ["src/greeting.ts"])).toThrow(
+    /README/,
+  );
 });
 
 it("keeps a finalized candidate immutable and records host check provenance", async () => {
-  const root = await mkdtemp(join(tmpdir(), "work-engine-custody-"));
+  const root = await tempDirectory("work-engine-custody-");
   const files = new Map<string, Uint8Array>([
     [
       "package.json",
@@ -261,28 +277,33 @@ it("keeps a finalized candidate immutable and records host check provenance", as
   ]);
   const artifactStore = new MemoryArtifactStore();
   await artifactStore.seed(files);
-  const entries: ContentManifestEntry[] = [];
-  for (const [path, bytes] of files)
-    entries.push({ path, digest: await sha256(bytes), bytes: bytes.byteLength });
+  const entries = await Promise.all(
+    [...files].map(async ([path, bytes]): Promise<ContentManifestEntry> => ({
+      path,
+      digest: await sha256(bytes),
+      bytes: bytes.byteLength,
+    })),
+  );
   const baseManifest = ContentManifestSchema.make({
     _tag: "ContentManifest",
     entries,
     digest: await digestManifest(entries),
   });
   const custody = new WorkspaceCustodian({
-    baseRoot: join(root, "base"),
-    worktreeRoot: join(root, "worktrees"),
-    snapshotRoot: join(root, "snapshots"),
+    baseRoot: joinPath(root, "base"),
+    worktreeRoot: joinPath(root, "worktrees"),
+    snapshotRoot: joinPath(root, "snapshots"),
     artifactStore,
     baseManifest,
+    effectExecutor,
     requiredCheck: "bun run check",
     writableScope: ["src/greeting.ts"],
   });
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000015");
   const spec = specFor(sessionId, EffectIdSchema.make("efx_00000000-0000-4000-8000-000000000016"));
   const session = await custody.prepare(spec);
-  await writeFile(
-    join(session.worktreePath, "src/greeting.ts"),
+  await Bun.write(
+    joinPath(session.worktreePath, "src/greeting.ts"),
     "export const greeting = (name: string): string => `Hello, ${name}!`;\n",
   );
   await custody.markProcessExited(sessionId);
@@ -293,6 +314,7 @@ it("keeps a finalized candidate immutable and records host check provenance", as
     /already finalized/,
   );
 });
+
 it("observes a replaced container as a new readiness generation", async () => {
   const probe = new InMemoryReadinessProbe({ ...ready, containerGeneration: "generation-a" });
   const sessionId = SessionIdSchema.make("ses_00000000-0000-4000-8000-000000000017");
@@ -312,8 +334,9 @@ class MemoryArtifactStore implements ArtifactStore {
   >();
 
   async seed(files: ReadonlyMap<string, Uint8Array>): Promise<void> {
-    for (const bytes of files.values())
-      await Effect.runPromise(this.put(bytes, "application/octet-stream"));
+    await Promise.all(
+      [...files.values()].map((bytes) => executeEffect(this.put(bytes, "application/octet-stream"))),
+    );
   }
 
   put(content: Uint8Array, mediaType: string): Effect.Effect<ArtifactReceipt, ArtifactError> {
