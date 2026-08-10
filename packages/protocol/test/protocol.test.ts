@@ -60,8 +60,12 @@ test("decodes a valid CloudTask and rejects excess properties", () => {
 });
 
 test("rejects malformed identifiers and SHA-256 digests", () => {
-  expect(() => decodeUnknownStrict(CloudTaskSchema, { ...task, sessionId: "ses_not-a-uuid" })).toThrow();
-  expect(() => decodeUnknownStrict(CloudTaskSchema, { ...task, profileDigest: "sha256:bad" })).toThrow();
+  expect(() =>
+    decodeUnknownStrict(CloudTaskSchema, { ...task, sessionId: "ses_not-a-uuid" }),
+  ).toThrow();
+  expect(() =>
+    decodeUnknownStrict(CloudTaskSchema, { ...task, profileDigest: "sha256:bad" }),
+  ).toThrow();
 });
 
 test("accepts terminal results and rejects an unknown terminal state", () => {
@@ -91,7 +95,9 @@ test("accepts terminal results and rejects an unknown terminal state", () => {
     },
   };
   expect(decodeUnknownStrict(SessionResultSchema, completed)._tag).toBe("Completed");
-  expect(() => decodeUnknownStrict(SessionResultSchema, { ...completed, _tag: "Running" })).toThrow();
+  expect(() =>
+    decodeUnknownStrict(SessionResultSchema, { ...completed, _tag: "Running" }),
+  ).toThrow();
 });
 
 test("rejects a stale Project Memory revision", () => {
@@ -150,5 +156,4 @@ test("rejects mismatched paired trial arms", () => {
       treatment: { ...arm, capabilities: ["repository:read", "memory:propose"] },
     }).trialId,
   ).toBe("trial-1");
-
 });

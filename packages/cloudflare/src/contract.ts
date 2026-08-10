@@ -124,11 +124,15 @@ export type {
 };
 
 /** Decode every public/persisted boundary with strict excess-property rejection. */
-export const decode = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown): S["Type"] =>
-  Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(value);
+export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  value: unknown,
+): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(value);
 
-export const encode = <S extends Schema.ConstraintEncoder<unknown>>(schema: S, value: S["Type"]): unknown =>
-  Schema.encodeSync(schema)(value);
+export const encode = <S extends Schema.ConstraintEncoder<unknown>>(
+  schema: S,
+  value: S["Type"],
+): unknown => Schema.encodeSync(schema)(value);
 
 export const json = (value: unknown): string => JSON.stringify(value);
 

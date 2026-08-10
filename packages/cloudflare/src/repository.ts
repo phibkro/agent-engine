@@ -1,12 +1,15 @@
 import {
   RepositoryGrantSchema,
+  decode,
+  nowIso,
+  record,
+  requiredString,
   type CandidateReceipt,
   type CheckpointReceipt,
   type RepositoryGrant,
   type RepositoryIdentity,
   type VerifiedWorkspace,
 } from "./contract.ts";
-import { decode, nowIso, record, requiredString } from "./contract.ts";
 import {
   ProviderUnavailableError,
   RepositoryAncestryViolationError,
@@ -55,16 +58,26 @@ const pathMatches = (path: string, pattern: string): boolean => {
   const normalizedPath = path.replace(/^\/+/, "");
   const normalizedPattern = pattern.replace(/^\/+/, "");
   if (normalizedPattern === "**" || normalizedPattern === "*") return true;
-  if (normalizedPattern.endsWith("/**")) return normalizedPath.startsWith(normalizedPattern.slice(0, -3));
-  if (normalizedPattern.startsWith("**/")) return normalizedPath.endsWith(normalizedPattern.slice(3));
+  if (normalizedPattern.endsWith("/**"))
+    return normalizedPath.startsWith(normalizedPattern.slice(0, -3));
+  if (normalizedPattern.startsWith("**/"))
+    return normalizedPath.endsWith(normalizedPattern.slice(3));
   return normalizedPath === normalizedPattern;
 };
 
 const allowedPath = (path: string, patterns: readonly string[]): boolean =>
   patterns.some((pattern) => pathMatches(path, pattern));
 
-export const sessionRefs = (projectId: string, sessionId: string, projectSlug = projectId): SessionRefs => {
-  const slug = projectSlug.toLowerCase().replace(/[^a-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "") || "project";
+export const sessionRefs = (
+  projectId: string,
+  sessionId: string,
+  projectSlug = projectId,
+): SessionRefs => {
+  const slug =
+    projectSlug
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "") || "project";
   const identity = sessionId.replace(/[^a-zA-Z0-9._-]+/gu, "-");
   const prefix = `agent/${slug}/${identity}`;
   return { wip: `${prefix}/wip`, candidate: prefix };
@@ -102,7 +115,11 @@ export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGran
 
 const grantIsValid = (grant: RepositoryGrant, sessionId: string, now: string): boolean => {
   const value = asGrantRecord(grant);
-  return value["sessionId"] === sessionId && typeof value["expiresAt"] === "string" && String(value["expiresAt"]) >= now;
+  return (
+    value["sessionId"] === sessionId &&
+    typeof value["expiresAt"] === "string" &&
+    String(value["expiresAt"]) >= now
+  );
 };
 
 const scopeOf = (grant: RepositoryGrant): readonly string[] => {
@@ -123,7 +140,8 @@ const repositoryOf = (grant: RepositoryGrant): RepositoryIdentity => {
   } as RepositoryIdentity;
 };
 
-const baseOf = (grant: RepositoryGrant): string => requiredString(asGrantRecord(grant)["baseCommit"], "grant.baseCommit");
+const baseOf = (grant: RepositoryGrant): string =>
+  requiredString(asGrantRecord(grant)["baseCommit"], "grant.baseCommit");
 
 /** Trusted publisher. All refs are derived from the grant; callers cannot select arbitrary refs. */
 export class TrustedRepositoryPublisher {
@@ -132,13 +150,17 @@ export class TrustedRepositoryPublisher {
   #published = new Map<string, CandidateReceipt>();
   #checkpoints = new Map<string, CheckpointReceipt>();
 
-  constructor(transport: RepositoryTransport | undefined, options: RepositoryPublisherOptions = {}) {
+  constructor(
+    transport: RepositoryTransport | undefined,
+    options: RepositoryPublisherOptions = {},
+  ) {
     this.#transport = transport;
     this.#now = options.now ?? nowIso;
   }
 
   #requireTransport(): RepositoryTransport {
-    if (this.#transport === undefined) throw new ProviderUnavailableError("GitHub repository transport");
+    if (this.#transport === undefined)
+      throw new ProviderUnavailableError("GitHub repository transport");
     return this.#transport;
   }
 
@@ -146,16 +168,26 @@ export class TrustedRepositoryPublisher {
     const decoded = decode(RepositoryGrantSchema, grant);
     const value = asGrantRecord(decoded);
     if (!grantIsValid(decoded, sessionId, this.#now())) {
-      throw new RepositoryGrantInvalidError("Repository grant is expired or belongs to another Session");
+      throw new RepositoryGrantInvalidError(
+        "Repository grant is expired or belongs to another Session",
+      );
     }
     const refs = sessionRefs(requiredString(value["projectId"], "grant.projectId"), sessionId);
-    if (value["wipRef"] !== refs.wip || value["candidateRef"] !== refs.candidate || !refsAreDistinct(refs)) {
+    if (
+      value["wipRef"] !== refs.wip ||
+      value["candidateRef"] !== refs.candidate ||
+      !refsAreDistinct(refs)
+    ) {
       throw new RepositoryGrantInvalidError("Repository refs are not trusted derivations");
     }
     return value;
   }
 
-  async checkout(grant: RepositoryGrant, sessionId: string, baseOrCheckpointCommit?: string): Promise<VerifiedWorkspace> {
+  async checkout(
+    grant: RepositoryGrant,
+    sessionId: string,
+    baseOrCheckpointCommit?: string,
+  ): Promise<VerifiedWorkspace> {
     const value = this.#validateGrant(grant, sessionId);
     const commit = baseOrCheckpointCommit ?? baseOf(grant);
     const transport = this.#requireTransport();
@@ -164,7 +196,8 @@ export class TrustedRepositoryPublisher {
       candidateCommit: commit,
       repository: repositoryOf(grant),
     });
-    if (!verification.descendedFromBase) throw new RepositoryAncestryViolationError(commit, baseOf(grant));
+    if (!verification.descendedFromBase)
+      throw new RepositoryAncestryViolationError(commit, baseOf(grant));
     return {
       _tag: "VerifiedWorkspace",
       grantId: value["grantId"],
@@ -191,13 +224,18 @@ export class TrustedRepositoryPublisher {
       candidateCommit: commit,
       repository: repositoryOf(grant),
     });
-    if (!verification.descendedFromBase) throw new RepositoryAncestryViolationError(commit, baseOf(grant));
-    const outOfScope = verification.changedPaths.filter((path) => !allowedPath(path, scopeOf(grant)));
+    if (!verification.descendedFromBase)
+      throw new RepositoryAncestryViolationError(commit, baseOf(grant));
+    const outOfScope = verification.changedPaths.filter(
+      (path) => !allowedPath(path, scopeOf(grant)),
+    );
     if (outOfScope.length > 0) throw new RepositoryScopeViolationError(outOfScope);
     const wipRef = requiredString(value["wipRef"], "grant.wipRef");
     const observed = await transport.readRef(wipRef);
     if (observed.sha !== expectedRemoteCommit) {
-      throw new RepositoryConflictError(`WIP ref changed from ${expectedRemoteCommit} to ${observed.sha ?? "<absent>"}`);
+      throw new RepositoryConflictError(
+        `WIP ref changed from ${expectedRemoteCommit} to ${observed.sha ?? "<absent>"}`,
+      );
     }
     const updated = await transport.updateRef({
       ref: wipRef,
@@ -214,12 +252,17 @@ export class TrustedRepositoryPublisher {
       expectedRemoteCommit,
       acknowledgedAt: this.#now(),
     } as CheckpointReceipt;
-    if (updated.sha !== commit) throw new RepositoryConflictError("GitHub did not acknowledge the checkpoint commit");
+    if (updated.sha !== commit)
+      throw new RepositoryConflictError("GitHub did not acknowledge the checkpoint commit");
     this.#checkpoints.set(key, receipt);
     return receipt;
   }
 
-  async publishCandidate(grant: RepositoryGrant, sessionId: string, candidateCommit: string): Promise<CandidateReceipt> {
+  async publishCandidate(
+    grant: RepositoryGrant,
+    sessionId: string,
+    candidateCommit: string,
+  ): Promise<CandidateReceipt> {
     const value = this.#validateGrant(grant, sessionId);
     const grantId = requiredString(value["grantId"], "grant.grantId");
     const existing = this.#published.get(`${grantId}\u0000${candidateCommit}`);
@@ -231,21 +274,28 @@ export class TrustedRepositoryPublisher {
       candidateCommit,
       repository,
     });
-    if (!verification.descendedFromBase) throw new RepositoryAncestryViolationError(candidateCommit, baseOf(grant));
-    const outOfScope = verification.changedPaths.filter((path) => !allowedPath(path, scopeOf(grant)));
+    if (!verification.descendedFromBase)
+      throw new RepositoryAncestryViolationError(candidateCommit, baseOf(grant));
+    const outOfScope = verification.changedPaths.filter(
+      (path) => !allowedPath(path, scopeOf(grant)),
+    );
     if (outOfScope.length > 0) throw new RepositoryScopeViolationError(outOfScope);
     const candidateRef = requiredString(value["candidateRef"], "grant.candidateRef");
     const observed = await transport.readRef(candidateRef);
     if (observed.sha !== undefined && observed.sha !== candidateCommit) {
       throw new RepositoryConflictError(`Candidate ref already points to ${observed.sha}`);
     }
-    const updated = observed.sha === candidateCommit ? observed : await transport.updateRef({
-      ref: candidateRef,
-      expectedSha: observed.sha ?? baseOf(grant),
-      nextSha: candidateCommit,
-      force: false,
-    });
-    if (updated.sha !== candidateCommit) throw new RepositoryConflictError("GitHub did not acknowledge candidate commit");
+    const updated =
+      observed.sha === candidateCommit
+        ? observed
+        : await transport.updateRef({
+            ref: candidateRef,
+            expectedSha: observed.sha ?? baseOf(grant),
+            nextSha: candidateCommit,
+            force: false,
+          });
+    if (updated.sha !== candidateCommit)
+      throw new RepositoryConflictError("GitHub did not acknowledge candidate commit");
     const candidateBranch = candidateRef;
     const candidateUrl = `https://github.com/${repository.owner}/${repository.name}/tree/${candidateRef}`;
     const receipt = {
@@ -280,7 +330,12 @@ export class CloudflareRepositoryPublisher {
     return this.#transport.checkout(grant, sessionId, baseOrCheckpointCommit);
   }
 
-  checkpoint(grant: RepositoryGrant, sessionId: string, commit: string, expectedRemoteCommit: string) {
+  checkpoint(
+    grant: RepositoryGrant,
+    sessionId: string,
+    commit: string,
+    expectedRemoteCommit: string,
+  ) {
     return this.#transport.checkpoint(grant, sessionId, commit, expectedRemoteCommit);
   }
 
@@ -306,7 +361,8 @@ class FetcherRepositoryTransport implements RepositoryTransport {
       body: JSON.stringify(payload),
     });
     const body: unknown = await response.json();
-    if (!response.ok) throw new RepositoryConflictError(`Outbound Worker returned ${response.status}`);
+    if (!response.ok)
+      throw new RepositoryConflictError(`Outbound Worker returned ${response.status}`);
     return record(body);
   }
 
@@ -324,10 +380,13 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     const paths = body["changedPaths"];
     return {
       descendedFromBase: body["descendedFromBase"] === true,
-      changedPaths: Array.isArray(paths) ? paths.filter((path): path is string => typeof path === "string") : [],
-      commitMetadata: typeof body["commitMetadata"] === "object" && body["commitMetadata"] !== null
-        ? body["commitMetadata"] as Record<string, unknown>
-        : {},
+      changedPaths: Array.isArray(paths)
+        ? paths.filter((path): path is string => typeof path === "string")
+        : [],
+      commitMetadata:
+        typeof body["commitMetadata"] === "object" && body["commitMetadata"] !== null
+          ? (body["commitMetadata"] as Record<string, unknown>)
+          : {},
     };
   }
 

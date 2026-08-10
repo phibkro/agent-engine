@@ -1,9 +1,5 @@
 import { Effect, Schema } from "effect";
-import {
-  CloudTaskSchema,
-  MessageIdSchema,
-  SessionIdSchema,
-} from "@work-engine/protocol";
+import { CloudTaskSchema, MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
 import type { CloudTaskClient } from "@work-engine/runtime";
 import { isCloudTaskClientError, type CloudTaskClientError } from "./client.ts";
 
@@ -105,9 +101,7 @@ const decode = <S extends Schema.ConstraintDecoder<unknown>>(
   );
 
 const clientError = (error: unknown): McpError =>
-  isCloudTaskClientError(error)
-    ? error
-    : { _tag: "McpDecodeFailure", reason: String(error) };
+  isCloudTaskClientError(error) ? error : { _tag: "McpDecodeFailure", reason: String(error) };
 
 const requestId = (request: JsonRpcRequest): string | number | null | undefined => request.id;
 
@@ -119,7 +113,9 @@ const invoke = (
   switch (method) {
     case SessionToolName.spawn:
       return decode(SpawnParamsSchema, params).pipe(
-        Effect.flatMap(({ sessionId, task }) => client.spawn(sessionId, task).pipe(Effect.mapError(clientError))),
+        Effect.flatMap(({ sessionId, task }) =>
+          client.spawn(sessionId, task).pipe(Effect.mapError(clientError)),
+        ),
       );
     case SessionToolName.send:
       return decode(SendParamsSchema, params).pipe(
@@ -141,7 +137,9 @@ const invoke = (
       );
     case SessionToolName.result:
       return decode(ResultParamsSchema, params).pipe(
-        Effect.flatMap(({ sessionId }) => client.result(sessionId).pipe(Effect.mapError(clientError))),
+        Effect.flatMap(({ sessionId }) =>
+          client.result(sessionId).pipe(Effect.mapError(clientError)),
+        ),
       );
   }
 };
@@ -174,39 +172,34 @@ export interface McpStdio {
   readonly writeLine: (line: string) => Promise<void>;
 }
 
-export const runMcp = (
-  client: CloudTaskClient,
-  stdio: McpStdio,
-): Effect.Effect<void, never> =>
-  Effect.promise(async () => {
-    while (true) {
-      const line = await stdio.readLine();
-      if (line === undefined) return;
-      let input: unknown;
-      try {
-        input = JSON.parse(line) as unknown;
-      } catch (error) {
-        await stdio.writeLine(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: String(error) },
-          }),
-        );
-        continue;
-      }
-      const exit = await Effect.runPromiseExit(handleMcpRequest(client, input));
-      if (exit._tag === "Success") {
-        await stdio.writeLine(JSON.stringify(exit.value));
-      } else {
-        await stdio.writeLine(
-          JSON.stringify({
+export const runMcp = (client: CloudTaskClient, stdio: McpStdio): Effect.Effect<void, never> => {
+  const processNext = async (): Promise<void> => {
+    const line = await stdio.readLine();
+    if (line === undefined) return;
+    let input: unknown;
+    try {
+      input = JSON.parse(line) as unknown;
+    } catch (error) {
+      await stdio.writeLine(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: String(error) },
+        }),
+      );
+      return processNext();
+    }
+    const exit = await Effect.runPromiseExit(handleMcpRequest(client, input));
+    await stdio.writeLine(
+      exit._tag === "Success"
+        ? JSON.stringify(exit.value)
+        : JSON.stringify({
             jsonrpc: "2.0",
             id: null,
             error: { code: -32000, message: String(exit.cause) },
           }),
-        );
-      }
-    }
-  }).pipe(Effect.asVoid, Effect.orDie);
-
+    );
+    return processNext();
+  };
+  return Effect.promise(processNext).pipe(Effect.asVoid, Effect.orDie);
+};

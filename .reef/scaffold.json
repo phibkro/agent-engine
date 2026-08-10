@@ -545,6 +545,10 @@
     {
       "path": "infra/alchemy.run.ts",
       "owner": "cloud-runtime"
+    },
+    {
+      "path": "acceptance/0002/",
+      "owner": "acceptance"
     }
   ],
   "batches": [
@@ -651,13 +655,18 @@
       "requires": ["terminal-client"]
     },
     {
+      "command": "bun run test:acceptance",
+      "proves": "Paired repeated evidence is aggregated deterministically, raw rows are preserved, and a known-bad treatment cannot produce expansion.",
+      "requires": ["acceptance"]
+    },
+    {
       "command": "bun run build",
       "proves": "The CLI and Cloudflare Worker closure build without forbidden runtime imports.",
       "requires": ["cloud-runtime", "terminal-client"]
     },
     {
       "command": "bun run check",
-      "proves": "Exactly fmt:check, lint, audit:sources, typecheck, protocol/cloudflare/CLI tests, and build compose through one deterministic command.",
+      "proves": "Exactly fmt:check, lint, audit:sources, typecheck, protocol/cloudflare/CLI/acceptance tests, and build compose through one deterministic command.",
       "requires": ["semantic-kernel", "cloud-runtime", "terminal-client"]
     }
   ],

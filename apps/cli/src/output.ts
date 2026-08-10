@@ -54,10 +54,7 @@ export const exitCodeFor = (failure: CliFailure): ExitCode => {
   }
 };
 
-export const successEnvelope = (
-  operation: SessionOperation,
-  data: unknown,
-): ResultEnvelope => ({
+export const successEnvelope = (operation: SessionOperation, data: unknown): ResultEnvelope => ({
   _tag: "CloudTaskResult",
   operation,
   ok: true,

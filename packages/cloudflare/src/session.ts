@@ -3,13 +3,17 @@ import {
   SessionAdmissionSchema,
   SessionObservationSchema,
   SessionResultSchema,
+  decode,
+  newId,
+  nowIso,
+  record,
+  requiredString,
   type CloudTask,
   type SessionAdmission,
   type SessionId,
   type SessionObservation,
   type SessionResult,
 } from "./contract.ts";
-import { decode, newId, nowIso, record, requiredString } from "./contract.ts";
 import { InvalidRequestError, SessionConflictError, SessionTerminalError } from "./errors.ts";
 
 export type SessionLifecycle =
@@ -63,7 +67,10 @@ const cloneSnapshot = (snapshot: SessionSnapshot): SessionSnapshot => ({
   admission: { ...snapshot.admission },
   observations: snapshot.observations.map((entry) => ({ ...entry })),
   acceptedMessages: { ...snapshot.acceptedMessages },
-  sideEffects: snapshot.sideEffects.map((effect) => ({ ...effect, details: { ...effect.details } })),
+  sideEffects: snapshot.sideEffects.map((effect) => ({
+    ...effect,
+    details: { ...effect.details },
+  })),
   predecessorSandboxIds: [...snapshot.predecessorSandboxIds],
 });
 
@@ -77,9 +84,24 @@ const sessionState = (
   if (status === "running" || status === "cancellation_requested") {
     return { _tag: "Running", sessionId, cursor, startedAt: details["startedAt"] ?? nowIso() };
   }
-  if (status === "cancelled") return { _tag: "Cancelled", sessionId, cursor, cancelledAt: details["at"] ?? nowIso(), reason: details["reason"] };
-  if (status === "failed") return { _tag: "Failed", sessionId, cursor, failedAt: details["at"] ?? nowIso(), reason: details["reason"] };
-  if (status === "completed") return { _tag: "Completed", sessionId, cursor, completedAt: details["at"] ?? nowIso() };
+  if (status === "cancelled")
+    return {
+      _tag: "Cancelled",
+      sessionId,
+      cursor,
+      cancelledAt: details["at"] ?? nowIso(),
+      reason: details["reason"],
+    };
+  if (status === "failed")
+    return {
+      _tag: "Failed",
+      sessionId,
+      cursor,
+      failedAt: details["at"] ?? nowIso(),
+      reason: details["reason"],
+    };
+  if (status === "completed")
+    return { _tag: "Completed", sessionId, cursor, completedAt: details["at"] ?? nowIso() };
   return { _tag: "Pending", sessionId, cursor };
 };
 
@@ -126,8 +148,14 @@ const result = (
   reason?: string,
 ): Record<string, unknown> => {
   if (status === "pending") return { _tag: "Pending", sessionId };
-  if (status === "failed") return { _tag: "Failed", sessionId, reason: reason ?? "Session failed", completedAt: nowIso() };
-  return { _tag: "Cancelled", sessionId, reason: reason ?? "Session cancelled", completedAt: nowIso() };
+  if (status === "failed")
+    return { _tag: "Failed", sessionId, reason: reason ?? "Session failed", completedAt: nowIso() };
+  return {
+    _tag: "Cancelled",
+    sessionId,
+    reason: reason ?? "Session cancelled",
+    completedAt: nowIso(),
+  };
 };
 
 /** Pure lifecycle owner used by the Session Durable Object and focused tests. */
@@ -140,7 +168,9 @@ export class SessionState {
     const sessionId = requiredString(taskRecord["sessionId"], "task.sessionId");
     if (existing !== undefined) {
       if (requiredString(existing.task["sessionId"], "snapshot.task.sessionId") !== sessionId) {
-        throw new SessionConflictError("Persisted Session identity does not match the requested identity");
+        throw new SessionConflictError(
+          "Persisted Session identity does not match the requested identity",
+        );
       }
       this.#snapshot = cloneSnapshot(existing);
       return;
@@ -190,7 +220,10 @@ export class SessionState {
     this.#snapshot = {
       ...this.#snapshot,
       cursor,
-      observations: [...this.#snapshot.observations, observation(this.sessionId, cursor, status, details)],
+      observations: [
+        ...this.#snapshot.observations,
+        observation(this.sessionId, cursor, status, details),
+      ],
     };
   }
 
@@ -202,15 +235,21 @@ export class SessionState {
   }
 
   send(messageId: string, message: string): number {
-    if (messageId.length === 0 || message.length === 0) throw new InvalidRequestError("Message cannot be empty");
+    if (messageId.length === 0 || message.length === 0)
+      throw new InvalidRequestError("Message cannot be empty");
     const prior = this.#snapshot.acceptedMessages[messageId];
     if (prior !== undefined) return prior;
-    if (terminal(this.#snapshot.status)) throw new SessionTerminalError("send is rejected after terminal completion");
-    const status: SessionLifecycle = this.#snapshot.status === "admitted" ? "running" : this.#snapshot.status;
+    if (terminal(this.#snapshot.status))
+      throw new SessionTerminalError("send is rejected after terminal completion");
+    const status: SessionLifecycle =
+      this.#snapshot.status === "admitted" ? "running" : this.#snapshot.status;
     this.#snapshot = {
       ...this.#snapshot,
       status,
-      acceptedMessages: { ...this.#snapshot.acceptedMessages, [messageId]: this.#snapshot.cursor + 1 },
+      acceptedMessages: {
+        ...this.#snapshot.acceptedMessages,
+        [messageId]: this.#snapshot.cursor + 1,
+      },
     };
     this.#append(status, { messageId, message });
     return this.#snapshot.cursor;
@@ -234,8 +273,13 @@ export class SessionState {
     }
     this.#snapshot = { ...this.#snapshot, status: "cancelled", cancellationReason: reason };
     this.#append("cancelled", { reason, at: nowIso() });
-    this.#snapshot = { ...this.#snapshot, terminalResult: result(this.sessionId, "cancelled", reason) };
-    return this.#snapshot.observations[this.#snapshot.observations.length - 1] as SessionObservation;
+    this.#snapshot = {
+      ...this.#snapshot,
+      terminalResult: result(this.sessionId, "cancelled", reason),
+    };
+    return this.#snapshot.observations[
+      this.#snapshot.observations.length - 1
+    ] as SessionObservation;
   }
 
   fail(reason: string): SessionResult {
@@ -248,10 +292,13 @@ export class SessionState {
   }
 
   complete(completedResult: Record<string, unknown>): SessionResult {
-    if (this.#snapshot.status === "cancelled") return this.#snapshot.terminalResult as SessionResult;
+    if (this.#snapshot.status === "cancelled")
+      return this.#snapshot.terminalResult as SessionResult;
     if (terminal(this.#snapshot.status)) return this.#snapshot.terminalResult as SessionResult;
     if (completedResult["_tag"] !== "CompletedResult") {
-      throw new InvalidRequestError("A trusted CompletedResult is required for terminal completion");
+      throw new InvalidRequestError(
+        "A trusted CompletedResult is required for terminal completion",
+      );
     }
     this.#snapshot = { ...this.#snapshot, status: "completed" };
     this.#append("completed", { at: nowIso() });
@@ -260,7 +307,10 @@ export class SessionState {
     return nextResult as SessionResult;
   }
 
-  recordSideEffect(kind: SessionSideEffect["kind"], details: Readonly<Record<string, unknown>>): void {
+  recordSideEffect(
+    kind: SessionSideEffect["kind"],
+    details: Readonly<Record<string, unknown>>,
+  ): void {
     const effect: SessionSideEffect = { kind, at: nowIso(), details: { ...details } };
     this.#snapshot = { ...this.#snapshot, sideEffects: [...this.#snapshot.sideEffects, effect] };
     if (this.#snapshot.status === "cancelled" && this.#snapshot.terminalResult !== undefined) {
@@ -295,9 +345,13 @@ export class SessionState {
   }
 }
 
-export const decodeSessionAdmission = (value: unknown): SessionAdmission => decode(SessionAdmissionSchema, value);
-export const decodeSessionObservation = (value: unknown): SessionObservation => decode(SessionObservationSchema, value);
-export const decodeSessionResult = (value: unknown): SessionResult => decode(SessionResultSchema, value);
+export const decodeSessionAdmission = (value: unknown): SessionAdmission =>
+  decode(SessionAdmissionSchema, value);
+export const decodeSessionObservation = (value: unknown): SessionObservation =>
+  decode(SessionObservationSchema, value);
+export const decodeSessionResult = (value: unknown): SessionResult =>
+  decode(SessionResultSchema, value);
 
-export const sessionIdFromTask = (task: CloudTask): SessionId => requiredString(record(task)["sessionId"], "task.sessionId") as SessionId;
+export const sessionIdFromTask = (task: CloudTask): SessionId =>
+  requiredString(record(task)["sessionId"], "task.sessionId") as SessionId;
 export const freshSessionTaskId = (): string => newId("tsk_");

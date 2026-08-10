@@ -69,11 +69,7 @@ export const ProfileReferenceSchema = Schema.Struct({
 });
 export type ProfileReference = typeof ProfileReferenceSchema.Type;
 
-export const ProfileRoleSchema = Schema.Literals([
-  "orchestrator",
-  "worker",
-  "reviewer",
-] as const);
+export const ProfileRoleSchema = Schema.Literals(["orchestrator", "worker", "reviewer"] as const);
 export type ProfileRole = typeof ProfileRoleSchema.Type;
 
 export const ProfileSchema = Schema.TaggedStruct("Profile", {
@@ -94,8 +90,11 @@ export const ProfileSchema = Schema.TaggedStruct("Profile", {
 });
 export type Profile = typeof ProfileSchema.Type;
 
-export const PathPatternSchema = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[^\u0000]+$/)),
+export const PathPatternSchema = Schema.String.check(
+  Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+$/),
+  Schema.makeFilter(
+    (path) => !path.includes(String.fromCharCode(0)) || "path contains a null byte",
+  ),
 );
 export type PathPattern = typeof PathPatternSchema.Type;
 
@@ -557,16 +556,19 @@ export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
   Schema.makeFilter((manifest) => {
     const { baseline, treatment } = manifest;
     const sameBudget = JSON.stringify(baseline.budget) === JSON.stringify(treatment.budget);
-    const sameCache = JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
+    const sameCache =
+      JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
     const sameCommands =
-      JSON.stringify(baseline.verificationCommands) === JSON.stringify(treatment.verificationCommands);
+      JSON.stringify(baseline.verificationCommands) ===
+      JSON.stringify(treatment.verificationCommands);
     return (
-      baseline.model === treatment.model &&
-      baseline.baseCommit === treatment.baseCommit &&
-      sameBudget &&
-      sameCache &&
-      sameCommands
-    ) || "paired trial arms must share model, budget, base commit, cache, and verification commands";
+      (baseline.model === treatment.model &&
+        baseline.baseCommit === treatment.baseCommit &&
+        sameBudget &&
+        sameCache &&
+        sameCommands) ||
+      "paired trial arms must share model, budget, base commit, cache, and verification commands"
+    );
   }),
 );
 export type TrialManifest = typeof TrialManifestSchema.Type;

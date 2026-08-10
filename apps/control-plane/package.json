@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "build": "bun build src/index.ts --outfile dist/worker.js --target browser"
+  },
   "dependencies": {
     "@work-engine/cloudflare": "0.0.0"
   },

@@ -63,10 +63,9 @@ const OPERATION_BY_NAME: Readonly<Record<string, SessionOperation>> = {
 
 const operationOf = (value: string): SessionOperation | undefined => OPERATION_BY_NAME[value];
 
-export const parseInvocation = (
-  argv: ReadonlyArray<string>,
-): ParsedInvocation | ParseFailure => {
-  if (argv[0] !== "session") return usage("expected one of: session spawn|send|observe|cancel|result");
+export const parseInvocation = (argv: ReadonlyArray<string>): ParsedInvocation | ParseFailure => {
+  if (argv[0] !== "session")
+    return usage("expected one of: session spawn|send|observe|cancel|result");
   const operationValue = argv[1];
   if (operationValue === undefined) return usage("missing session operation");
   const operation = operationOf(operationValue);
@@ -85,7 +84,11 @@ export const parseInvocation = (
     if (options[name] !== undefined) return usage(`duplicate option: --${name}`);
     const inlineValue = equals === -1 ? undefined : withoutPrefix.slice(equals + 1);
     const value = inlineValue ?? argv[index + 1];
-    if (value === undefined || value.length === 0 || (inlineValue === undefined && value.startsWith("--"))) {
+    if (
+      value === undefined ||
+      value.length === 0 ||
+      (inlineValue === undefined && value.startsWith("--"))
+    ) {
       return usage(`missing value for --${name}`);
     }
     options[name] = value;
@@ -107,10 +110,8 @@ const requiredOption = (
     : Effect.succeed(value);
 };
 
-const optionalOption = (
-  invocation: ParsedInvocation,
-  name: string,
-): string | undefined => invocation.options[name];
+const optionalOption = (invocation: ParsedInvocation, name: string): string | undefined =>
+  invocation.options[name];
 
 const parseWith = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
@@ -121,23 +122,16 @@ const parseWith = <S extends Schema.ConstraintDecoder<unknown>>(
     Effect.mapError((error) => usage(`${label}: ${String(error)}`)),
   );
 
-const parseSessionId = (
-  invocation: ParsedInvocation,
-): Effect.Effect<SessionId, ParseFailure> =>
+const parseSessionId = (invocation: ParsedInvocation): Effect.Effect<SessionId, ParseFailure> =>
   requiredOption(invocation, "session-id").pipe(
     Effect.flatMap((value) => parseWith(SessionIdSchema, value, "session id")),
   );
-const parseMessageId = (
-  invocation: ParsedInvocation,
-): Effect.Effect<MessageId, ParseFailure> =>
+const parseMessageId = (invocation: ParsedInvocation): Effect.Effect<MessageId, ParseFailure> =>
   requiredOption(invocation, "message-id").pipe(
     Effect.flatMap((value) => parseWith(MessageIdSchema, value, "message id")),
   );
 
-const parseNatural = (
-  value: string,
-  label: string,
-): Effect.Effect<number, ParseFailure> => {
+const parseNatural = (value: string, label: string): Effect.Effect<number, ParseFailure> => {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0
     ? Effect.succeed(parsed)
@@ -245,7 +239,10 @@ export const executeInvocation = (
 
 export const loadClientForInvocation = (
   _invocation: ParsedInvocation,
-): Effect.Effect<{ readonly client: CloudTaskClient; readonly config: OperatorConfig }, ConfigError> =>
+): Effect.Effect<
+  { readonly client: CloudTaskClient; readonly config: OperatorConfig },
+  ConfigError
+> =>
   loadOperatorConfig.pipe(
     Effect.map((config) => ({
       config,

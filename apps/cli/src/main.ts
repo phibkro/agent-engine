@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Effect, Exit } from "effect";
+import { Effect, type Exit } from "effect";
 import { executeInvocation, parseInvocation } from "./commands.ts";
 import { makeCloudTaskClient } from "./client.ts";
 import { loadOperatorConfig } from "./config.ts";
@@ -31,7 +31,6 @@ const unexpectedFailure = (error: unknown): CliFailure => ({
   _tag: "UnexpectedFailure",
   reason: error instanceof Error ? error.message : String(error),
 });
-
 
 export interface CliDependencies {
   readonly loadConfig?: typeof loadOperatorConfig;
@@ -74,6 +73,7 @@ export const runCli = (
 
 export const main = async (): Promise<void> => {
   const exit = await Effect.runPromise(runCli(Bun.argv.slice(2)));
+  // oxlint-disable-next-line effect/no-cross-runtime -- Bun exposes process.exitCode; setting it preserves flushed JSON output.
   if (exit !== 0) process.exitCode = exit;
 };
 

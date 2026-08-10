@@ -3,10 +3,13 @@ import {
   CloudTaskRequestSchema,
   CloudTaskResponseSchema,
   CloudTaskSchema,
+  decode,
+  json,
+  record,
+  requiredString,
   type CloudTask,
   type SessionId,
 } from "./contract.ts";
-import { decode, json, record, requiredString } from "./contract.ts";
 import {
   CLOUD_TASK_AUTHORIZATION,
   CLOUD_TASK_BEARER_PREFIX,
@@ -32,18 +35,22 @@ export interface SessionDirectory {
 
 const errorResponse = (cause: unknown): Response => {
   if (cause instanceof CloudRuntimeError) {
-    const status = cause._tag === "Unauthenticated"
-      ? 401
-      : cause._tag === "Unauthorized"
-        ? 403
-        : cause._tag === "SessionNotFound"
-          ? 404
-          : cause._tag === "ProviderUnavailable"
-            ? 503
-            : cause._tag === "InvalidRequest"
-              ? 400
-              : 409;
-    return Response.json({ _tag: cause._tag, reason: cause.message, details: cause.details }, { status });
+    const status =
+      cause._tag === "Unauthenticated"
+        ? 401
+        : cause._tag === "Unauthorized"
+          ? 403
+          : cause._tag === "SessionNotFound"
+            ? 404
+            : cause._tag === "ProviderUnavailable"
+              ? 503
+              : cause._tag === "InvalidRequest"
+                ? 400
+                : 409;
+    return Response.json(
+      { _tag: cause._tag, reason: cause.message, details: cause.details },
+      { status },
+    );
   }
   const reason = cause instanceof Error ? cause.message : "Unknown cloud-task error";
   return Response.json({ _tag: "InvalidRequest", reason }, { status: 400 });
@@ -51,7 +58,9 @@ const errorResponse = (cause: unknown): Response => {
 
 const authToken = (request: Request): string | undefined => {
   const value = request.headers.get(CLOUD_TASK_AUTHORIZATION);
-  return value?.startsWith(CLOUD_TASK_BEARER_PREFIX) ? value.slice(CLOUD_TASK_BEARER_PREFIX.length) : undefined;
+  return value?.startsWith(CLOUD_TASK_BEARER_PREFIX)
+    ? value.slice(CLOUD_TASK_BEARER_PREFIX.length)
+    : undefined;
 };
 
 const wireTag = (payload: Record<string, unknown>): string => {
@@ -72,7 +81,8 @@ const taskFromPayload = (payload: Record<string, unknown>): CloudTask => {
 };
 
 const sessionIdFromPayload = (payload: Record<string, unknown>, task?: CloudTask): string => {
-  const candidate = payload["sessionId"] ?? (task === undefined ? undefined : record(task)["sessionId"]);
+  const candidate =
+    payload["sessionId"] ?? (task === undefined ? undefined : record(task)["sessionId"]);
   return requiredString(candidate, "sessionId");
 };
 
@@ -118,7 +128,8 @@ export class SessionDurableObject implements DurableObject {
         return Response.json({ _tag: "Spawned", admission });
       }
       const sessionId = sessionIdFromPayload(payload);
-      if (sessionId !== this.#state.id.toString()) throw new UnauthorizedError("Session address mismatch");
+      if (sessionId !== this.#state.id.toString())
+        throw new UnauthorizedError("Session address mismatch");
       if (tag === "Send") {
         const messageId = requiredString(payload["messageId"], "messageId");
         const message = payload["message"];
@@ -139,7 +150,10 @@ export class SessionDurableObject implements DurableObject {
         return Response.json({ _tag: "Cancelled", observation });
       }
       if (tag === "Result") {
-        return Response.json({ _tag: "Result", result: session.terminalResult ?? { _tag: "Pending", sessionId } });
+        return Response.json({
+          _tag: "Result",
+          result: session.terminalResult ?? { _tag: "Pending", sessionId },
+        });
       }
       throw new InvalidRequestError(`Unsupported cloud-task operation ${tag}`);
     } catch (cause) {
@@ -166,11 +180,14 @@ export class CloudTaskRouter {
   }
 
   #authenticate(request: Request): CloudTaskCaller {
-    if (this.#expectedToken === undefined) throw new ProviderUnavailableError("Cloud-task authentication secret");
+    if (this.#expectedToken === undefined)
+      throw new ProviderUnavailableError("Cloud-task authentication secret");
     const presented = authToken(request);
-    if (presented === undefined || presented !== this.#expectedToken) throw new UnauthorizedError("Cloud-task caller authentication failed");
+    if (presented === undefined || presented !== this.#expectedToken)
+      throw new UnauthorizedError("Cloud-task caller authentication failed");
     const callerId = request.headers.get("X-Cloud-Task-Caller") ?? "operator";
-    if (this.#expectedCaller !== undefined && callerId !== this.#expectedCaller) throw new UnauthorizedError();
+    if (this.#expectedCaller !== undefined && callerId !== this.#expectedCaller)
+      throw new UnauthorizedError();
     return { callerId };
   }
 
@@ -178,7 +195,11 @@ export class CloudTaskRouter {
     return this.#env.SESSION;
   }
 
-  async #forward(request: Request, body: Record<string, unknown>, sessionId: string): Promise<Response> {
+  async #forward(
+    request: Request,
+    body: Record<string, unknown>,
+    sessionId: string,
+  ): Promise<Response> {
     const stub = this.#namespace().getByName(sessionId);
     const headers = new Headers(request.headers);
     headers.delete(CLOUD_TASK_AUTHORIZATION);
@@ -220,8 +241,10 @@ export class CloudflareCloudTaskClient {
   }
 
   async #request(payload: Record<string, unknown>): Promise<unknown> {
-    if (this.#binding === undefined) throw new ProviderUnavailableError("Cloud-task service binding");
-    if (this.#token === undefined) throw new ProviderUnavailableError("Cloud-task authentication secret");
+    if (this.#binding === undefined)
+      throw new ProviderUnavailableError("Cloud-task service binding");
+    if (this.#token === undefined)
+      throw new ProviderUnavailableError("Cloud-task authentication secret");
     const response = await this.#binding.fetch("https://cloud-task/v1/cloud-tasks", {
       method: "POST",
       headers: {
@@ -231,13 +254,15 @@ export class CloudflareCloudTaskClient {
       body: json(payload),
     });
     const body: unknown = await response.json();
-    if (!response.ok) throw new UnauthorizedError(String(record(body)["reason"] ?? response.status));
+    if (!response.ok)
+      throw new UnauthorizedError(String(record(body)["reason"] ?? response.status));
     return decode(CloudTaskResponseSchema, body);
   }
 
   spawn(sessionId: SessionId, task: CloudTask): Promise<unknown> {
     const value = decode(CloudTaskSchema, task);
-    if (record(value)["sessionId"] !== sessionId) throw new InvalidRequestError("sessionId does not match CloudTask");
+    if (record(value)["sessionId"] !== sessionId)
+      throw new InvalidRequestError("sessionId does not match CloudTask");
     return this.#request({ _tag: "Spawn", sessionId, task: value });
   }
 
@@ -287,11 +312,29 @@ export class InMemoryCloudTaskDirectory {
       if (tag === "Send") {
         const message = payload["message"];
         if (message === undefined) throw new InvalidRequestError("message is required");
-        return Response.json({ _tag: "Accepted", acceptedCursor: session.send(requiredString(payload["messageId"], "messageId"), String(message)) });
+        return Response.json({
+          _tag: "Accepted",
+          acceptedCursor: session.send(
+            requiredString(payload["messageId"], "messageId"),
+            String(message),
+          ),
+        });
       }
-      if (tag === "Observe") return Response.json({ _tag: "Observed", observations: session.observe(Number(payload["afterCursor"] ?? 0)) });
-      if (tag === "Cancel") return Response.json({ _tag: "Cancelled", observation: session.requestCancellation(requiredString(payload["reason"], "reason")) });
-      if (tag === "Result") return Response.json({ _tag: "Result", result: session.terminalResult ?? { _tag: "Pending", sessionId } });
+      if (tag === "Observe")
+        return Response.json({
+          _tag: "Observed",
+          observations: session.observe(Number(payload["afterCursor"] ?? 0)),
+        });
+      if (tag === "Cancel")
+        return Response.json({
+          _tag: "Cancelled",
+          observation: session.requestCancellation(requiredString(payload["reason"], "reason")),
+        });
+      if (tag === "Result")
+        return Response.json({
+          _tag: "Result",
+          result: session.terminalResult ?? { _tag: "Pending", sessionId },
+        });
       throw new InvalidRequestError(`Unsupported cloud-task operation ${tag}`);
     } catch (cause) {
       return errorResponse(cause);
@@ -299,4 +342,5 @@ export class InMemoryCloudTaskDirectory {
   }
 }
 
-export const cloudTaskRouter = (env: CloudflareRuntimeEnv): CloudTaskRouter => new CloudTaskRouter(env);
+export const cloudTaskRouter = (env: CloudflareRuntimeEnv): CloudTaskRouter =>
+  new CloudTaskRouter(env);

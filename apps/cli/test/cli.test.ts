@@ -1,9 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Effect } from "effect";
-import {
-  makeCloudTaskClient,
-  type CloudTaskClientError,
-} from "../src/client.ts";
+import { makeCloudTaskClient, type CloudTaskClientError } from "../src/client.ts";
 import { decodeOperatorConfig, type ConfigFileSystem } from "../src/config.ts";
 import { parseInvocation } from "../src/commands.ts";
 import { exitCodeFor, failureEnvelope, renderJson } from "../src/output.ts";
@@ -67,7 +64,14 @@ describe("0002 CLI public interface", () => {
       parseInvocation(["session", "observe", "--session-id", sessionId, "--after", "3"]),
     ).toMatchObject({ operation: "observe" });
     expect(
-      parseInvocation(["session", "cancel", "--session-id", sessionId, "--reason", "operator requested"]),
+      parseInvocation([
+        "session",
+        "cancel",
+        "--session-id",
+        sessionId,
+        "--reason",
+        "operator requested",
+      ]),
     ).toMatchObject({ operation: "cancel" });
     expect(parseInvocation(["session", "result", "--session-id", sessionId])).toMatchObject({
       operation: "result",
@@ -117,7 +121,8 @@ describe("0002 CLI public interface", () => {
 
   test("strictly rejects malformed response payloads", async () => {
     const client = makeCloudTaskClient(config, {
-      fetch: async () => successfulResponse({ _tag: "Observed", observations: [{ unexpected: true }] }),
+      fetch: async () =>
+        successfulResponse({ _tag: "Observed", observations: [{ unexpected: true }] }),
     });
     const result = await Effect.runPromiseExit(client.observe(sessionId, 0));
     expect(result._tag).toBe("Failure");
@@ -150,7 +155,8 @@ describe("0002 CLI public interface", () => {
       ),
     );
     expect(nonPrivate._tag).toBe("Failure");
-    if (nonPrivate._tag === "Failure") expect(String(nonPrivate.cause)).toContain("ConfigPermissions");
+    if (nonPrivate._tag === "Failure")
+      expect(String(nonPrivate.cause)).toContain("ConfigPermissions");
   });
 
   test("renders typed failures without a fallback reason", () => {

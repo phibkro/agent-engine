@@ -1,8 +1,11 @@
 import {
   DependencyCacheManifestSchema,
+  decode,
+  record,
+  requiredString,
+  sha256,
   type DependencyCacheManifest,
 } from "./contract.ts";
-import { decode, record, requiredString, sha256 } from "./contract.ts";
 import { CacheDigestMismatchError, CacheMissError, ProviderUnavailableError } from "./errors.ts";
 
 export interface CacheExpectation {
@@ -72,7 +75,10 @@ export class R2DependencyCache {
     this.#bucket = bucket;
   }
 
-  async restore(manifest: DependencyCacheManifest, expectation: CacheExpectation): Promise<CacheRestore> {
+  async restore(
+    manifest: DependencyCacheManifest,
+    expectation: CacheExpectation,
+  ): Promise<CacheRestore> {
     if (this.#bucket === undefined) throw new ProviderUnavailableError("DependencyCache R2");
     const decoded = decode(DependencyCacheManifestSchema, manifest);
     const key = requiredString(record(decoded)["cacheKey"], "manifest.cacheKey");
@@ -83,7 +89,10 @@ export class R2DependencyCache {
       return await verifyDependencyCache(decoded, expectation, payload);
     } catch (cause) {
       if (cause instanceof CacheDigestMismatchError) throw cause;
-      throw new CacheDigestMismatchError(String(record(decoded)["payloadDigest"]), await sha256(payload));
+      throw new CacheDigestMismatchError(
+        String(record(decoded)["payloadDigest"]),
+        await sha256(payload),
+      );
     }
   }
 
@@ -100,7 +109,9 @@ export class R2DependencyCache {
     };
     await verifyDependencyCache(decoded, expectation, payload);
     const key = requiredString(values["cacheKey"], "manifest.cacheKey");
-    await this.#bucket.put(key, payload, { httpMetadata: { contentType: "application/octet-stream" } });
+    await this.#bucket.put(key, payload, {
+      httpMetadata: { contentType: "application/octet-stream" },
+    });
   }
 }
 
@@ -122,14 +133,19 @@ export const restoreOrSetup = async (
   manifest: DependencyCacheManifest,
   expectation: CacheExpectation,
   setup: () => Promise<Uint8Array>,
-): Promise<{ readonly source: "cache" | "uncached"; readonly payload: Uint8Array; readonly reason?: string }> => {
+): Promise<{
+  readonly source: "cache" | "uncached";
+  readonly payload: Uint8Array;
+  readonly reason?: string;
+}> => {
   try {
     const restored = await cache.restore(manifest, expectation);
     if (restored.kind === "hit") return { source: "cache", payload: restored.payload };
     const payload = await setup();
     return { source: "uncached", payload, reason: restored.reason };
   } catch (cause) {
-    if (!(cause instanceof CacheDigestMismatchError) && !(cause instanceof CacheMissError)) throw cause;
+    if (!(cause instanceof CacheDigestMismatchError) && !(cause instanceof CacheMissError))
+      throw cause;
     const payload = await setup();
     return { source: "uncached", payload, reason: cause.message };
   }

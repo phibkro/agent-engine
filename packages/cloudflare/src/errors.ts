@@ -21,7 +21,11 @@ export class CloudRuntimeError extends Error {
   readonly _tag: CloudErrorTag;
   readonly details: Readonly<Record<string, unknown>>;
 
-  constructor(tag: CloudErrorTag, message: string, details: Readonly<Record<string, unknown>> = {}) {
+  constructor(
+    tag: CloudErrorTag,
+    message: string,
+    details: Readonly<Record<string, unknown>> = {},
+  ) {
     super(message);
     this.name = tag;
     this._tag = tag;
@@ -109,9 +113,13 @@ export class RepositoryConflictError extends CloudRuntimeError {
 
 export class RepositoryScopeViolationError extends CloudRuntimeError {
   constructor(paths: readonly string[]) {
-    super("RepositoryScopeViolation", `Candidate changes exceed the granted scope: ${paths.join(", ")}`, {
-      paths,
-    });
+    super(
+      "RepositoryScopeViolation",
+      `Candidate changes exceed the granted scope: ${paths.join(", ")}`,
+      {
+        paths,
+      },
+    );
   }
 }
 
@@ -132,10 +140,14 @@ export class CacheMissError extends CloudRuntimeError {
 
 export class CacheDigestMismatchError extends CloudRuntimeError {
   constructor(expected: string, observed: string) {
-    super("CacheDigestMismatch", `Dependency cache digest mismatch: expected ${expected}, observed ${observed}`, {
-      expected,
-      observed,
-    });
+    super(
+      "CacheDigestMismatch",
+      `Dependency cache digest mismatch: expected ${expected}, observed ${observed}`,
+      {
+        expected,
+        observed,
+      },
+    );
   }
 }
 

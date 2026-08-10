@@ -93,9 +93,11 @@ const expectedScripts: Readonly<Record<string, string>> = {
   "test:protocol": "bun run --cwd packages/protocol test",
   "test:cloudflare": "bun run --cwd packages/cloudflare test",
   "test:cli": "bun run --cwd apps/cli test",
+  "test:acceptance": "vitest run acceptance/0002/evaluate.test.ts",
+  "accept:0002:report": "bun acceptance/0002/report.ts",
   build: "bun run --cwd apps/cli build && bun run --cwd apps/control-plane build",
   check:
-    "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run build",
+    "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run test:acceptance && bun run build",
 };
 
 const run = async (): Promise<void> => {

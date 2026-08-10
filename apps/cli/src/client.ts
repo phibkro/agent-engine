@@ -25,10 +25,7 @@ export const AccessHeader = {
 
 export type CloudTaskClientError = CloudTaskError;
 
-export type CloudTaskFetch = (
-  input: string | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+export type CloudTaskFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export interface CloudTaskHttpOptions {
   readonly fetch?: CloudTaskFetch;
@@ -78,7 +75,10 @@ const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
 
 const responseError = (status: number, sessionId: SessionId): CloudTaskError => {
   if (status === 401) {
-    return { _tag: "CloudTaskUnauthorized", reason: "Cloudflare Access rejected the service credentials" };
+    return {
+      _tag: "CloudTaskUnauthorized",
+      reason: "Cloudflare Access rejected the service credentials",
+    };
   }
   if (status === 404) {
     return { _tag: "CloudTaskNotFound", sessionId };
@@ -140,9 +140,7 @@ const request = <S extends Schema.ConstraintDecoder<unknown>>(
     });
   });
 
-const makeRequestBody = (
-  requestInput: unknown,
-): Effect.Effect<string, CloudTaskError> =>
+const makeRequestBody = (requestInput: unknown): Effect.Effect<string, CloudTaskError> =>
   Effect.try({
     try: () => {
       const decoded = decodeStrict(CloudTaskRequestSchema, requestInput);
@@ -151,10 +149,7 @@ const makeRequestBody = (
     catch: (error) => rejected(`strict request encode failed: ${reasonOf(error)}`),
   });
 
-const makeClient = (
-  config: OperatorConfig,
-  fetcher: CloudTaskFetch,
-): CloudTaskClient => ({
+const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskClient => ({
   spawn: (sessionId: SessionId, task: CloudTask) =>
     Effect.gen(function* () {
       const checkedSessionId = yield* Effect.try({
@@ -165,7 +160,11 @@ const makeClient = (
         try: () => decodeStrict(CloudTaskSchema, task),
         catch: (error) => rejected(`spawn: invalid task: ${reasonOf(error)}`),
       });
-      const body = yield* makeRequestBody({ _tag: "Spawn", sessionId: checkedSessionId, task: checkedTask });
+      const body = yield* makeRequestBody({
+        _tag: "Spawn",
+        sessionId: checkedSessionId,
+        task: checkedTask,
+      });
       const response = yield* request(
         config,
         fetcher,

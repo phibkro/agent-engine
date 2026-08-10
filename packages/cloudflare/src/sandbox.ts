@@ -24,19 +24,25 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   }
 
   async #call(path: string, body: unknown): Promise<Record<string, unknown>> {
-    if (this.#binding === undefined) throw new ProviderUnavailableError("Cloudflare Sandbox provider");
+    if (this.#binding === undefined)
+      throw new ProviderUnavailableError("Cloudflare Sandbox provider");
     const response = await this.#binding.fetch(`https://sandbox${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: json(body),
     });
     const value: unknown = await response.json();
-    if (!response.ok) throw new ProviderUnavailableError("Cloudflare Sandbox provider", `provider returned ${response.status}`);
+    if (!response.ok)
+      throw new ProviderUnavailableError(
+        "Cloudflare Sandbox provider",
+        `provider returned ${response.status}`,
+      );
     return record(value);
   }
 
   async allocate(sessionId: SessionId, imageDigest: string): Promise<SandboxAllocation> {
-    if (imageDigest.length === 0) throw new InvalidRequestError("Sandbox image digest cannot be empty");
+    if (imageDigest.length === 0)
+      throw new InvalidRequestError("Sandbox image digest cannot be empty");
     const value = await this.#call("/allocate", { sessionId, imageDigest });
     return {
       providerId: requiredString(value["providerId"], "providerId"),
@@ -48,7 +54,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
   }
 
   async terminate(providerId: string): Promise<void> {
-    if (providerId.length === 0) throw new InvalidRequestError("Sandbox provider identity cannot be empty");
+    if (providerId.length === 0)
+      throw new InvalidRequestError("Sandbox provider identity cannot be empty");
     await this.#call("/terminate", { providerId });
   }
 }

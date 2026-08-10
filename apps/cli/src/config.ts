@@ -96,11 +96,13 @@ const ensurePrivateCredential = (
   path: string,
 ): Effect.Effect<void, ConfigError> =>
   Effect.gen(function* () {
-    const metadata = yield* files.inspect(path).pipe(
-      Effect.catchTag("ConfigIoFailure", (error) =>
-        Effect.fail({ _tag: "ConfigMissing" as const, path: error.path }),
-      ),
-    );
+    const metadata = yield* files
+      .inspect(path)
+      .pipe(
+        Effect.catchTag("ConfigIoFailure", (error) =>
+          Effect.fail({ _tag: "ConfigMissing" as const, path: error.path }),
+        ),
+      );
     if (metadata.uid !== files.currentUid()) {
       return yield* Effect.fail({
         _tag: "ConfigPermissions" as const,

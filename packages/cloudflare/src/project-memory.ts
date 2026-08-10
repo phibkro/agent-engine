@@ -1,16 +1,20 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import {
+  MemoryRevisionSchema,
   ProjectMemoryFactSchema,
   ProjectMemoryProvenanceSchema,
   ProjectMemoryProposalSchema,
   ProjectMemoryRevisionSchema,
-  MemoryRevisionSchema,
+  decode,
+  newId,
+  nowIso,
+  record,
+  requiredString,
   type MemoryRevision,
   type ProjectMemoryFact,
   type ProjectMemoryProposal,
   type ProjectMemoryRevision,
 } from "./contract.ts";
-import { decode, newId, nowIso, record, requiredString } from "./contract.ts";
 import {
   InvalidRequestError,
   MemoryProposalNotFoundError,
@@ -173,12 +177,15 @@ export class ProjectMemoryState {
       ...this.#snapshot,
       proposals: [...this.#snapshot.proposals, proposal],
     };
-    return decode(ProjectMemoryProposalSchema, makeProposal(
-      proposal.proposalId,
-      proposal.expectedRevision,
-      proposal.claim,
-      proposal.provenance,
-    ));
+    return decode(
+      ProjectMemoryProposalSchema,
+      makeProposal(
+        proposal.proposalId,
+        proposal.expectedRevision,
+        proposal.claim,
+        proposal.provenance,
+      ),
+    );
   }
 
   acceptMemory(proposalId: string, expectedRevision: MemoryRevision): ProjectMemoryRevision {
@@ -203,13 +210,16 @@ export class ProjectMemoryState {
       revisions: [...this.#snapshot.revisions, nextRevisionRecord],
       proposals: this.#snapshot.proposals.filter((entry) => entry.proposalId !== proposalId),
     };
-    return decode(ProjectMemoryRevisionSchema, makeRevision(
-      this.projectId,
-      nextRevision,
-      this.#snapshot.revisions.length > 1 ? nextRevision - 1 : undefined,
-      nextFacts,
-      proposal.proposalId,
-    ));
+    return decode(
+      ProjectMemoryRevisionSchema,
+      makeRevision(
+        this.projectId,
+        nextRevision,
+        this.#snapshot.revisions.length > 1 ? nextRevision - 1 : undefined,
+        nextFacts,
+        proposal.proposalId,
+      ),
+    );
   }
 }
 
@@ -289,7 +299,8 @@ export class ProjectMemoryDurableObject implements DurableObject {
         return Response.json(proposal);
       }
       if (url.pathname.endsWith("/accept")) {
-        if (request.headers.get("X-Project-Memory-Coordinator") === null) throw new MemoryUnauthorizedError();
+        if (request.headers.get("X-Project-Memory-Coordinator") === null)
+          throw new MemoryUnauthorizedError();
         const revision = memory.acceptMemory(
           requiredString(body["proposalId"], "proposalId"),
           MemoryRevisionSchema.make(revisionValue(body["expectedRevision"])),
@@ -297,7 +308,10 @@ export class ProjectMemoryDurableObject implements DurableObject {
         await this.#save(memory);
         return Response.json(revision);
       }
-      return Response.json({ _tag: "InvalidRequest", reason: "Unknown Project Memory operation" }, { status: 400 });
+      return Response.json(
+        { _tag: "InvalidRequest", reason: "Unknown Project Memory operation" },
+        { status: 400 },
+      );
     } catch (cause) {
       return projectMemoryErrorResponse(cause);
     }
@@ -305,8 +319,12 @@ export class ProjectMemoryDurableObject implements DurableObject {
 }
 
 const projectMemoryErrorResponse = (cause: unknown): Response => {
-  const status = cause instanceof MemoryRevisionMismatchError || cause instanceof MemoryRevisionUnavailableError ? 409 : 400;
-  const body = cause instanceof Error ? { _tag: cause.name, reason: cause.message } : { _tag: "UnknownError" };
+  const status =
+    cause instanceof MemoryRevisionMismatchError || cause instanceof MemoryRevisionUnavailableError
+      ? 409
+      : 400;
+  const body =
+    cause instanceof Error ? { _tag: cause.name, reason: cause.message } : { _tag: "UnknownError" };
   return Response.json(body, { status });
 };
 
@@ -324,7 +342,11 @@ export class SessionProjectMemoryBinding {
     return this.#memory.readContext(atRevision, query);
   }
 
-  proposeMemory(expectedRevision: MemoryRevision, claim: string, provenance: unknown): ProjectMemoryProposal {
+  proposeMemory(
+    expectedRevision: MemoryRevision,
+    claim: string,
+    provenance: unknown,
+  ): ProjectMemoryProposal {
     return this.#memory.proposeMemory(this.#sessionId, expectedRevision, claim, provenance);
   }
 
@@ -365,9 +387,13 @@ export class CloudflareProjectMemory {
   }
 
   async #call(path: string, body: Record<string, unknown>): Promise<unknown> {
-    if (this.#namespace === undefined) throw new ProviderUnavailableError("Project Memory Durable Object");
+    if (this.#namespace === undefined)
+      throw new ProviderUnavailableError("Project Memory Durable Object");
     const stub = this.#namespace.getByName(this.#projectId);
-    const headers = new Headers({ "content-type": "application/json", "X-Project-Identity": this.#projectId });
+    const headers = new Headers({
+      "content-type": "application/json",
+      "X-Project-Identity": this.#projectId,
+    });
     if (this.#sessionId !== undefined) headers.set("X-Cloud-Task-Session", this.#sessionId);
     if (this.#coordinator) headers.set("X-Project-Memory-Coordinator", "coordinator-binding");
     const response = await stub.fetch(`https://project-memory${path}`, {
@@ -378,7 +404,10 @@ export class CloudflareProjectMemory {
     const value: unknown = await response.json();
     if (!response.ok) {
       const details = record(value);
-      throw new ProviderUnavailableError("Project Memory Durable Object", String(details["reason"] ?? response.status));
+      throw new ProviderUnavailableError(
+        "Project Memory Durable Object",
+        String(details["reason"] ?? response.status),
+      );
     }
     return value;
   }
@@ -387,7 +416,11 @@ export class CloudflareProjectMemory {
     return this.#call("/read", { atRevision, query });
   }
 
-  proposeMemory(expectedRevision: MemoryRevision, claim: string, provenance: unknown): Promise<unknown> {
+  proposeMemory(
+    expectedRevision: MemoryRevision,
+    claim: string,
+    provenance: unknown,
+  ): Promise<unknown> {
     if (this.#sessionId === undefined || this.#coordinator) throw new MemoryUnauthorizedError();
     return this.#call("/propose", { expectedRevision, claim, provenance });
   }
