@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import {
   CommitShaSchema,
   NonEmptyStringSchema,
+  SchemaVersionSchema,
   Sha256DigestSchema,
   TimestampSchema,
 } from "./identifiers.ts";
@@ -85,6 +86,23 @@ export const EnvironmentPairingSchema = Schema.Struct({
   scopes: EnvironmentPairingScopesSchema,
 });
 export type EnvironmentPairing = typeof EnvironmentPairingSchema.Type;
+
+export const EnvironmentCredentialLeaseSchema = Schema.Struct({
+  generationToken: NonEmptyStringSchema,
+  expiresAt: TimestampSchema,
+});
+export type EnvironmentCredentialLease = typeof EnvironmentCredentialLeaseSchema.Type;
+
+export const EnvironmentPairingOutputSchema = Schema.Struct({
+  token: NonEmptyStringSchema,
+  expiresAt: TimestampSchema,
+});
+export type EnvironmentPairingOutput = typeof EnvironmentPairingOutputSchema.Type;
+
+export const SandboxProcessStateSchema = Schema.Struct({
+  status: NonEmptyStringSchema,
+});
+export type SandboxProcessState = typeof SandboxProcessStateSchema.Type;
 export type EnvironmentCreateRequest = typeof EnvironmentCreateRequestSchema.Type;
 
 export const EnvironmentLifecycleSchema = Schema.Literals([
@@ -138,6 +156,7 @@ export const EnvironmentCommandReceiptSchema = Schema.Struct({
 export type EnvironmentCommandReceipt = typeof EnvironmentCommandReceiptSchema.Type;
 
 export const EnvironmentSnapshotSchema = Schema.TaggedStruct("EnvironmentSnapshot", {
+  schemaVersion: SchemaVersionSchema,
   environmentId: EnvironmentIdSchema,
   ownerId: NonEmptyStringSchema,
   repository: GitRepositorySchema,
@@ -162,3 +181,35 @@ export const EnvironmentSnapshotSchema = Schema.TaggedStruct("EnvironmentSnapsho
   inactivityDeadline: TimestampSchema,
 });
 export type EnvironmentSnapshot = typeof EnvironmentSnapshotSchema.Type;
+
+export const EnvironmentCreatedResponseSchema = Schema.TaggedStruct("EnvironmentCreated", {
+  snapshot: EnvironmentSnapshotSchema,
+  pairingUrl: NonEmptyStringSchema,
+});
+export type EnvironmentCreatedResponse = typeof EnvironmentCreatedResponseSchema.Type;
+
+export const EnvironmentRecoveredResponseSchema = Schema.TaggedStruct("EnvironmentRecovered", {
+  snapshot: EnvironmentSnapshotSchema,
+});
+export type EnvironmentRecoveredResponse = typeof EnvironmentRecoveredResponseSchema.Type;
+
+export const EnvironmentDestroyedResponseSchema = Schema.TaggedStruct("EnvironmentDestroyed", {
+  snapshot: EnvironmentSnapshotSchema,
+});
+export type EnvironmentDestroyedResponse = typeof EnvironmentDestroyedResponseSchema.Type;
+
+export const EnvironmentCheckpointedResponseSchema = Schema.TaggedStruct(
+  "EnvironmentCheckpointed",
+  {
+    snapshot: EnvironmentSnapshotSchema,
+  },
+);
+export type EnvironmentCheckpointedResponse = typeof EnvironmentCheckpointedResponseSchema.Type;
+
+export const EnvironmentCommandResponseSchema = Schema.Union([
+  EnvironmentCreatedResponseSchema,
+  EnvironmentRecoveredResponseSchema,
+  EnvironmentDestroyedResponseSchema,
+  EnvironmentCheckpointedResponseSchema,
+]);
+export type EnvironmentCommandResponse = typeof EnvironmentCommandResponseSchema.Type;

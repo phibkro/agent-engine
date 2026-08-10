@@ -456,6 +456,29 @@ export const ProjectMemoryProposalSchema = ProjectMemoryProposalModel.json;
 export type ProjectMemoryProposal = typeof ProjectMemoryProposalSchema.Type;
 export const MemoryProposalSchema = ProjectMemoryProposalSchema;
 export type MemoryProposal = ProjectMemoryProposal;
+export const ProjectMemoryReadRequestSchema = Schema.Struct({
+  atRevision: MemoryRevisionSchema,
+  query: Schema.String,
+});
+export type ProjectMemoryReadRequest = typeof ProjectMemoryReadRequestSchema.Type;
+
+export const ProjectMemoryProposeRequestSchema = Schema.Struct({
+  expectedRevision: MemoryRevisionSchema,
+  claim: NonEmptyStringSchema,
+  provenance: ProjectMemoryProvenanceSchema,
+});
+export type ProjectMemoryProposeRequest = typeof ProjectMemoryProposeRequestSchema.Type;
+
+export const ProjectMemoryAcceptRequestSchema = Schema.Struct({
+  proposalId: MemoryProposalIdSchema,
+  expectedRevision: MemoryRevisionSchema,
+});
+export type ProjectMemoryAcceptRequest = typeof ProjectMemoryAcceptRequestSchema.Type;
+
+export const ProjectMemoryReadResponseSchema = Schema.TaggedStruct("ProjectMemoryRead", {
+  facts: Schema.Array(ProjectMemoryFactSchema),
+});
+export type ProjectMemoryReadResponse = typeof ProjectMemoryReadResponseSchema.Type;
 
 export const ProjectMemoryRevisionSchema = Schema.TaggedStruct("ProjectMemoryRevision", {
   projectId: ProjectIdSchema,
