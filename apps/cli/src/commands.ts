@@ -142,7 +142,7 @@ const positionalOrFlag = (
   return value === undefined ? fail(`${name === "project" ? "a Project id" : `--${name}`} is required`) : Effect.succeed(value);
 };
 
-const parseWith = <S extends Schema.Top>(schema: S, value: unknown, name: string): Effect.Effect<S["Type"], ParseError> =>
+const parseWith = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, value: unknown, name: string): Effect.Effect<S["Type"], ParseError> =>
   Effect.try({
     try: () => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(value),
     catch: (error) => ({ _tag: "UsageFailure" as const, reason: `invalid ${name}: ${error instanceof Error ? error.message : String(error)}` }),
@@ -158,7 +158,7 @@ const parseNatural = (value: string, name: string): Effect.Effect<number, ParseE
 const timestamp = (millisecondsFromNow: number): string =>
   new Date(Date.now() + millisecondsFromNow).toISOString();
 
-const readJsonFile = <S extends Schema.Top>(schema: S, path: string, name: string): Effect.Effect<S["Type"], ParseError> =>
+const readJsonFile = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, path: string, name: string): Effect.Effect<S["Type"], ParseError> =>
   Effect.gen(function* () {
     const text = yield* Effect.tryPromise({
       try: () => readFile(path, "utf8"),

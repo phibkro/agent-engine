@@ -59,7 +59,7 @@ export type ConfigError =
   | { readonly _tag: "ConfigIoFailure"; readonly path: string; readonly reason: string }
   | { readonly _tag: "OperatorRequired"; readonly reason: string };
 
-const decodeJson = <S extends Schema.Top>(
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   input: string,
   path: string,

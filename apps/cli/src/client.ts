@@ -85,7 +85,7 @@ const DOMAIN_REJECTIONS: Record<string, true> = {
 const asFailure = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const decodeJson = <S extends Schema.Top>(schema: S, input: string): S["Type"] => {
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, input: string): S["Type"] => {
   const parsed: unknown = JSON.parse(input);
   return Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(parsed);
 };
@@ -105,7 +105,7 @@ const decodeFailure = (input: string, path: string): RemoteClientError => {
   }
 };
 
-const bodyFor = <S extends Schema.Top>(schema: S, value: S["Type"]): string =>
+const bodyFor = <S extends Schema.ConstraintEncoder<unknown>>(schema: S, value: S["Type"]): string =>
   JSON.stringify(Schema.encodeSync(schema, { onExcessProperty: "error" })(value));
 
 const route = (baseUrl: string, path: string): string =>
@@ -145,7 +145,7 @@ const responseError = (
   }
   return failure;
 };
-const fetchJson = <S extends Schema.Top>(
+const fetchJson = <S extends Schema.ConstraintDecoder<unknown>>(
   config: RemoteClientConfig,
   method: string,
   path: string,
