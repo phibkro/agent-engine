@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import {
   CloudTaskSchema,
   ProjectMemoryRevisionSchema,
@@ -151,3 +151,4 @@ test("rejects mismatched paired trial arms", () => {
     }).trialId,
   ).toBe("trial-1");
 
+});

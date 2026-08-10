@@ -445,8 +445,8 @@ export const ProjectMemoryRevisionSchema = Schema.TaggedStruct("ProjectMemoryRev
   facts: Schema.Array(ProjectMemoryFactSchema),
   acceptedProposalId: optional(MemoryProposalIdSchema),
   acceptedAt: TimestampSchema,
-}).pipe(
-  Schema.filter(
+}).check(
+  Schema.makeFilter(
     (revision) =>
       revision.previousRevision === undefined ||
       revision.memoryRevision > revision.previousRevision ||
@@ -473,8 +473,8 @@ export const RepositoryGrantSchema = Schema.TaggedStruct("RepositoryGrant", {
   candidateRef: RepositoryRefSchema,
   expiresAt: TimestampSchema,
   issuedAt: TimestampSchema,
-}).pipe(
-  Schema.filter(
+}).check(
+  Schema.makeFilter(
     (grant) => grant.wipRef !== grant.candidateRef || "wipRef and candidateRef must differ",
   ),
 );
@@ -553,8 +553,8 @@ export const TrialManifestSchema = Schema.TaggedStruct("TrialManifest", {
   writablePaths: Schema.Array(PathPatternSchema),
   baseline: TrialArmSchema,
   treatment: TrialArmSchema,
-}).pipe(
-  Schema.filter((manifest) => {
+}).check(
+  Schema.makeFilter((manifest) => {
     const { baseline, treatment } = manifest;
     const sameBudget = JSON.stringify(baseline.budget) === JSON.stringify(treatment.budget);
     const sameCache = JSON.stringify(baseline.cacheManifest) === JSON.stringify(treatment.cacheManifest);
