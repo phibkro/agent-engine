@@ -1,5 +1,6 @@
 {
   "schema_version": "reef.manual-scaffold/v1",
+  "revision": 2,
   "product": {
     "name": "Work Engine",
     "shape": "cloudflare-terminal-application",
@@ -32,10 +33,10 @@
   "technologies": [
     {
       "id": "typescript",
-      "version": "7.0.2",
+      "version": "7.1.0-dev.20260722.1",
       "disposition": "selected",
-      "reason": "Strict portable domain and protocol types.",
-      "reference": "https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/"
+      "reason": "Strict portable domain and protocol types; exact compiler gitHead required by @effect/tsgo 0.24.3.",
+      "reference": "https://www.npmjs.com/package/typescript/v/7.1.0-dev.20260722.1"
     },
     {
       "id": "bun",
