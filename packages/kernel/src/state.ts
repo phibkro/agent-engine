@@ -1,6 +1,12 @@
+import {
+  ContentRevisionSchema,
+  EventRevisionSchema,
+  PolicyIdSchema,
+} from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfile,
+  AgentProfileId,
   AuthenticatedActor,
   CommandId,
   CommandReceipt,
@@ -11,12 +17,16 @@ import type {
   EventEnvelope,
   EventRevision,
   Evidence,
+  EvidenceId,
   GateKey,
   Grant,
   Handoff,
+  HandoffId,
+  MergeId,
   MergeReceipt,
   Policy,
   Proposal,
+  ProposalId,
   ProjectCommand,
   ProjectEvent,
   ProjectId,
@@ -49,26 +59,26 @@ export interface ProjectState {
   readonly canonicalContent: ContentManifest | null;
   readonly works: Readonly<Record<WorkId, Work>>;
   readonly workProcesses: Readonly<Record<WorkProcessId, WorkProcess>>;
-  readonly profiles: Readonly<Record<string, AgentProfile>>;
+  readonly profiles: Readonly<Record<AgentProfileId, AgentProfile>>;
   readonly sessions: Readonly<Record<SessionId, Session>>;
   readonly resources: Readonly<Record<ResourceId, ResourceClaim>>;
-  readonly handoffs: Readonly<Record<string, Handoff>>;
-  readonly evidence: Readonly<Record<string, Evidence>>;
+  readonly handoffs: Readonly<Record<HandoffId, Handoff>>;
+  readonly evidence: Readonly<Record<EvidenceId, Evidence>>;
   readonly proposals: Readonly<Record<ProposalId, Proposal>>;
-  readonly grants: Readonly<Record<string, Grant>>;
-  readonly mergeReceipts: Readonly<Record<string, MergeReceipt>>;
+  readonly grants: Readonly<Record<Grant["grantId"], Grant>>;
+  readonly mergeReceipts: Readonly<Record<MergeId, MergeReceipt>>;
   readonly history: readonly EventEnvelope[];
   readonly commandReceipts: Readonly<Record<CommandId, CommandReceipt>>;
   readonly effectReceipts: Readonly<Record<EffectId, EffectReceipt>>;
   readonly outbox: readonly EffectRequest[];
 }
 
-const revision = (value: number): EventRevision => value as EventRevision;
-const contentRevision = (value: number): ContentRevision => value as ContentRevision;
+const revision = (value: number): EventRevision => EventRevisionSchema.make(value);
+const contentRevision = (value: number): ContentRevision => ContentRevisionSchema.make(value);
 
 export const tracerPolicy = (): Policy => ({
   _tag: "Policy",
-  policyId: "pol_tracer_0001_v1" as Policy["policyId"],
+  policyId: PolicyIdSchema.make("pol_tracer_0001_v1"),
   revision: revision(1),
   requiredGates: [
     "gat_session_completed",
@@ -86,7 +96,7 @@ export const emptyProjectState = (
   policy: Policy = tracerPolicy(),
   grants: readonly Grant[] = [],
 ): ProjectState => {
-  const grantMap: Record<string, Grant> = {};
+  const grantMap: Record<Grant["grantId"], Grant> = {};
   for (const grant of grants) grantMap[grant.grantId] = grant;
   return {
     projectId,

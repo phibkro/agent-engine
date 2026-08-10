@@ -3,7 +3,7 @@ import { Schema } from "effect";
 const UUID_V4 = "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const uuidId = (prefix: string, semanticSuffixes: readonly string[] = []) => {
   const semantic = semanticSuffixes.length === 0 ? "" : `|(?:${semanticSuffixes.join("|")})`;
-  return Schema.String.pipe(Schema.isPattern(new RegExp(`^${prefix}(?:${UUID_V4}${semantic})$`)));
+  return Schema.String.pipe(Schema.check(Schema.isPattern(new RegExp(`^${prefix}(?:${UUID_V4}${semantic})$`))));
 };
 
 export const ProjectIdSchema = uuidId("prj_").pipe(Schema.brand("ProjectId"));
@@ -36,6 +36,9 @@ export type EvidenceId = typeof EvidenceIdSchema.Type;
 export const ProposalIdSchema = uuidId("prp_").pipe(Schema.brand("ProposalId"));
 export type ProposalId = typeof ProposalIdSchema.Type;
 
+export const MergeIdSchema = uuidId("mrg_").pipe(Schema.brand("MergeId"));
+export type MergeId = typeof MergeIdSchema.Type;
+
 export const GateIdSchema = uuidId("gat_", [
   "session_completed",
   "candidate_present",
@@ -61,38 +64,26 @@ export const ActorIdSchema = Schema.NonEmptyString.pipe(Schema.brand("ActorId"))
 export type ActorId = typeof ActorIdSchema.Type;
 
 export const Sha256DigestSchema = Schema.String.pipe(
-  Schema.isPattern(/^sha256:[0-9a-f]{64}$/),
+  Schema.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/)),
   Schema.brand("Sha256Digest"),
 );
 export type Sha256Digest = typeof Sha256DigestSchema.Type;
 
-export const EventRevisionSchema = Schema.Int.pipe(
-  Schema.isGreaterThanOrEqualTo(0),
-  Schema.brand("EventRevision"),
-);
+export const EventRevisionSchema = Schema.Natural.pipe(Schema.brand("EventRevision"));
 export type EventRevision = typeof EventRevisionSchema.Type;
 export type ProjectRevision = EventRevision;
 
-export const ContentRevisionSchema = Schema.Int.pipe(
-  Schema.isGreaterThanOrEqualTo(0),
-  Schema.brand("ContentRevision"),
-);
+export const ContentRevisionSchema = Schema.Natural.pipe(Schema.brand("ContentRevision"));
 export type ContentRevision = typeof ContentRevisionSchema.Type;
 
-export const AttemptNumberSchema = Schema.Int.pipe(
-  Schema.isGreaterThanOrEqualTo(0),
-  Schema.brand("AttemptNumber"),
-);
+export const AttemptNumberSchema = Schema.Natural.pipe(Schema.brand("AttemptNumber"));
 export type AttemptNumber = typeof AttemptNumberSchema.Type;
 
-export const MillisSchema = Schema.Int.pipe(
-  Schema.isGreaterThanOrEqualTo(0),
-  Schema.brand("Millis"),
-);
+export const MillisSchema = Schema.Natural.pipe(Schema.brand("Millis"));
 export type Millis = typeof MillisSchema.Type;
 
 export const TimestampSchema = Schema.String.pipe(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+  Schema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)),
   Schema.brand("Timestamp"),
 );
 export type Timestamp = typeof TimestampSchema.Type;

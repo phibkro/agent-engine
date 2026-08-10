@@ -180,7 +180,7 @@ export const PolicySchema = Schema.TaggedStruct("Policy", {
   revision: EventRevisionSchema,
   requiredGates: Schema.Array(GateKeySchema),
   mergeCapability: Schema.Literal("proposal.merge"),
-  maxAttempts: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  maxAttempts: Schema.Natural,
 });
 export type Policy = typeof PolicySchema.Type;
 
@@ -229,8 +229,8 @@ export const SessionSchema = Schema.TaggedStruct("Session", {
   predecessorSessionId: optional(SessionIdSchema),
   contextReference: NonEmptyStringSchema,
   deadline: TimestampSchema,
-  outputLimit: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
-  toolBudget: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  outputLimit: Schema.Natural,
+  toolBudget: Schema.Natural,
   status: SessionStatusSchema,
   workspaceViewId: optional(WorkspaceViewIdSchema),
   terminalReason: optional(NonEmptyStringSchema),
@@ -249,7 +249,7 @@ export const WorkspaceViewSchema = Schema.TaggedStruct("WorkspaceView", {
       Schema.Struct({
         path: NonEmptyStringSchema,
         digest: Sha256DigestSchema,
-        bytes: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+        bytes: Schema.Natural,
       }),
     ),
   }),
@@ -281,7 +281,7 @@ export type ResourceClaim = WorkspaceLease;
 export const ContentManifestEntrySchema = Schema.Struct({
   path: NonEmptyStringSchema,
   digest: Sha256DigestSchema,
-  bytes: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  bytes: Schema.Natural,
 });
 export type ContentManifestEntry = typeof ContentManifestEntrySchema.Type;
 
@@ -293,7 +293,7 @@ export type ContentManifest = typeof ContentManifestSchema.Type;
 
 export const ArtifactReceiptSchema = Schema.TaggedStruct("ArtifactReceipt", {
   digest: Sha256DigestSchema,
-  bytes: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  bytes: Schema.Natural,
   mediaType: NonEmptyStringSchema,
 });
 export type ArtifactReceipt = typeof ArtifactReceiptSchema.Type;
@@ -315,8 +315,8 @@ export const SessionStartSpecSchema = Schema.TaggedStruct("SessionStartSpec", {
   attempt: AttemptNumberSchema,
   predecessorSessionId: optional(SessionIdSchema),
   deadline: TimestampSchema,
-  outputLimit: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
-  toolBudget: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  outputLimit: Schema.Natural,
+  toolBudget: Schema.Natural,
   workspaceLease: WorkspaceLeaseSchema,
 });
 export type SessionStartSpec = typeof SessionStartSpecSchema.Type;
@@ -498,8 +498,8 @@ export const OpenManagerSessionSchema = Schema.TaggedStruct("OpenManagerSession"
   attempt: AttemptNumberSchema,
   contextReference: NonEmptyStringSchema,
   deadline: TimestampSchema,
-  outputLimit: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
-  toolBudget: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  outputLimit: Schema.Natural,
+  toolBudget: Schema.Natural,
   resourceId: ResourceIdSchema,
   effectId: EffectIdSchema,
 });
@@ -513,8 +513,8 @@ export const StartWorkerSessionSchema = Schema.TaggedStruct("StartWorkerSession"
   predecessorSessionId: optional(SessionIdSchema),
   contextReference: NonEmptyStringSchema,
   deadline: TimestampSchema,
-  outputLimit: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
-  toolBudget: Schema.Int.pipe(Schema.isGreaterThanOrEqualTo(0)),
+  outputLimit: Schema.Natural,
+  toolBudget: Schema.Natural,
   resourceId: ResourceIdSchema,
   effectId: EffectIdSchema,
 });
@@ -746,8 +746,10 @@ export const ProjectObservationSchema = Schema.TaggedStruct("ProjectObservation"
 });
 export type ProjectObservation = typeof ProjectObservationSchema.Type;
 
-export const decodeUnknownStrict = <S extends Schema.Top>(schema: S, input: unknown): S["Type"] =>
-  Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
+export const decodeUnknownStrict = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  input: unknown,
+): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(input);
 
 export const decodeCommand = (input: unknown): ProjectCommand =>
   decodeUnknownStrict(ProjectCommandSchema, input);

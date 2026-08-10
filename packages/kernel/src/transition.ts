@@ -1,3 +1,8 @@
+import {
+  ActorIdSchema,
+  ContentRevisionSchema,
+  EventRevisionSchema,
+} from "@work-engine/protocol";
 import type {
   AcceptedReceipt,
   AgentProfileId,
@@ -14,10 +19,10 @@ import type {
   EffectRequest,
   EventEnvelope,
   EventRevision,
+  Evidence,
   Grant,
   ProjectCommand,
   ProjectEvent,
-  ProjectId,
   ProposalId,
   RejectedReceipt,
   RejectionCode,
@@ -44,11 +49,11 @@ export interface TransitionOutcome {
   readonly result: CommandResult;
 }
 
-const eventRevision = (value: number): EventRevision => value as EventRevision;
-const contentRevision = (value: number): ContentRevision => value as ContentRevision;
+const eventRevision = (value: number): EventRevision => EventRevisionSchema.make(value);
+const contentRevision = (value: number): ContentRevision => ContentRevisionSchema.make(value);
 const defaultActor: AuthenticatedActor = {
   _tag: "AuthenticatedActor",
-  actorId: "operator" as AuthenticatedActor["actorId"],
+  actorId: ActorIdSchema.make("operator"),
   kind: "operator",
   presentedGrants: [],
 };
@@ -99,6 +104,7 @@ const accepted = (
   for (const effect of effectRequests)
     effectReceipts[effect.effectId] = { effectId: effect.effectId, receipt };
   next = {
+    ...next,
     commandReceipts: { ...next.commandReceipts, [commandId]: receipt },
     effectReceipts,
   };
@@ -855,7 +861,7 @@ const dispatchCommand = (
           "only a submitted or approved proposal can Merge",
         );
       }
-      if (state.merges[command.mergeId] !== undefined) {
+      if (state.mergeReceipts[command.mergeId] !== undefined) {
         return reject(
           state,
           envelope.commandId,
@@ -878,6 +884,14 @@ const dispatchCommand = (
       const grant = authorized(state, actor, state.policy.mergeCapability, context, {
         proposalId: proposal.proposalId,
       });
+      if (grant === undefined) {
+        return reject(
+          state,
+          envelope.commandId,
+          "unauthorized",
+          "actor lacks proposal.merge",
+        );
+      }
       if (proposal.basisContentRevision !== state.contentRevision) {
         return reject(
           state,
@@ -1018,7 +1032,7 @@ export const transition = (
         state: undefined,
         result: {
           _tag: "Rejected",
-          eventRevision: 0 as EventRevision,
+          eventRevision: eventRevision(0),
           code: "invalid_transition",
           details: { reason: "trusted Project identity is required" },
         },
@@ -1030,7 +1044,7 @@ export const transition = (
         state: undefined,
         result: {
           _tag: "Rejected",
-          eventRevision: 0 as EventRevision,
+          eventRevision: eventRevision(0),
           code: "unauthorized",
           details: { reason: "only trusted Project creators may bootstrap" },
         },
@@ -1048,7 +1062,7 @@ export const transition = (
       state: undefined,
       result: {
         _tag: "Rejected",
-        eventRevision: 0 as EventRevision,
+        eventRevision: eventRevision(0),
         code: "project_not_found",
         details: { reason: "Project authority has no state" },
       },
@@ -1064,4 +1078,8 @@ export const createProject = (
   request: CreateProjectRequest,
   projectId: ProjectId,
   actor?: AuthenticatedActor,
-): TransitionOutcome => transition(undefined, request, { projectId, actor });
+): TransitionOutcome => {
+  const context: TransitionContext =
+    actor === undefined ? { projectId } : { projectId, actor };
+  return transition(undefined, request, context);
+};

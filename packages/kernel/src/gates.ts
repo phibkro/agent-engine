@@ -29,6 +29,11 @@ export interface GateDecision {
   readonly satisfied: boolean;
 }
 
+const pathWithin = (path: string, scope: string): boolean => {
+  const normalizedScope = scope.endsWith("/") ? scope.slice(0, -1) : scope;
+  return path === normalizedScope || path.startsWith(`${normalizedScope}/`);
+};
+
 const evidenceFor = (state: ProjectState, proposal: Proposal): readonly Evidence[] =>
   proposal.evidenceIds.flatMap((id) => {
     const evidence = state.evidence[id];

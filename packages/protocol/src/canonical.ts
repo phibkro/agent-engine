@@ -23,7 +23,7 @@ const hex = (bytes: Uint8Array): string =>
 
 /** SHA-256 of exact bytes, using the Web Crypto API available in Workers and browsers. */
 export const sha256 = async (bytes: Uint8Array): Promise<Sha256Digest> => {
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
   return Sha256DigestSchema.make(`sha256:${hex(new Uint8Array(digest))}`);
 };
 
@@ -43,7 +43,7 @@ const utf8PathCompare = (left: string, right: string): number => {
 
 export const sortManifestEntries = <Entry extends { readonly path: string }>(
   entries: readonly Entry[],
-): readonly Entry[] => entries.toSorted((left, right) => utf8PathCompare(left.path, right.path));
+): readonly Entry[] => entries.slice().sort((left, right) => utf8PathCompare(left.path, right.path));
 
 export const digestManifest = async (
   entries: readonly {
