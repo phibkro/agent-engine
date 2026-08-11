@@ -60,7 +60,9 @@ export type ConfigError =
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
+const credentialDecodeReason = "credential file failed schema validation";
+
+const decodeCredentialJson = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   text: string,
   path: string,
@@ -68,10 +70,10 @@ const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   Schema.decodeUnknownEffect(Schema.fromJsonString(schema), {
     onExcessProperty: "error",
   })(text).pipe(
-    Effect.mapError((error) => ({
+    Effect.mapError(() => ({
       _tag: "ConfigDecodeFailure" as const,
       path,
-      reason: reasonOf(error),
+      reason: credentialDecodeReason,
     })),
   );
 
@@ -123,21 +125,29 @@ const ensurePrivateCredential = (
     }
   });
 
+const invalidBaseUrl = {
+  _tag: "ConfigDecodeFailure" as const,
+  path: "WORK_ENGINE_BASE_URL",
+  reason: "WORK_ENGINE_BASE_URL must be an HTTPS origin without credentials",
+};
+
 const checkedUrl = (value: string): Effect.Effect<string, ConfigError> =>
   Effect.try({
-    try: () => new URL(value).toString().replace(/\/$/, ""),
-    catch: (error) => ({
-      _tag: "ConfigDecodeFailure" as const,
-      path: "WORK_ENGINE_BASE_URL",
-      reason: reasonOf(error),
-    }),
-  });
+    try: () => new URL(value),
+    catch: () => invalidBaseUrl,
+  }).pipe(
+    Effect.flatMap((url) =>
+      url.protocol !== "https:" || url.username !== "" || url.password !== ""
+        ? Effect.fail(invalidBaseUrl)
+        : Effect.succeed(url.origin),
+    ),
+  );
 
 export const decodeOperatorCredentialFile = (
   text: string,
   path = "credential file",
 ): Effect.Effect<OperatorCredentialFile, ConfigError> =>
-  decodeJson(OperatorCredentialFileSchema, text, path);
+  decodeCredentialJson(OperatorCredentialFileSchema, text, path);
 
 export const decodeOperatorConfig = (
   environment: unknown,

@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect";
 import * as Redacted from "effect/Redacted";
 import {
   AcceptedCursorSchema,
+  CloudTaskFailureSchema,
   CloudTaskRequestSchema,
   CloudTaskResponseSchema,
   CloudTaskSchema,
@@ -10,6 +11,7 @@ import {
   SessionObservationSchema,
   SessionResultSchema,
   type CloudTask,
+  type CloudTaskFailure,
   type SessionAdmission,
   type SessionId,
   type SessionObservation,
@@ -18,6 +20,7 @@ import {
 import {
   CloudTaskNotFound,
   CloudTaskRejected,
+  CloudTaskTerminal,
   CloudTaskUnauthorized,
   CloudTaskUnavailable,
   type CloudTaskClient,
@@ -73,21 +76,84 @@ const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
   return decodeStrict(schema, value);
 };
 
-const responseError = (status: number, sessionId: SessionId): CloudTaskError => {
-  if (status === 401) {
-    return new CloudTaskUnauthorized({
-      reason: "Cloudflare Access rejected the service credentials",
-    });
+const expectedFailureStatus = (tag: CloudTaskFailure["_tag"]): number => {
+  switch (tag) {
+    case "Unauthenticated":
+      return 401;
+    case "Unauthorized":
+      return 403;
+    case "InvalidRequest":
+      return 400;
+    case "SessionNotFound":
+      return 404;
+    case "SessionConflict":
+    case "SessionTerminal":
+      return 409;
+    case "ProviderUnavailable":
+      return 503;
   }
-  if (status === 404) {
-    return new CloudTaskNotFound({ sessionId });
+};
+
+const cloudTaskFailure = (
+  failure: CloudTaskFailure,
+  sessionId: SessionId,
+): CloudTaskError => {
+  switch (failure._tag) {
+    case "Unauthenticated":
+    case "Unauthorized":
+      return new CloudTaskUnauthorized({ reason: failure.reason });
+    case "InvalidRequest":
+    case "SessionConflict":
+      return rejected(failure.reason);
+    case "SessionNotFound":
+      return new CloudTaskNotFound({ sessionId });
+    case "SessionTerminal":
+      return new CloudTaskTerminal({ sessionId, state: failure.state });
+    case "ProviderUnavailable":
+      return new CloudTaskUnavailable({ reason: failure.reason });
   }
-  if (status >= 500) {
+};
+
+const cloudflareAccessReason = "Cloudflare Access rejected the service credentials";
+const invalidFailureEnvelope = "cloud-task endpoint returned an invalid failure envelope";
+
+const isCloudflareAccessResponse = (response: Response, text: string): boolean => {
+  if (response.status !== 401 && response.status !== 403) return false;
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const trimmed = text.trimStart();
+  if (contentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    return false;
+  }
+  const bodyMarker =
+    /cloudflare\s+access|cloudflareaccess|cdn-cgi\/access|cf-access/iu.test(text);
+  const headerMarker = [...response.headers.keys()].some((name) =>
+    /^cf-access(?:-|$)/iu.test(name),
+  );
+  return bodyMarker || headerMarker;
+};
+
+const decodeFailureResponse = (
+  response: Response,
+  text: string,
+  operation: string,
+  sessionId: SessionId,
+): CloudTaskError => {
+  if (isCloudflareAccessResponse(response, text)) {
+    return new CloudTaskUnauthorized({ reason: cloudflareAccessReason });
+  }
+  try {
+    const failure = decodeJsonStrict(CloudTaskFailureSchema, text);
+    if (expectedFailureStatus(failure._tag) !== response.status) {
+      return new CloudTaskUnavailable({
+        reason: `${operation}: ${invalidFailureEnvelope}`,
+      });
+    }
+    return cloudTaskFailure(failure, sessionId);
+  } catch {
     return new CloudTaskUnavailable({
-      reason: `cloud-task endpoint returned HTTP ${status}`,
+      reason: `${operation}: ${invalidFailureEnvelope}`,
     });
   }
-  return rejected(`cloud-task endpoint returned HTTP ${status}`);
 };
 
 const endpoint = (config: OperatorConfig, path: string): string =>
@@ -117,24 +183,27 @@ const request = <S extends Schema.ConstraintDecoder<unknown>>(
           method: "POST",
           headers: headersFor(config),
           body,
+          redirect: "manual",
           signal,
         }),
-      catch: (error) =>
+      catch: () =>
         new CloudTaskUnavailable({
-          reason: `${operation}: ${reasonOf(error)}`,
+          reason: `${operation}: cloud-task request failed`,
         }),
     });
     const text = yield* Effect.tryPromise({
       try: () => response.text(),
-      catch: (error) =>
+      catch: () =>
         new CloudTaskUnavailable({
-          reason: `${operation}: ${reasonOf(error)}`,
+          reason: `${operation}: cloud-task response body unavailable`,
         }),
     });
-    if (!response.ok) return yield* responseError(response.status, sessionId);
+    if (!response.ok) {
+      return yield* Effect.fail(decodeFailureResponse(response, text, operation, sessionId));
+    }
     return yield* Effect.try({
       try: () => decodeJsonStrict(responseSchema, text),
-      catch: (error) => rejected(`${operation}: strict response decode failed: ${reasonOf(error)}`),
+      catch: () => rejected(`${operation}: strict response decode failed`),
     });
   });
 
@@ -173,7 +242,7 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
       );
       return yield* Effect.try({
         try: () => responseValue(response, "admission", SessionAdmissionSchema),
-        catch: (error) => rejected(`spawn: strict response decode failed: ${reasonOf(error)}`),
+        catch: () => rejected("spawn: strict response decode failed"),
       });
     }),
   send: (sessionId, messageId, message) =>
@@ -189,7 +258,7 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
       );
       return yield* Effect.try({
         try: () => responseValue(response, "acceptedCursor", AcceptedCursorSchema),
-        catch: (error) => rejected(`send: strict response decode failed: ${reasonOf(error)}`),
+        catch: () => rejected("send: strict response decode failed"),
       });
     }),
   observe: (sessionId, afterCursor = 0) =>
@@ -205,7 +274,7 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
       );
       return yield* Effect.try({
         try: () => responseValue(response, "observations", Schema.Array(SessionObservationSchema)),
-        catch: (error) => rejected(`observe: strict response decode failed: ${reasonOf(error)}`),
+        catch: () => rejected("observe: strict response decode failed"),
       });
     }),
   cancel: (sessionId, reason) =>
@@ -221,7 +290,7 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
       );
       return yield* Effect.try({
         try: () => responseValue(response, "observation", SessionObservationSchema),
-        catch: (error) => rejected(`cancel: strict response decode failed: ${reasonOf(error)}`),
+        catch: () => rejected("cancel: strict response decode failed"),
       });
     }),
   result: (sessionId) =>
@@ -237,7 +306,7 @@ const makeClient = (config: OperatorConfig, fetcher: CloudTaskFetch): CloudTaskC
       );
       return yield* Effect.try({
         try: () => responseValue(response, "result", SessionResultSchema),
-        catch: (error) => rejected(`result: strict response decode failed: ${reasonOf(error)}`),
+        catch: () => rejected("result: strict response decode failed"),
       });
     }),
 });

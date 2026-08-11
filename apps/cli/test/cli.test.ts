@@ -33,6 +33,16 @@ const successfulResponse = (body: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
+const failureResponse = (
+  status: number,
+  body: unknown,
+  headers: Readonly<Record<string, string>> = { "content-type": "application/json" },
+): Response =>
+  new Response(typeof body === "string" ? body : JSON.stringify(body), {
+    status,
+    headers,
+  });
+
 const fakeFiles = (
   files: Readonly<Record<string, string>>,
   mode = 0o600,
@@ -117,6 +127,7 @@ describe("0002 CLI public interface", () => {
     const failure = await Effect.runPromiseExit(client.send(sessionId, messageId, "continue"));
     expect(failure._tag).toBe("Failure");
     expect(requests[0]?.url).toBe("https://work.example/v1/cloud-tasks");
+    expect(requests[0]?.init.redirect).toBe("manual");
     const headers = requests[0]?.init.headers as Headers;
     expect(headers.get("CF-Access-Client-Id")).toBe("access-client");
     expect(headers.get("CF-Access-Client-Secret")).toBe("access-secret");
@@ -141,6 +152,202 @@ describe("0002 CLI public interface", () => {
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(String(result.cause)).toContain("CloudTaskRejected");
+    }
+  });
+
+  test("requires HTTPS origins without userinfo and normalizes to origin", async () => {
+    const credentialPath = "/run/user/1000/work-engine.json";
+    const credentialText = JSON.stringify({
+      accessClientId: "access-client",
+      accessClientSecret: "access-secret",
+      cloudTaskToken: "cloud-task-token",
+    });
+    const files = fakeFiles({ [credentialPath]: credentialText });
+    const normalized = await Effect.runPromise(
+      decodeOperatorConfig(
+        {
+          WORK_ENGINE_BASE_URL: "https://work.example:8443/service?ignored=true",
+          WORK_ENGINE_CREDENTIAL_FILE: credentialPath,
+        },
+        files,
+      ),
+    );
+    expect(normalized.baseUrl).toBe("https://work.example:8443");
+
+    for (const baseUrl of ["http://work.example", "https://operator:secret@work.example"]) {
+      const result = await Effect.runPromiseExit(
+        decodeOperatorConfig(
+          { WORK_ENGINE_BASE_URL: baseUrl, WORK_ENGINE_CREDENTIAL_FILE: credentialPath },
+          files,
+        ),
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(String(result.cause)).toContain("ConfigDecodeFailure");
+        expect(String(result.cause)).not.toContain("secret");
+      }
+    }
+  });
+
+  test("does not expose unexpected credential values on schema failure", async () => {
+    const secret = "unexpected-secret-value";
+    const result = await Effect.runPromiseExit(
+      decodeOperatorConfig(
+        {
+          WORK_ENGINE_BASE_URL: "https://work.example",
+          WORK_ENGINE_CREDENTIAL_FILE: "/run/user/1000/work-engine.json",
+        },
+        fakeFiles({
+          "/run/user/1000/work-engine.json": JSON.stringify({
+            accessClientId: "access-client",
+            accessClientSecret: "access-secret",
+            cloudTaskToken: "cloud-task-token",
+            unexpected: secret,
+          }),
+        }),
+      ),
+    );
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(String(result.cause)).toContain("credential file failed schema validation");
+      expect(String(result.cause)).not.toContain(secret);
+    }
+  });
+
+  test("maps canonical CloudTask failures only with their exact statuses", async () => {
+    const failedAt = "2026-08-10T00:00:00.000Z";
+    const terminalState = {
+      _tag: "Failed",
+      sessionId,
+      cursor: 1,
+      failedAt,
+      reason: "worker failed",
+    };
+    const cases = [
+      {
+        status: 401,
+        body: { _tag: "Unauthenticated", reason: "not signed in" },
+        tag: "CloudTaskUnauthorized",
+        detail: "not signed in",
+      },
+      {
+        status: 403,
+        body: { _tag: "Unauthorized", reason: "credentials denied" },
+        tag: "CloudTaskUnauthorized",
+        detail: "credentials denied",
+      },
+      {
+        status: 400,
+        body: { _tag: "InvalidRequest", reason: "invalid request" },
+        tag: "CloudTaskRejected",
+        detail: "invalid request",
+      },
+      {
+        status: 404,
+        body: { _tag: "SessionNotFound", reason: "session missing", sessionId },
+        tag: "CloudTaskNotFound",
+        detail: sessionId,
+      },
+      {
+        status: 409,
+        body: { _tag: "SessionConflict", reason: "session conflict" },
+        tag: "CloudTaskRejected",
+        detail: "session conflict",
+      },
+      {
+        status: 409,
+        body: { _tag: "SessionTerminal", reason: "session ended", state: terminalState },
+        tag: "CloudTaskTerminal",
+        detail: "Failed",
+      },
+      {
+        status: 503,
+        body: { _tag: "ProviderUnavailable", reason: "provider unavailable" },
+        tag: "CloudTaskUnavailable",
+        detail: "provider unavailable",
+      },
+    ] as const;
+
+    for (const failure of cases) {
+      const client = makeCloudTaskClient(config, {
+        fetch: async () => failureResponse(failure.status, failure.body),
+      });
+      const result = await Effect.runPromiseExit(client.result(sessionId));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        const rendered = String(result.cause);
+        expect(rendered).toContain(failure.tag);
+        expect(rendered).toContain(failure.detail);
+      }
+    }
+  });
+
+  test("turns malformed and mismatched failure envelopes into unavailable errors", async () => {
+    const cases = [
+      {
+        status: 503,
+        body: '{"_tag":"ProviderUnavailable","reason":"malformed-secret"',
+        leaked: "malformed-secret",
+      },
+      {
+        status: 400,
+        body: { _tag: "ProviderUnavailable", reason: "mismatched-provider-secret" },
+        leaked: "mismatched-provider-secret",
+      },
+      {
+        status: 403,
+        body: { _tag: "Unauthorized", reason: "unauthorized-secret", extra: true },
+        leaked: "unauthorized-secret",
+      },
+    ] as const;
+
+    for (const failure of cases) {
+      const client = makeCloudTaskClient(config, {
+        fetch: async () => failureResponse(failure.status, failure.body),
+      });
+      const result = await Effect.runPromiseExit(client.result(sessionId));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        const rendered = String(result.cause);
+        expect(rendered).toContain("CloudTaskUnavailable");
+        expect(rendered).not.toContain(failure.leaked);
+      }
+    }
+  });
+
+  test("keeps Cloudflare Access responses separate from application failures", async () => {
+    const access = await Effect.runPromiseExit(
+      makeCloudTaskClient(config, {
+        fetch: async () =>
+          failureResponse(
+            403,
+            "<html>Cloudflare Access denied</html>",
+            { "content-type": "text/html" },
+          ),
+      }).result(sessionId),
+    );
+    expect(access._tag).toBe("Failure");
+    if (access._tag === "Failure") {
+      expect(String(access.cause)).toContain("CloudTaskUnauthorized");
+      expect(String(access.cause)).toContain("Cloudflare Access rejected");
+      expect(String(access.cause)).not.toContain("Cloudflare Access denied");
+    }
+
+    for (const response of [
+      failureResponse(403, "<html>generic denial</html>", { "content-type": "text/html" }),
+      failureResponse(403, '{"_tag":"Unauthorized","reason":', {
+        "content-type": "application/json",
+      }),
+      failureResponse(302, "<html>Cloudflare Access login</html>", {
+        "content-type": "text/html",
+        location: "https://login.example",
+      }),
+    ]) {
+      const result = await Effect.runPromiseExit(
+        makeCloudTaskClient(config, { fetch: async () => response }).result(sessionId),
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") expect(String(result.cause)).toContain("CloudTaskUnavailable");
     }
   });
 
