@@ -1,3 +1,5 @@
+import type { Json } from "effect/Schema";
+
 export type CloudErrorTag =
   | "Unauthenticated"
   | "Unauthorized"
@@ -19,13 +21,9 @@ export type CloudErrorTag =
 
 export class CloudRuntimeError extends Error {
   readonly _tag: CloudErrorTag;
-  readonly details: Readonly<Record<string, unknown>>;
+  readonly details: Readonly<Record<string, Json>>;
 
-  constructor(
-    tag: CloudErrorTag,
-    message: string,
-    details: Readonly<Record<string, unknown>> = {},
-  ) {
+  constructor(tag: CloudErrorTag, message: string, details: Readonly<Record<string, Json>> = {}) {
     super(message);
     this.name = tag;
     this._tag = tag;
