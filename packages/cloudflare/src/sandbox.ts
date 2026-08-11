@@ -1,62 +1,128 @@
-import { ProviderUnavailableError, InvalidRequestError } from "./errors.ts";
-import { json, record, requiredString, nowIso } from "./contract.ts";
-import type { SessionId } from "./contract.ts";
+import * as Schema from "effect/Schema";
+import {
+  NonEmptyStringSchema,
+  SessionIdSchema,
+  Sha256DigestSchema,
+  TimestampSchema,
+  decodeUnknownStrict,
+  type SessionId,
+  type Timestamp,
+} from "@work-engine/protocol";
+import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
 
-export interface SandboxAllocation {
-  readonly providerId: string;
-  readonly sessionId: SessionId;
-  readonly imageDigest: string;
-  readonly workspaceRoot: string;
-  readonly allocatedAt: string;
-}
+const SandboxAllocateRequestSchema = Schema.Struct({
+  sessionId: SessionIdSchema,
+  imageDigest: Sha256DigestSchema,
+});
+const SandboxTerminateRequestSchema = Schema.Struct({
+  providerId: NonEmptyStringSchema,
+});
+const SandboxAllocationResponseSchema = Schema.Struct({
+  providerId: NonEmptyStringSchema,
+  workspaceRoot: NonEmptyStringSchema,
+});
+const SandboxTerminateResponseSchema = Schema.Struct({});
+const SandboxProviderFailureSchema = Schema.TaggedStruct("SandboxProviderFailure", {
+  reason: NonEmptyStringSchema,
+});
+
+export const SandboxAllocationSchema = Schema.Struct({
+  providerId: NonEmptyStringSchema,
+  sessionId: SessionIdSchema,
+  imageDigest: Sha256DigestSchema,
+  workspaceRoot: NonEmptyStringSchema,
+  allocatedAt: TimestampSchema,
+});
+export type SandboxAllocation = typeof SandboxAllocationSchema.Type;
 
 export interface SandboxProvider {
   allocate(sessionId: SessionId, imageDigest: string): Promise<SandboxAllocation>;
   terminate(providerId: string): Promise<void>;
 }
 
+export interface SandboxFetcher {
+  fetch(input: string, init?: RequestInit): Promise<Response>;
+}
+
+export interface SandboxClock {
+  now(): Timestamp;
+}
+
+const jsonBody = (value: unknown): string => Schema.encodeSync(Schema.UnknownFromJsonString)(value);
+
+const responseJson = async (response: Response): Promise<unknown> => {
+  const body = await response.text();
+  try {
+    return decodeUnknownStrict(Schema.UnknownFromJsonString, body);
+  } catch {
+    throw new ProviderUnavailableError("Cloudflare Sandbox provider", "invalid JSON response");
+  }
+};
+
 /** Cloudflare Sandbox adapter. Missing provider bindings fail explicitly; no local shell fallback exists. */
 export class CloudflareSandboxProvider implements SandboxProvider {
-  #binding: Fetcher | undefined;
+  readonly #binding: SandboxFetcher | undefined;
+  readonly #clock: SandboxClock;
 
-  constructor(binding: Fetcher | undefined) {
+  constructor(binding: SandboxFetcher | undefined, clock: SandboxClock) {
     this.#binding = binding;
+    this.#clock = clock;
   }
 
-  async #call(path: string, body: unknown): Promise<Record<string, unknown>> {
-    if (this.#binding === undefined)
+  async #call<S extends Schema.ConstraintDecoder<unknown>>(
+    path: string,
+    body: unknown,
+    responseSchema: S,
+  ): Promise<S["Type"]> {
+    if (this.#binding === undefined) {
       throw new ProviderUnavailableError("Cloudflare Sandbox provider");
+    }
     const response = await this.#binding.fetch(`https://sandbox${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: json(body),
+      body: jsonBody(body),
     });
-    const value: unknown = await response.json();
-    if (!response.ok)
+    const responseBody = await responseJson(response);
+    if (!response.ok) {
+      try {
+        decodeUnknownStrict(SandboxProviderFailureSchema, responseBody);
+      } catch {
+        throw new ProviderUnavailableError(
+          "Cloudflare Sandbox provider",
+          "invalid failure response",
+        );
+      }
       throw new ProviderUnavailableError(
         "Cloudflare Sandbox provider",
         `provider returned ${response.status}`,
       );
-    return record(value);
+    }
+    try {
+      return decodeUnknownStrict(responseSchema, responseBody);
+    } catch {
+      throw new ProviderUnavailableError("Cloudflare Sandbox provider", "invalid success response");
+    }
   }
 
   async allocate(sessionId: SessionId, imageDigest: string): Promise<SandboxAllocation> {
-    if (imageDigest.length === 0)
-      throw new InvalidRequestError("Sandbox image digest cannot be empty");
-    const value = await this.#call("/allocate", { sessionId, imageDigest });
-    return {
-      providerId: requiredString(value["providerId"], "providerId"),
-      sessionId,
-      imageDigest,
-      workspaceRoot: requiredString(value["workspaceRoot"], "workspaceRoot"),
-      allocatedAt: nowIso(),
-    };
+    const request = decodeUnknownStrict(SandboxAllocateRequestSchema, { sessionId, imageDigest });
+    const value = await this.#call("/allocate", request, SandboxAllocationResponseSchema);
+    return decodeUnknownStrict(SandboxAllocationSchema, {
+      ...value,
+      sessionId: request.sessionId,
+      imageDigest: request.imageDigest,
+      allocatedAt: this.#clock.now(),
+    });
   }
 
   async terminate(providerId: string): Promise<void> {
-    if (providerId.length === 0)
-      throw new InvalidRequestError("Sandbox provider identity cannot be empty");
-    await this.#call("/terminate", { providerId });
+    let request: typeof SandboxTerminateRequestSchema.Type;
+    try {
+      request = decodeUnknownStrict(SandboxTerminateRequestSchema, { providerId });
+    } catch {
+      throw new InvalidRequestError("Sandbox provider identity is invalid");
+    }
+    await this.#call("/terminate", request, SandboxTerminateResponseSchema);
   }
 }
 
