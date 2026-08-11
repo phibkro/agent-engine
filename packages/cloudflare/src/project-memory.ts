@@ -46,6 +46,27 @@ const ProjectMemoryFailureSchema = Schema.Union([
   Schema.TaggedStruct("MemoryUnauthorized", { reason: NonEmptyStringSchema }),
   Schema.TaggedStruct("ProviderUnavailable", { reason: NonEmptyStringSchema }),
 ]);
+const ProjectMemoryReadRequestFromJsonSchema = Schema.fromJsonString(
+  ProjectMemoryReadRequestSchema,
+);
+const ProjectMemoryProposeRequestFromJsonSchema = Schema.fromJsonString(
+  ProjectMemoryProposeRequestSchema,
+);
+const ProjectMemoryAcceptRequestFromJsonSchema = Schema.fromJsonString(
+  ProjectMemoryAcceptRequestSchema,
+);
+const ProjectMemoryReadResponseFromJsonSchema = Schema.fromJsonString(
+  ProjectMemoryReadResponseSchema,
+);
+const ProjectMemoryProposalFromJsonSchema = Schema.fromJsonString(ProjectMemoryProposalSchema);
+const ProjectMemoryRevisionFromJsonSchema = Schema.fromJsonString(ProjectMemoryRevisionSchema);
+const ProjectMemoryFailureFromJsonSchema = Schema.fromJsonString(ProjectMemoryFailureSchema);
+
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  body: string,
+): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(body);
+
 
 const MemoryRevisionRecordSchema = Schema.Struct({
   revision: MemoryRevisionSchema,
@@ -359,17 +380,24 @@ export class ProjectMemoryDurableObject implements DurableObject {
       const memory = await this.#load(projectId);
       const url = new URL(request.url);
       if (url.pathname.endsWith("/read")) {
-        const raw: unknown = await request.json();
-        const input = decode(ProjectMemoryReadRequestSchema, raw);
+        const input = decodeJson(
+          ProjectMemoryReadRequestFromJsonSchema,
+          await request.text(),
+        );
         const response = decode(ProjectMemoryReadResponseSchema, {
           _tag: "ProjectMemoryRead",
           facts: memory.readContext(input.atRevision, input.query),
         });
-        return Response.json(response);
+        return new Response(
+          Schema.encodeSync(ProjectMemoryReadResponseFromJsonSchema)(response),
+          { headers: { "content-type": "application/json" } },
+        );
       }
-      const raw: unknown = await request.json();
       if (url.pathname.endsWith("/propose")) {
-        const input = decode(ProjectMemoryProposeRequestSchema, raw);
+        const input = decodeJson(
+          ProjectMemoryProposeRequestFromJsonSchema,
+          await request.text(),
+        );
         const sessionHeader = request.headers.get("X-Cloud-Task-Session");
         if (sessionHeader === null) throw new MemoryUnauthorizedError();
         const sessionId = decode(SessionIdSchema, sessionHeader);
@@ -381,10 +409,17 @@ export class ProjectMemoryDurableObject implements DurableObject {
           input.provenance,
         );
         await this.#save(nextMemory);
-        return Response.json(proposal);
+        const response = decode(ProjectMemoryProposalSchema, proposal);
+        return new Response(
+          Schema.encodeSync(ProjectMemoryProposalFromJsonSchema)(response),
+          { headers: { "content-type": "application/json" } },
+        );
       }
       if (url.pathname.endsWith("/accept")) {
-        const input = decode(ProjectMemoryAcceptRequestSchema, raw);
+        const input = decodeJson(
+          ProjectMemoryAcceptRequestFromJsonSchema,
+          await request.text(),
+        );
         const presented = request.headers.get("X-Project-Memory-Coordinator");
         if (
           this.#coordinatorSecret === undefined ||
@@ -396,7 +431,11 @@ export class ProjectMemoryDurableObject implements DurableObject {
         const nextMemory = new ProjectMemoryState(projectId, this.#capabilities, memory.snapshot);
         const revision = nextMemory.acceptMemory(input.proposalId, input.expectedRevision);
         await this.#save(nextMemory);
-        return Response.json(revision);
+        const response = decode(ProjectMemoryRevisionSchema, revision);
+        return new Response(
+          Schema.encodeSync(ProjectMemoryRevisionFromJsonSchema)(response),
+          { headers: { "content-type": "application/json" } },
+        );
       }
       throw new InvalidRequestError("Unknown Project Memory operation");
     } catch (cause) {
@@ -430,7 +469,10 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
     _tag: tag,
     reason: "Project Memory request failed",
   });
-  return Response.json(body, { status });
+  return new Response(Schema.encodeSync(ProjectMemoryFailureFromJsonSchema)(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 };
 
 /** Session-facing binding; projectId/sessionId are constructor authority, never request fields. */
@@ -495,11 +537,15 @@ export class CloudflareProjectMemory {
     this.#coordinatorSecret = options.coordinatorSecret;
   }
 
-  async #call<S extends Schema.ConstraintDecoder<unknown>>(
+  async #call<
+    RequestSchema extends Schema.ConstraintEncoder<string>,
+    ResponseSchema extends Schema.ConstraintDecoder<unknown>,
+  >(
     path: string,
-    body: object,
-    responseSchema: S,
-  ): Promise<S["Type"]> {
+    body: RequestSchema["Type"],
+    requestSchema: RequestSchema,
+    responseSchema: ResponseSchema,
+  ): Promise<ResponseSchema["Type"]> {
     if (this.#namespace === undefined)
       throw new ProviderUnavailableError("Project Memory Durable Object");
     const stub = this.#namespace.getByName(this.#projectId);
@@ -514,13 +560,21 @@ export class CloudflareProjectMemory {
     const response = await stub.fetch(`https://project-memory${path}`, {
       method: "POST",
       headers,
-      body: JSON.stringify(body),
+      body: Schema.encodeSync(requestSchema)(body),
     });
-    const value: unknown = await response.json();
+    let responseBody: string;
+    try {
+      responseBody = await response.text();
+    } catch {
+      throw new ProviderUnavailableError(
+        "Project Memory Durable Object",
+        "invalid response body",
+      );
+    }
     if (!response.ok) {
       let failure: typeof ProjectMemoryFailureSchema.Type;
       try {
-        failure = decode(ProjectMemoryFailureSchema, value);
+        failure = decodeJson(ProjectMemoryFailureFromJsonSchema, responseBody);
       } catch {
         throw new ProviderUnavailableError(
           "Project Memory Durable Object",
@@ -533,12 +587,24 @@ export class CloudflareProjectMemory {
       if (failure._tag === "InvalidRequest") throw new InvalidRequestError(failure.reason);
       throw new CloudRuntimeError(failure._tag, failure.reason);
     }
-    return decode(responseSchema, value);
+    try {
+      return decodeJson(responseSchema, responseBody);
+    } catch {
+      throw new ProviderUnavailableError(
+        "Project Memory Durable Object",
+        "invalid success response",
+      );
+    }
   }
 
   async readContext(atRevision: MemoryRevision, query = ""): Promise<readonly ProjectMemoryFact[]> {
     const request = decode(ProjectMemoryReadRequestSchema, { atRevision, query });
-    const response = await this.#call("/read", request, ProjectMemoryReadResponseSchema);
+    const response = await this.#call(
+      "/read",
+      request,
+      ProjectMemoryReadRequestFromJsonSchema,
+      ProjectMemoryReadResponseFromJsonSchema,
+    );
     return response.facts;
   }
 
@@ -555,7 +621,12 @@ export class CloudflareProjectMemory {
       claim,
       provenance,
     });
-    return this.#call("/propose", request, ProjectMemoryProposalSchema);
+    return this.#call(
+      "/propose",
+      request,
+      ProjectMemoryProposeRequestFromJsonSchema,
+      ProjectMemoryProposalFromJsonSchema,
+    );
   }
 
   async acceptMemory(
@@ -564,7 +635,12 @@ export class CloudflareProjectMemory {
   ): Promise<ProjectMemoryRevision> {
     if (this.#coordinatorSecret === undefined) throw new MemoryUnauthorizedError();
     const request = decode(ProjectMemoryAcceptRequestSchema, { proposalId, expectedRevision });
-    return this.#call("/accept", request, ProjectMemoryRevisionSchema);
+    return this.#call(
+      "/accept",
+      request,
+      ProjectMemoryAcceptRequestFromJsonSchema,
+      ProjectMemoryRevisionFromJsonSchema,
+    );
   }
 }
 
