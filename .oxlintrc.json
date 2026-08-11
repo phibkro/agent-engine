@@ -301,6 +301,14 @@
             "role": "test",
             "platform": "portable"
           }
+        ],
+        "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "test",
+            "platform": "portable"
+          }
         ]
       }
     }

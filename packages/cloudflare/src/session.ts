@@ -312,14 +312,28 @@ export class SessionState {
     };
   }
 
-  #terminalState(reason?: string): TerminalSessionState {
+  #terminalState(): TerminalSessionState {
+    const terminalResult = this.#snapshot.terminalResult;
+    const at =
+      terminalResult?._tag === "Completed"
+        ? terminalResult.result.completedAt
+        : terminalResult?._tag === "Failed" || terminalResult?._tag === "Cancelled"
+          ? terminalResult.completedAt
+          : undefined;
+    const reason =
+      terminalResult?._tag === "Failed" || terminalResult?._tag === "Cancelled"
+        ? terminalResult.reason
+        : undefined;
     return decode(
       TerminalSessionStateSchema,
       sessionState(
         this.sessionId,
         this.#snapshot.cursor,
         this.#snapshot.status,
-        { at: this.#snapshot.updatedAt, ...(reason === undefined ? {} : { reason }) },
+        {
+          at: at ?? this.#snapshot.updatedAt,
+          ...(reason === undefined ? {} : { reason }),
+        },
         this.#clock,
       ),
     );
@@ -342,7 +356,7 @@ export class SessionState {
     if (prior !== undefined) return prior;
     if (terminal(this.#snapshot.status)) {
       throw new SessionTerminalError(
-        this.#terminalState("send is rejected after terminal completion"),
+        this.#terminalState(),
         "send is rejected after terminal completion",
       );
     }

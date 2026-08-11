@@ -381,10 +381,13 @@ export const ProjectMemoryLive = (
   namespace: DurableObjectNamespace | undefined,
   projectId: string,
   options: { readonly sessionId?: string; readonly coordinatorSecret?: string } = {},
-): Layer.Layer<ProjectMemory> =>
-  Layer.succeed(
+): Layer.Layer<ProjectMemory, ProjectMemoryError> =>
+  Layer.effect(
     ProjectMemoryService,
-    projectMemoryLayer(new CloudflareProjectMemory(namespace, projectId, options)),
+    Effect.try({
+      try: () => projectMemoryLayer(new CloudflareProjectMemory(namespace, projectId, options)),
+      catch: memoryFailure,
+    }),
   );
 
 const repositoryFailure = (

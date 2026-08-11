@@ -6,6 +6,7 @@ import {
   ProjectIdSchema,
   ProjectMemoryAcceptRequestSchema,
   ProjectMemoryProposeRequestSchema,
+  ProjectMemoryFailureSchema,
   ProjectMemoryProposalModel,
   ProjectMemoryReadRequestSchema,
   ProjectMemoryReadResponseSchema,
@@ -37,25 +38,6 @@ import {
   ProviderUnavailableError,
 } from "./errors.ts";
 import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
-const ProjectMemoryFailureSchema = Schema.Union([
-  Schema.TaggedStruct("InvalidRequest", { reason: NonEmptyStringSchema }),
-  Schema.TaggedStruct("MemoryRevisionUnavailable", {
-    reason: NonEmptyStringSchema,
-    projectId: ProjectIdSchema,
-    revision: MemoryRevisionSchema,
-  }),
-  Schema.TaggedStruct("MemoryRevisionMismatch", {
-    reason: NonEmptyStringSchema,
-    expected: MemoryRevisionSchema,
-    observed: MemoryRevisionSchema,
-  }),
-  Schema.TaggedStruct("MemoryProposalNotFound", {
-    reason: NonEmptyStringSchema,
-    proposalId: MemoryProposalIdSchema,
-  }),
-  Schema.TaggedStruct("MemoryUnauthorized", { reason: NonEmptyStringSchema }),
-  Schema.TaggedStruct("ProviderUnavailable", { reason: NonEmptyStringSchema }),
-]);
 const ProjectMemoryReadRequestFromJsonSchema = Schema.fromJsonString(
   ProjectMemoryReadRequestSchema,
 );

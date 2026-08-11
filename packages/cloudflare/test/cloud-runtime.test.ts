@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Effect, Layer } from "effect";
 import { MemoryRevisionSchema, Sha256DigestSchema, TimestampSchema } from "@work-engine/protocol";
 import {
   CacheDigestMismatchError,
@@ -17,6 +18,7 @@ import {
   sessionRefs,
   verifyDependencyCache,
   ProviderUnavailableError,
+  ProjectMemoryLive,
   SessionTerminalError,
 } from "../src/index.ts";
 import type {
@@ -196,7 +198,18 @@ describe("strict provider JSON boundaries", () => {
       ProviderUnavailableError,
     );
   });
+
+  it("reports invalid Project Memory Layer configuration in the Effect error channel", async () => {
+    const exit = await Effect.runPromiseExit(
+      Layer.build(ProjectMemoryLive(undefined, "invalid-project-id")).pipe(Effect.scoped),
+    );
+    expect(exit._tag).toBe("Failure");
+    if (exit._tag === "Failure") {
+      expect(String(exit.cause)).toContain("MemoryUnavailable");
+    }
+  });
 });
+
 describe("CloudTask Send JSON values", () => {
   it("round-trips object values through request and observe", async () => {
     const value = { nested: { enabled: true }, values: [1, null] };
@@ -374,6 +387,25 @@ describe("Session terminal and repository refs", () => {
     const session = new SessionState(task(), capabilities);
     session.start();
     expect(() => session.complete({ _tag: "CompletedResult" })).toThrow();
+  });
+
+  it("preserves the original terminal cause when later work is rejected", () => {
+    const session = new SessionState(task(), capabilities);
+    session.start();
+    session.fail("original worker failure");
+    let cause: unknown;
+    try {
+      session.send(`msg_${uuid}`, "late work");
+    } catch (error) {
+      cause = error;
+    }
+    expect(cause).toBeInstanceOf(SessionTerminalError);
+    expect((cause as SessionTerminalError).details["state"]).toMatchObject({
+      _tag: "Failed",
+      sessionId: task().sessionId,
+      failedAt: now,
+      reason: "original worker failure",
+    });
   });
 
   it("rejects a persisted Session with a malformed terminal result", () => {

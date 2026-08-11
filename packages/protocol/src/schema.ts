@@ -429,6 +429,23 @@ export const CloudTaskResponseSchema = Schema.Union([
 ]);
 export type CloudTaskResponse = typeof CloudTaskResponseSchema.Type;
 
+export const CloudTaskFailureSchema = Schema.Union([
+  Schema.TaggedStruct("Unauthenticated", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("Unauthorized", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("InvalidRequest", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("SessionNotFound", {
+    reason: NonEmptyStringSchema,
+    sessionId: SessionIdSchema,
+  }),
+  Schema.TaggedStruct("SessionConflict", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("SessionTerminal", {
+    reason: NonEmptyStringSchema,
+    state: TerminalSessionStateSchema,
+  }),
+  Schema.TaggedStruct("ProviderUnavailable", { reason: NonEmptyStringSchema }),
+]);
+export type CloudTaskFailure = typeof CloudTaskFailureSchema.Type;
+
 export const ProjectMemoryProvenanceSchema = Schema.TaggedStruct("ProjectMemoryProvenance", {
   source: NonEmptyStringSchema,
   observedAt: TimestampSchema,
@@ -504,6 +521,27 @@ export const ProjectMemoryRevisionSchema = Schema.TaggedStruct("ProjectMemoryRev
 export type ProjectMemoryRevision = typeof ProjectMemoryRevisionSchema.Type;
 export const MemoryRevisionRecordSchema = ProjectMemoryRevisionSchema;
 export type MemoryRevisionRecord = ProjectMemoryRevision;
+
+export const ProjectMemoryFailureSchema = Schema.Union([
+  Schema.TaggedStruct("InvalidRequest", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("MemoryRevisionUnavailable", {
+    reason: NonEmptyStringSchema,
+    projectId: ProjectIdSchema,
+    revision: MemoryRevisionSchema,
+  }),
+  Schema.TaggedStruct("MemoryRevisionMismatch", {
+    reason: NonEmptyStringSchema,
+    expected: MemoryRevisionSchema,
+    observed: MemoryRevisionSchema,
+  }),
+  Schema.TaggedStruct("MemoryProposalNotFound", {
+    reason: NonEmptyStringSchema,
+    proposalId: MemoryProposalIdSchema,
+  }),
+  Schema.TaggedStruct("MemoryUnauthorized", { reason: NonEmptyStringSchema }),
+  Schema.TaggedStruct("ProviderUnavailable", { reason: NonEmptyStringSchema }),
+]);
+export type ProjectMemoryFailure = typeof ProjectMemoryFailureSchema.Type;
 
 export const RepositoryRefSchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^(?!refs\/)(?!.*\.\.)[A-Za-z0-9._/-]+$/)),

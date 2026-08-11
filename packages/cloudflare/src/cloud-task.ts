@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import type { Json } from "effect/Schema";
 import {
   CloudTaskCancelRequestSchema,
+  CloudTaskFailureSchema,
   CloudTaskCancelResponseSchema,
   CloudTaskObserveRequestSchema,
   CloudTaskObserveResponseSchema,
@@ -12,13 +13,11 @@ import {
   CloudTaskSendResponseSchema,
   CloudTaskSpawnRequestSchema,
   CloudTaskSpawnResponseSchema,
-  TerminalSessionStateSchema,
 } from "@work-engine/protocol";
-import type { CloudTaskRequest, CloudTaskResponse } from "@work-engine/protocol";
+import type { CloudTaskFailure, CloudTaskRequest, CloudTaskResponse } from "@work-engine/protocol";
 import {
   CloudTaskRequestSchema,
   CloudTaskSchema,
-  SessionIdSchema,
   decode,
   encode,
   type CloudTask,
@@ -51,31 +50,7 @@ export interface SessionDirectory {
   get(sessionId: string): DurableObjectStub | undefined;
 }
 
-type CloudTaskFailureTag =
-  | "Unauthenticated"
-  | "Unauthorized"
-  | "InvalidRequest"
-  | "SessionNotFound"
-  | "SessionConflict"
-  | "SessionTerminal"
-  | "ProviderUnavailable";
-
-const CloudTaskFailureSchema = Schema.Union([
-  Schema.TaggedStruct("Unauthenticated", { reason: Schema.NonEmptyString }),
-  Schema.TaggedStruct("Unauthorized", { reason: Schema.NonEmptyString }),
-  Schema.TaggedStruct("InvalidRequest", { reason: Schema.NonEmptyString }),
-  Schema.TaggedStruct("SessionNotFound", {
-    reason: Schema.NonEmptyString,
-    sessionId: SessionIdSchema,
-  }),
-  Schema.TaggedStruct("SessionConflict", { reason: Schema.NonEmptyString }),
-  Schema.TaggedStruct("SessionTerminal", {
-    reason: Schema.NonEmptyString,
-    state: TerminalSessionStateSchema,
-  }),
-  Schema.TaggedStruct("ProviderUnavailable", { reason: Schema.NonEmptyString }),
-]);
-type CloudTaskFailure = typeof CloudTaskFailureSchema.Type;
+type CloudTaskFailureTag = CloudTaskFailure["_tag"];
 const CloudTaskRequestFromJsonSchema = Schema.fromJsonString(CloudTaskRequestSchema);
 const CloudTaskSpawnRequestFromJsonSchema = Schema.fromJsonString(CloudTaskSpawnRequestSchema);
 const CloudTaskSendRequestFromJsonSchema = Schema.fromJsonString(CloudTaskSendRequestSchema);

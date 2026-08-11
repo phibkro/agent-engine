@@ -1,7 +1,9 @@
 import { expect, test } from "vitest";
 import {
+  CloudTaskFailureSchema,
   CloudTaskSchema,
   ProjectMemoryRevisionSchema,
+  ProjectMemoryFailureSchema,
   ProjectMemoryAcceptRequestSchema,
   ProjectMemoryProposeRequestSchema,
   ProjectMemoryReadRequestSchema,
@@ -135,6 +137,24 @@ test("accepts terminal results and rejects an unknown terminal state", () => {
   ).toThrow();
 });
 
+test("strictly decodes CloudTask failure envelopes", () => {
+  const failure = {
+    _tag: "SessionTerminal",
+    reason: "Session is terminal",
+    state: {
+      _tag: "Failed",
+      sessionId,
+      cursor: 1,
+      failedAt: now,
+      reason: "worker failed",
+    },
+  } as const;
+  expect(decodeUnknownStrict(CloudTaskFailureSchema, failure)).toEqual(failure);
+  expect(() =>
+    decodeUnknownStrict(CloudTaskFailureSchema, { ...failure, internal: "must not escape" }),
+  ).toThrow();
+});
+
 test("keeps Session attribution out of the public Project Memory proposal", () => {
   const proposal = {
     _tag: "ProjectMemoryProposal",
@@ -205,6 +225,19 @@ test("strictly decodes Project Memory request boundaries", () => {
       expectedRevision: 0,
     }).expectedRevision,
   ).toBe(0);
+});
+
+test("strictly decodes Project Memory failure envelopes", () => {
+  const failure = {
+    _tag: "MemoryRevisionMismatch",
+    reason: "Revision mismatch",
+    expected: 1,
+    observed: 2,
+  } as const;
+  expect(decodeUnknownStrict(ProjectMemoryFailureSchema, failure)).toEqual(failure);
+  expect(() =>
+    decodeUnknownStrict(ProjectMemoryFailureSchema, { ...failure, cause: "must not escape" }),
+  ).toThrow();
 });
 
 test("rejects a repository grant whose WIP and candidate refs collapse", () => {
