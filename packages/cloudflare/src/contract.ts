@@ -145,8 +145,6 @@ export const encode = <S extends Schema.ConstraintEncoder<unknown>>(
   value: S["Type"],
 ): unknown => Schema.encodeSync(schema)(value);
 
-export const json = (value: unknown): string => JSON.stringify(value);
-
 export const record = (value: unknown): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("Expected a record");

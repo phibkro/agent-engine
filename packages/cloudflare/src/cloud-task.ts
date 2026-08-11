@@ -1,14 +1,23 @@
 import type { DurableObjectState } from "@cloudflare/workers-types";
 import * as Schema from "effect/Schema";
 import type { Json } from "effect/Schema";
+import {
+  CloudTaskCancelRequestSchema,
+  CloudTaskCancelResponseSchema,
+  CloudTaskObserveRequestSchema,
+  CloudTaskObserveResponseSchema,
+  CloudTaskResultRequestSchema,
+  CloudTaskResultResponseSchema,
+  CloudTaskSendRequestSchema,
+  CloudTaskSendResponseSchema,
+  CloudTaskSpawnRequestSchema,
+  CloudTaskSpawnResponseSchema,
+} from "@work-engine/protocol";
 import type { CloudTaskRequest, CloudTaskResponse } from "@work-engine/protocol";
 import {
   CloudTaskRequestSchema,
-  CloudTaskResponseSchema,
-  CloudTaskSchema,
   decode,
   encode,
-  json,
   type CloudTask,
   type PlatformCapabilities,
   type SessionId,
@@ -60,6 +69,151 @@ const CloudTaskFailureSchema = Schema.Struct({
   reason: Schema.NonEmptyString,
 });
 type CloudTaskFailure = typeof CloudTaskFailureSchema.Type;
+const CloudTaskRequestFromJsonSchema = Schema.fromJsonString(CloudTaskRequestSchema);
+const CloudTaskSpawnRequestFromJsonSchema = Schema.fromJsonString(
+  CloudTaskSpawnRequestSchema,
+);
+const CloudTaskSendRequestFromJsonSchema = Schema.fromJsonString(CloudTaskSendRequestSchema);
+const CloudTaskObserveRequestFromJsonSchema = Schema.fromJsonString(
+  CloudTaskObserveRequestSchema,
+);
+const CloudTaskCancelRequestFromJsonSchema = Schema.fromJsonString(
+  CloudTaskCancelRequestSchema,
+);
+const CloudTaskResultRequestFromJsonSchema = Schema.fromJsonString(
+  CloudTaskResultRequestSchema,
+);
+const CloudTaskSpawnResponseFromJsonSchema = Schema.fromJsonString(
+  CloudTaskSpawnResponseSchema,
+);
+const CloudTaskSendResponseFromJsonSchema = Schema.fromJsonString(CloudTaskSendResponseSchema);
+const CloudTaskObserveResponseFromJsonSchema = Schema.fromJsonString(
+  CloudTaskObserveResponseSchema,
+);
+const CloudTaskCancelResponseFromJsonSchema = Schema.fromJsonString(
+  CloudTaskCancelResponseSchema,
+);
+const CloudTaskResultResponseFromJsonSchema = Schema.fromJsonString(
+  CloudTaskResultResponseSchema,
+);
+const CloudTaskFailureFromJsonSchema = Schema.fromJsonString(CloudTaskFailureSchema);
+
+type CloudTaskRequestOperationSchema =
+  | typeof CloudTaskSpawnRequestSchema
+  | typeof CloudTaskSendRequestSchema
+  | typeof CloudTaskObserveRequestSchema
+  | typeof CloudTaskCancelRequestSchema
+  | typeof CloudTaskResultRequestSchema;
+type CloudTaskRequestJsonSchema =
+  | typeof CloudTaskSpawnRequestFromJsonSchema
+  | typeof CloudTaskSendRequestFromJsonSchema
+  | typeof CloudTaskObserveRequestFromJsonSchema
+  | typeof CloudTaskCancelRequestFromJsonSchema
+  | typeof CloudTaskResultRequestFromJsonSchema;
+type CloudTaskResponseOperationSchema =
+  | typeof CloudTaskSpawnResponseSchema
+  | typeof CloudTaskSendResponseSchema
+  | typeof CloudTaskObserveResponseSchema
+  | typeof CloudTaskCancelResponseSchema
+  | typeof CloudTaskResultResponseSchema;
+type CloudTaskResponseJsonSchema =
+  | typeof CloudTaskSpawnResponseFromJsonSchema
+  | typeof CloudTaskSendResponseFromJsonSchema
+  | typeof CloudTaskObserveResponseFromJsonSchema
+  | typeof CloudTaskCancelResponseFromJsonSchema
+  | typeof CloudTaskResultResponseFromJsonSchema;
+
+const requestSchemaFor = (
+  payload: CloudTaskRequest,
+): CloudTaskRequestOperationSchema => {
+  switch (payload._tag) {
+    case "Spawn":
+      return CloudTaskSpawnRequestSchema;
+    case "Send":
+      return CloudTaskSendRequestSchema;
+    case "Observe":
+      return CloudTaskObserveRequestSchema;
+    case "Cancel":
+      return CloudTaskCancelRequestSchema;
+    case "Result":
+      return CloudTaskResultRequestSchema;
+    default:
+      throw new InvalidRequestError("Cloud-task operation is unsupported");
+  }
+};
+
+const requestJsonSchemaFor = (payload: CloudTaskRequest): CloudTaskRequestJsonSchema => {
+  switch (payload._tag) {
+    case "Spawn":
+      return CloudTaskSpawnRequestFromJsonSchema;
+    case "Send":
+      return CloudTaskSendRequestFromJsonSchema;
+    case "Observe":
+      return CloudTaskObserveRequestFromJsonSchema;
+    case "Cancel":
+      return CloudTaskCancelRequestFromJsonSchema;
+    case "Result":
+      return CloudTaskResultRequestFromJsonSchema;
+    default:
+      throw new InvalidRequestError("Cloud-task operation is unsupported");
+  }
+};
+
+const responseSchemaFor = (
+  payload: CloudTaskRequest,
+): CloudTaskResponseOperationSchema => {
+  switch (payload._tag) {
+    case "Spawn":
+      return CloudTaskSpawnResponseSchema;
+    case "Send":
+      return CloudTaskSendResponseSchema;
+    case "Observe":
+      return CloudTaskObserveResponseSchema;
+    case "Cancel":
+      return CloudTaskCancelResponseSchema;
+    case "Result":
+      return CloudTaskResultResponseSchema;
+    default:
+      throw new InvalidRequestError("Cloud-task operation is unsupported");
+  }
+};
+
+const responseJsonSchemaFor = (payload: CloudTaskRequest): CloudTaskResponseJsonSchema => {
+  switch (payload._tag) {
+    case "Spawn":
+      return CloudTaskSpawnResponseFromJsonSchema;
+    case "Send":
+      return CloudTaskSendResponseFromJsonSchema;
+    case "Observe":
+      return CloudTaskObserveResponseFromJsonSchema;
+    case "Cancel":
+      return CloudTaskCancelResponseFromJsonSchema;
+    case "Result":
+      return CloudTaskResultResponseFromJsonSchema;
+    default:
+      throw new InvalidRequestError("Cloud-task operation is unsupported");
+  }
+};
+
+const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  text: string,
+): S["Type"] =>
+  Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(text);
+
+const encodeCloudTaskRequest = (payload: CloudTaskRequest): string => {
+  const schema = requestSchemaFor(payload);
+  const value = decode(schema, payload);
+  return Schema.encodeSync(requestJsonSchemaFor(value), {
+    onExcessProperty: "error",
+  })(value);
+};
+
+const responseJson = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  value: unknown,
+  init?: ResponseInit,
+): Response => Response.json(decode(schema, value), init);
 
 const statusForCloudTaskFailure = (tag: CloudTaskFailureTag): number => {
   if (tag === "Unauthenticated") return 401;
@@ -92,7 +246,9 @@ const errorResponse = (cause: unknown): Response => {
     _tag: tag,
     reason: "Cloud-task request failed",
   });
-  return Response.json(envelope, { status: statusForCloudTaskFailure(tag) });
+  return responseJson(CloudTaskFailureSchema, envelope, {
+    status: statusForCloudTaskFailure(tag),
+  });
 };
 
 const authToken = (request: Request): string | undefined => {
@@ -103,14 +259,20 @@ const authToken = (request: Request): string | undefined => {
 };
 
 const payloadBody = async (request: Request): Promise<CloudTaskRequest> => {
-  let value: unknown;
+  let text: string;
   try {
-    value = await request.json();
+    text = await request.text();
   } catch {
     throw new InvalidRequestError("Cloud-task request body must be JSON");
   }
-  return decode(CloudTaskRequestSchema, value);
+  try {
+    const operation = decodeJson(CloudTaskRequestFromJsonSchema, text);
+    return decodeJson(requestJsonSchemaFor(operation), text);
+  } catch {
+    throw new InvalidRequestError("Cloud-task request body must be valid JSON");
+  }
 };
+
 
 export class SessionDurableObject implements DurableObject {
   #state: DurableObjectState;
@@ -164,7 +326,7 @@ export class SessionDurableObject implements DurableObject {
       if (payload._tag === "Spawn") {
         const admission = session.spawn(payload.task);
         await this.#save(session);
-        return Response.json(decode(CloudTaskResponseSchema, { _tag: "Spawned", admission }));
+        return responseJson(CloudTaskSpawnResponseSchema, { _tag: "Spawned", admission });
       }
       if (payload.sessionId !== session.sessionId) {
         throw new UnauthorizedError("Session address mismatch");
@@ -172,19 +334,28 @@ export class SessionDurableObject implements DurableObject {
       if (payload._tag === "Send") {
         const acceptedCursor = session.send(payload.messageId, payload.message);
         await this.#save(session);
-        return Response.json(decode(CloudTaskResponseSchema, { _tag: "Accepted", acceptedCursor }));
+        return responseJson(CloudTaskSendResponseSchema, {
+          _tag: "Accepted",
+          acceptedCursor,
+        });
       }
       if (payload._tag === "Observe") {
         const observations = session.observe(payload.afterCursor);
-        return Response.json(decode(CloudTaskResponseSchema, { _tag: "Observed", observations }));
+        return responseJson(CloudTaskObserveResponseSchema, {
+          _tag: "Observed",
+          observations,
+        });
       }
       if (payload._tag === "Cancel") {
         const observation = session.requestCancellation(payload.reason);
         await this.#save(session);
-        return Response.json(decode(CloudTaskResponseSchema, { _tag: "Cancelled", observation }));
+        return responseJson(CloudTaskCancelResponseSchema, {
+          _tag: "Cancelled",
+          observation,
+        });
       }
       const result = session.terminalResult ?? { _tag: "Pending", sessionId: payload.sessionId };
-      return Response.json(decode(CloudTaskResponseSchema, { _tag: "Result", result }));
+      return responseJson(CloudTaskResultResponseSchema, { _tag: "Result", result });
     } catch (cause) {
       return errorResponse(cause);
     }
@@ -236,7 +407,7 @@ export class CloudTaskRouter {
     return stub.fetch(`https://session${SESSION_DO_PATH}`, {
       method: "POST",
       headers,
-      body: json(body),
+      body: encodeCloudTaskRequest(body),
     });
   }
 
@@ -245,12 +416,30 @@ export class CloudTaskRouter {
       this.#authenticate(request);
       const payload = await payloadBody(request);
       const response = await this.#forward(request, payload, payload.sessionId);
-      const body: unknown = await response.json();
-      if (!response.ok) {
-        const failure = decode(CloudTaskFailureSchema, body);
-        return Response.json(failure, { status: response.status });
+      let text: string;
+      try {
+        text = await response.text();
+      } catch {
+        throw new ProviderUnavailableError(
+          "Cloud-task session service",
+          "invalid response body",
+        );
       }
-      return Response.json(decode(CloudTaskResponseSchema, body));
+      if (!response.ok) {
+        let failure: CloudTaskFailure;
+        try {
+          failure = decodeJson(CloudTaskFailureFromJsonSchema, text);
+        } catch {
+          throw new ProviderUnavailableError(
+            "Cloud-task session service",
+            "invalid failure response",
+          );
+        }
+        return responseJson(CloudTaskFailureSchema, failure, { status: response.status });
+      }
+      const responseSchema = responseSchemaFor(payload);
+      const decoded = decodeJson(responseJsonSchemaFor(payload), text);
+      return responseJson(responseSchema, decoded);
     } catch (cause) {
       return errorResponse(cause);
     }
@@ -278,13 +467,21 @@ export class CloudflareCloudTaskClient {
         "content-type": "application/json",
         [CLOUD_TASK_AUTHORIZATION]: `${CLOUD_TASK_BEARER_PREFIX}${this.#token}`,
       },
-      body: json(payload),
+      body: encodeCloudTaskRequest(payload),
     });
-    const body: unknown = await response.json();
+    let text: string;
+    try {
+      text = await response.text();
+    } catch {
+      throw new ProviderUnavailableError(
+        "Cloud-task service binding",
+        "invalid response body",
+      );
+    }
     if (!response.ok) {
       let failure: CloudTaskFailure;
       try {
-        failure = decode(CloudTaskFailureSchema, body);
+        failure = decodeJson(CloudTaskFailureFromJsonSchema, text);
       } catch {
         throw new ProviderUnavailableError(
           "Cloud-task service binding",
@@ -298,7 +495,14 @@ export class CloudflareCloudTaskClient {
       if (failure._tag === "SessionNotFound") throw new SessionNotFoundError("requested");
       throw new CloudRuntimeError(failure._tag, failure.reason);
     }
-    return decode(CloudTaskResponseSchema, body);
+    try {
+      return decodeJson(responseJsonSchemaFor(payload), text);
+    } catch {
+      throw new ProviderUnavailableError(
+        "Cloud-task service binding",
+        "invalid success response",
+      );
+    }
   }
 
   spawn(sessionId: SessionId, task: CloudTask): Promise<CloudTaskResponse> {
@@ -351,40 +555,32 @@ export class InMemoryCloudTaskDirectory {
         const session = existing ?? new SessionState(payload.task, this.#clock);
         const admission = session.spawn(payload.task);
         this.#sessions.set(sessionId, session);
-        return Response.json(decode(CloudTaskResponseSchema, { _tag: "Spawned", admission }));
+        return responseJson(CloudTaskSpawnResponseSchema, { _tag: "Spawned", admission });
       }
       const session = this.#sessions.get(sessionId);
       if (session === undefined) throw new SessionNotFoundError(sessionId);
       if (payload._tag === "Send") {
-        return Response.json(
-          decode(CloudTaskResponseSchema, {
-            _tag: "Accepted",
-            acceptedCursor: session.send(payload.messageId, payload.message),
-          }),
-        );
+        return responseJson(CloudTaskSendResponseSchema, {
+          _tag: "Accepted",
+          acceptedCursor: session.send(payload.messageId, payload.message),
+        });
       }
       if (payload._tag === "Observe") {
-        return Response.json(
-          decode(CloudTaskResponseSchema, {
-            _tag: "Observed",
-            observations: session.observe(payload.afterCursor),
-          }),
-        );
+        return responseJson(CloudTaskObserveResponseSchema, {
+          _tag: "Observed",
+          observations: session.observe(payload.afterCursor),
+        });
       }
       if (payload._tag === "Cancel") {
-        return Response.json(
-          decode(CloudTaskResponseSchema, {
-            _tag: "Cancelled",
-            observation: session.requestCancellation(payload.reason),
-          }),
-        );
+        return responseJson(CloudTaskCancelResponseSchema, {
+          _tag: "Cancelled",
+          observation: session.requestCancellation(payload.reason),
+        });
       }
-      return Response.json(
-        decode(CloudTaskResponseSchema, {
-          _tag: "Result",
-          result: session.terminalResult ?? { _tag: "Pending", sessionId },
-        }),
-      );
+      return responseJson(CloudTaskResultResponseSchema, {
+        _tag: "Result",
+        result: session.terminalResult ?? { _tag: "Pending", sessionId },
+      });
     } catch (cause) {
       return errorResponse(cause);
     }
