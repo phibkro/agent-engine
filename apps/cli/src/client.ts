@@ -94,10 +94,7 @@ const expectedFailureStatus = (tag: CloudTaskFailure["_tag"]): number => {
   }
 };
 
-const cloudTaskFailure = (
-  failure: CloudTaskFailure,
-  sessionId: SessionId,
-): CloudTaskError => {
+const cloudTaskFailure = (failure: CloudTaskFailure, sessionId: SessionId): CloudTaskError => {
   switch (failure._tag) {
     case "Unauthenticated":
     case "Unauthorized":
@@ -124,8 +121,7 @@ const isCloudflareAccessResponse = (response: Response, text: string): boolean =
   if (contentType.includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
     return false;
   }
-  const bodyMarker =
-    /cloudflare\s+access|cloudflareaccess|cdn-cgi\/access|cf-access/iu.test(text);
+  const bodyMarker = /cloudflare\s+access|cloudflareaccess|cdn-cgi\/access|cf-access/iu.test(text);
   const headerMarker = [...response.headers.keys()].some((name) =>
     /^cf-access(?:-|$)/iu.test(name),
   );
@@ -199,7 +195,7 @@ const request = <S extends Schema.ConstraintDecoder<unknown>>(
         }),
     });
     if (!response.ok) {
-      return yield* Effect.fail(decodeFailureResponse(response, text, operation, sessionId));
+      return yield* decodeFailureResponse(response, text, operation, sessionId);
     }
     return yield* Effect.try({
       try: () => decodeJsonStrict(responseSchema, text),

@@ -101,15 +101,18 @@ export const PathPatternSchema = Schema.String.check(
 );
 export type PathPattern = typeof PathPatternSchema.Type;
 
+const hasControlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) return true;
+  }
+  return false;
+};
+
 export const RepositoryPathSchema = Schema.String.check(
   Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+(?![\s\S])/u),
-  Schema.makeFilter(
-    (path) =>
-      !/[\u0000-\u001f\u007f]/u.test(path) || "path contains a control character",
-  ),
-  Schema.makeFilter(
-    (path) => !/[*?\[\]{}]/u.test(path) || "path contains a glob metacharacter",
-  ),
+  Schema.makeFilter((path) => !hasControlCharacter(path) || "path contains a control character"),
+  Schema.makeFilter((path) => !/[*?[\]{}]/u.test(path) || "path contains a glob metacharacter"),
 );
 export type RepositoryPath = typeof RepositoryPathSchema.Type;
 

@@ -68,10 +68,7 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
         commitMetadata: { sha: baseCommit, message: "candidate", author: "operator" },
       },
     ],
-    [
-      "glob-bearing changed path",
-      { ...validVerification, changedPaths: ["packages/**"] },
-    ],
+    ["glob-bearing changed path", { ...validVerification, changedPaths: ["packages/**"] }],
     [
       "trailing-newline changed path",
       { ...validVerification, changedPaths: ["packages/cloud-runtime/src/repository.ts\n"] },

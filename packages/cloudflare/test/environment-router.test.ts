@@ -156,10 +156,9 @@ describe("EnvironmentRouter", () => {
 
   it("fails closed before DO access when the HTTP connection limiter is missing", async () => {
     const { env, requests } = makeEnv();
-    const response = await new EnvironmentRouter({
-      ...env,
-      ENVIRONMENT_HTTP_RATE: undefined,
-    }).fetch(
+    const { ENVIRONMENT_HTTP_RATE: httpRate, ...withoutHttpRate } = env;
+    expect(httpRate).toBeDefined();
+    const response = await new EnvironmentRouter(withoutHttpRate).fetch(
       new Request("https://work.example/v1/environments/demo-environment/connect/api", {
         headers: { "CF-Connecting-IP": "203.0.113.7" },
       }),
@@ -171,10 +170,9 @@ describe("EnvironmentRouter", () => {
 
   it("fails closed before DO access when the WebSocket limiter is missing", async () => {
     const { env, requests } = makeEnv();
-    const response = await new EnvironmentRouter({
-      ...env,
-      ENVIRONMENT_CONNECT_RATE: undefined,
-    }).fetch(
+    const { ENVIRONMENT_CONNECT_RATE: connectRate, ...withoutConnectRate } = env;
+    expect(connectRate).toBeDefined();
+    const response = await new EnvironmentRouter(withoutConnectRate).fetch(
       new Request("https://work.example/v1/environments/demo-environment/connect/api", {
         headers: {
           "CF-Connecting-IP": "203.0.113.7",
