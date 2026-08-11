@@ -150,17 +150,11 @@ describe("EnvironmentDurableObject", () => {
     expect(await response.json()).toEqual({ _tag: "EnvironmentInspected" });
   });
 
-  it("lets terminal cleanup finish when backup garbage collection fails", async () => {
-    let listCalls = 0;
+  it("keeps terminal cleanup terminal", async () => {
     const state = makeState(makeSnapshot({ lifecycle: "Failed", dataLossWarning: true }));
     const object = new EnvironmentDurableObject(
       state.state,
-      makeEnv({
-        list: async () => {
-          listCalls += 1;
-          throw new Error("backup list unavailable");
-        },
-      }),
+      makeEnv({ delete: async () => {} }),
       capabilities,
     );
 
@@ -170,24 +164,6 @@ describe("EnvironmentDurableObject", () => {
       "Destroyed",
     );
     expect(state.deletedAlarms()).toBe(1);
-    expect(listCalls).toBe(0);
-  });
-
-  it("reschedules and reports typed backup cleanup failures on live paths", async () => {
-    const state = makeState(makeSnapshot());
-    const object = new EnvironmentDurableObject(
-      state.state,
-      makeEnv({
-        list: async () => {
-          throw new Error("backup list unavailable");
-        },
-      }),
-      capabilities,
-    );
-
-    await expect(object.alarm()).rejects.toMatchObject({ _tag: "ProviderUnavailable" });
-    expect(decodeUnknownStrict(EnvironmentSnapshotSchema, state.read()).lifecycle).toBe("Ready");
-    expect(state.alarms).toHaveLength(2);
   });
 
   it("defers a due checkpoint retry while an accepted connection is active", async () => {
@@ -209,11 +185,7 @@ describe("EnvironmentDurableObject", () => {
         checkpointRetryAt: "2026-08-09T23:59:00.000Z",
       }),
     );
-    const object = new EnvironmentDurableObject(
-      state.state,
-      makeEnv({ list: async () => ({ objects: [], truncated: false }) }, namespace),
-      capabilities,
-    );
+    const object = new EnvironmentDurableObject(state.state, makeEnv({}, namespace), capabilities);
 
     const response = await object.fetch(
       new Request("https://work.example/v1/environments/demo-environment/connect/api", {

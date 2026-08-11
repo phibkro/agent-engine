@@ -5,7 +5,7 @@ export { ContainerProxy } from "@cloudflare/sandbox";
 export class Sandbox extends CloudflareSandbox {
   override enableInternet = false;
   override interceptHttps = true;
-  override allowedHosts = ["*.r2.cloudflarestorage.com"];
+  override allowedHosts = [];
   override entrypoint = [
     "/bin/sh",
     "-lc",

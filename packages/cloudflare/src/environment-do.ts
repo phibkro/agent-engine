@@ -222,7 +222,8 @@ export class EnvironmentDurableObject implements DurableObject {
     runtime: CloudflareSandboxEnvironmentRuntime,
     generationId: string,
   ): Promise<Response> {
-    if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+    const upgrade = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if (!upgrade) {
       return runtime.proxy(request, generationId);
     }
     if (this.#activeConnections >= MAX_CONNECTIONS) {
@@ -234,28 +235,12 @@ export class EnvironmentDurableObject implements DurableObject {
         },
       );
     }
-    const upstreamResponse = await runtime.proxy(request, generationId);
-    const upstream = upstreamResponse.webSocket;
-    if (upstream === null) {
-      throw new ProviderUnavailableError(
-        "Cloudflare Sandbox",
-        "did not accept the WebSocket connection",
-      );
-    }
-    const sockets = Object.values(new WebSocketPair());
-    const client = sockets[0];
-    const bridge = sockets[1];
-    if (client === undefined || bridge === undefined) {
-      throw new ProviderUnavailableError("Cloudflare Workers", "did not create a WebSocket pair");
-    }
-    bridge.accept();
-    upstream.accept();
     this.#activeConnections += 1;
-    let closed = false;
+    let released = false;
     const release = (): void => {
-      if (closed) return;
-      closed = true;
-      this.#activeConnections = Math.max(0, this.#activeConnections - 1);
+      if (released) return;
+      released = true;
+      this.#activeConnections -= 1;
       this.#state.waitUntil(
         (async () => {
           const { coordinator } = this.#coordinator();
@@ -269,25 +254,46 @@ export class EnvironmentDurableObject implements DurableObject {
         })(),
       );
     };
-    bridge.addEventListener("message", (event) => upstream.send(event.data));
-    upstream.addEventListener("message", (event) => bridge.send(event.data));
-    bridge.addEventListener("close", (event) => {
+    try {
+      const upstreamResponse = await runtime.proxy(request, generationId);
+      const upstream = upstreamResponse.webSocket;
+      if (upstream === null) {
+        throw new ProviderUnavailableError(
+          "Cloudflare Sandbox",
+          "did not accept the WebSocket connection",
+        );
+      }
+      const sockets = Object.values(new WebSocketPair());
+      const client = sockets[0];
+      const bridge = sockets[1];
+      if (client === undefined || bridge === undefined) {
+        throw new ProviderUnavailableError("Cloudflare Workers", "did not create a WebSocket pair");
+      }
+      bridge.accept();
+      upstream.accept();
+      bridge.addEventListener("message", (event) => upstream.send(event.data));
+      upstream.addEventListener("message", (event) => bridge.send(event.data));
+      bridge.addEventListener("close", (event) => {
+        release();
+        upstream.close(event.code, event.reason);
+      });
+      upstream.addEventListener("close", (event) => {
+        release();
+        bridge.close(event.code, event.reason);
+      });
+      bridge.addEventListener("error", () => {
+        release();
+        upstream.close(1011, "Client WebSocket failed");
+      });
+      upstream.addEventListener("error", () => {
+        release();
+        bridge.close(1011, "Sandbox WebSocket failed");
+      });
+      return new Response(null, { status: 101, webSocket: client });
+    } catch (cause) {
       release();
-      upstream.close(event.code, event.reason);
-    });
-    upstream.addEventListener("close", (event) => {
-      release();
-      bridge.close(event.code, event.reason);
-    });
-    bridge.addEventListener("error", () => {
-      release();
-      upstream.close(1011, "Client WebSocket failed");
-    });
-    upstream.addEventListener("error", () => {
-      release();
-      bridge.close(1011, "Sandbox WebSocket failed");
-    });
-    return new Response(null, { status: 101, webSocket: client });
+      throw cause;
+    }
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -399,28 +405,11 @@ export class EnvironmentDurableObject implements DurableObject {
   }
 
   async alarm(): Promise<void> {
-    const { coordinator, runtime } = this.#coordinator();
+    const { coordinator } = this.#coordinator();
     const current = await coordinator.inspect();
     if (current === undefined || current.lifecycle === "Destroyed") return;
     const now = Date.parse(this.#capabilities.now());
-    const cleanupBackups = async (next: EnvironmentSnapshot): Promise<void> => {
-      try {
-        await runtime.cleanupBackups(next);
-      } catch (cause) {
-        const failure =
-          cause instanceof ProviderUnavailableError
-            ? cause
-            : new ProviderUnavailableError(
-                "Environment backup storage",
-                "Backup garbage collection failed",
-                cause,
-              );
-        await this.#rescheduleAfterFailure(coordinator, failure);
-      }
-    };
-
     let next: EnvironmentSnapshot;
-    let terminal = false;
     if (current.lifecycle === "Failed") {
       next = await coordinator
         .destroy({
@@ -429,7 +418,6 @@ export class EnvironmentDurableObject implements DurableObject {
           environmentId: current.environmentId,
         })
         .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
-      terminal = true;
     } else if (
       current.lifecycle === "Ready" &&
       current.recoveryRetryAt !== null &&
@@ -461,11 +449,8 @@ export class EnvironmentDurableObject implements DurableObject {
         commandId: "destroy-00000000-0000-4000-8000-000000000000",
         environmentId: current.environmentId,
       });
-      terminal = true;
     }
 
     await this.#schedule(next);
-    if (terminal) return;
-    await cleanupBackups(next);
   }
 }

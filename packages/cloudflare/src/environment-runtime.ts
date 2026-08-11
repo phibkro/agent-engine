@@ -67,6 +67,19 @@ const parsePairingOutput = (output: string): typeof EnvironmentPairingOutputSche
   return decodeUnknownStrict(EnvironmentPairingOutputSchema, { token, expiresAt });
 };
 
+const brokerHostname = (origin: string): string => {
+  let broker: URL;
+  try {
+    broker = new URL(origin);
+  } catch (cause) {
+    throw new ProviderUnavailableError("Credential broker", "invalid broker origin", cause);
+  }
+  if (broker.protocol !== "https:" || broker.hostname === "" || broker.hostname.includes("*")) {
+    throw new ProviderUnavailableError("Credential broker", "invalid broker origin");
+  }
+  return broker.hostname;
+};
+
 export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   readonly #options: SandboxEnvironmentRuntimeOptions;
   #activeSandbox: Sandbox | undefined;
@@ -87,13 +100,54 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     readonly keepAlive: true;
   }): Promise<{ readonly generationId: string }> {
     const generationId = `${input.environmentId}-g${String(input.generationOrdinal)}`;
-    this.#environmentId = input.environmentId;
     const sandbox = this.#sandbox(generationId);
-    await sandbox.setKeepAlive(input.keepAlive);
-    await sandbox.exec("true");
-    this.#activeSandbox = sandbox;
-    this.#generationId = generationId;
-    return { generationId };
+    let keepAliveEnabled = false;
+    try {
+      await sandbox.setKeepAlive(input.keepAlive);
+      keepAliveEnabled = true;
+      await requireSuccessfulExec(sandbox, "true");
+      this.#activeSandbox = sandbox;
+      this.#environmentId = input.environmentId;
+      this.#generationId = generationId;
+      return { generationId };
+    } catch (cause) {
+      if (!keepAliveEnabled) throw cause;
+      const cleanupFailures: Error[] = [];
+      try {
+        await sandbox.setKeepAlive(false);
+      } catch (cleanupFailure) {
+        cleanupFailures.push(
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new ProviderUnavailableError(
+                "Cloudflare Sandbox",
+                "Sandbox keep-alive cleanup failed",
+                cleanupFailure,
+              ),
+        );
+      }
+      try {
+        await sandbox.destroy();
+      } catch (cleanupFailure) {
+        cleanupFailures.push(
+          cleanupFailure instanceof Error
+            ? cleanupFailure
+            : new ProviderUnavailableError(
+                "Cloudflare Sandbox",
+                "Sandbox destruction failed",
+                cleanupFailure,
+              ),
+        );
+      }
+      if (cleanupFailures.length > 0) {
+        throw new ProviderUnavailableError(
+          "Cloudflare Sandbox",
+          "Sandbox start cleanup failed",
+          new AggregateError([cause, ...cleanupFailures]),
+        );
+      }
+      throw cause;
+    }
   }
 
   async initialize(input: {
@@ -121,8 +175,8 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       repository: input.repository,
       provider: input.provider,
     });
-    const broker = new URL(lease.brokerOrigin);
-    await sandbox.setAllowedHosts([broker.hostname, "*.r2.cloudflarestorage.com"]);
+    const brokerHostnameValue = brokerHostname(lease.brokerOrigin);
+    await sandbox.setAllowedHosts([brokerHostnameValue]);
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
@@ -334,8 +388,8 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
       repository: input.snapshot.repository,
       provider: input.snapshot.provider,
     });
-    const broker = new URL(lease.brokerOrigin);
-    await sandbox.setAllowedHosts([broker.hostname, "*.r2.cloudflarestorage.com"]);
+    const brokerHostnameValue = brokerHostname(lease.brokerOrigin);
+    await sandbox.setAllowedHosts([brokerHostnameValue]);
     await sandbox.setEnvVars({
       T3CODE_BROKER_TOKEN: lease.generationToken,
       T3CODE_BROKER_EXPIRES_AT: lease.expiresAt,
@@ -361,33 +415,6 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
 
   async deleteCheckpoint(checkpoint: EnvironmentCheckpoint): Promise<void> {
     await this.#options.backupBucket.delete(backupObjectKeys(checkpoint.backup.id));
-  }
-  async cleanupBackups(snapshot: EnvironmentSnapshot): Promise<void> {
-    const tracked = new Set([
-      ...snapshot.retainedCheckpoints.map((checkpoint) => checkpoint.backup.id),
-      ...(snapshot.acceptedCheckpoint === null ? [] : [snapshot.acceptedCheckpoint.backup.id]),
-    ]);
-    const cutoff = Date.parse(this.#options.now()) - 24 * 60 * 60 * 1_000;
-    const objects = await this.#listBackupObjects();
-    await Promise.all(
-      objects
-        .filter((object) => {
-          const match = /^backups\/([^/]+)\//u.exec(object.key);
-          return (
-            match !== null && !tracked.has(match[1] ?? "") && object.uploaded.getTime() <= cutoff
-          );
-        })
-        .map((object) => this.#options.backupBucket.delete(object.key)),
-    );
-  }
-
-  async #listBackupObjects(cursor?: string): Promise<R2Object[]> {
-    const page = await this.#options.backupBucket.list({
-      prefix: "backups/",
-      ...(cursor === undefined ? {} : { cursor }),
-    });
-    if (!page.truncated) return [...page.objects];
-    return [...page.objects, ...(await this.#listBackupObjects(page.cursor))];
   }
   async recover(input: {
     readonly snapshot: EnvironmentSnapshot;

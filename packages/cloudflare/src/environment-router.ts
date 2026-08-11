@@ -261,6 +261,19 @@ export class EnvironmentRouter {
       }
 
       if (connect) {
+        const upgrade = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+        const httpLimiter = this.#env.ENVIRONMENT_HTTP_RATE;
+        if (httpLimiter === undefined) {
+          throw new ProviderUnavailableError("Environment HTTP rate limiter");
+        }
+        const limiters: RateLimit[] = [httpLimiter];
+        if (upgrade) {
+          const connectionLimiter = this.#env.ENVIRONMENT_CONNECT_RATE;
+          if (connectionLimiter === undefined) {
+            throw new ProviderUnavailableError("Environment connection rate limiter");
+          }
+          limiters.push(connectionLimiter);
+        }
         let source: string;
         try {
           source = decodeUnknownStrict(
@@ -273,16 +286,8 @@ export class EnvironmentRouter {
             cause,
           );
         }
-        const limiters = [
-          this.#env.ENVIRONMENT_HTTP_RATE,
-          ...(request.headers.get("Upgrade")?.toLowerCase() === "websocket"
-            ? [this.#env.ENVIRONMENT_CONNECT_RATE]
-            : []),
-        ];
         const decisions = await Promise.all(
-          limiters
-            .filter((limiter): limiter is RateLimit => limiter !== undefined)
-            .map((limiter) => limiter.limit({ key: `${source}:${environmentId}` })),
+          limiters.map((limiter) => limiter.limit({ key: `${source}:${environmentId}` })),
         );
         if (decisions.some((decision) => !decision.success)) {
           return jsonResponse(

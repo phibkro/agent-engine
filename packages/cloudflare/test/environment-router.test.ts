@@ -154,6 +154,39 @@ describe("EnvironmentRouter", () => {
     expect(requests[0]?.headers.get("Authorization")).toBe("Bearer client-token");
   });
 
+  it("fails closed before DO access when the HTTP connection limiter is missing", async () => {
+    const { env, requests } = makeEnv();
+    const response = await new EnvironmentRouter({
+      ...env,
+      ENVIRONMENT_HTTP_RATE: undefined,
+    }).fetch(
+      new Request("https://work.example/v1/environments/demo-environment/connect/api", {
+        headers: { "CF-Connecting-IP": "203.0.113.7" },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("fails closed before DO access when the WebSocket limiter is missing", async () => {
+    const { env, requests } = makeEnv();
+    const response = await new EnvironmentRouter({
+      ...env,
+      ENVIRONMENT_CONNECT_RATE: undefined,
+    }).fetch(
+      new Request("https://work.example/v1/environments/demo-environment/connect/api", {
+        headers: {
+          "CF-Connecting-IP": "203.0.113.7",
+          Upgrade: "websocket",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(requests).toHaveLength(0);
+  });
+
   it("omits the snapshot when an inspect response has no Environment state", async () => {
     const { env, requests } = makeEnv(Response.json({ _tag: "EnvironmentInspected" }));
     const response = await new EnvironmentRouter(env).fetch(

@@ -88,7 +88,25 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
   }
 
   async revoke(input: EnvironmentCredentialSubject): Promise<void> {
-    await this.#request("DELETE", EnvironmentCredentialSubjectSchema, input);
+    const response = await this.#request("DELETE", EnvironmentCredentialSubjectSchema, input);
+    if (response.status !== 204) {
+      throw new ProviderUnavailableError(
+        "Credential broker",
+        "revocation response must be an empty 204 acknowledgment",
+      );
+    }
+    let body: string;
+    try {
+      body = await response.text();
+    } catch (cause) {
+      throw new ProviderUnavailableError("Credential broker", "invalid revocation response", cause);
+    }
+    if (body !== "") {
+      throw new ProviderUnavailableError(
+        "Credential broker",
+        "revocation response must be an empty 204 acknowledgment",
+      );
+    }
   }
 
   async #request<S extends Schema.ConstraintDecoder<unknown>>(
