@@ -370,8 +370,16 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     readonly checkpoint: EnvironmentCheckpoint;
     readonly generationOrdinal: number;
   }): Promise<{ readonly generationId: string }> {
-    if (JSON.stringify(input.checkpoint.versions) !== JSON.stringify(input.snapshot.versions)) {
-      throw new Error("Checkpoint runtime version tuple does not match the Environment");
+    const checkpointVersions = input.checkpoint.versions;
+    const currentVersions = input.snapshot.versions;
+    if (
+      checkpointVersions.imageDigest !== currentVersions.imageDigest ||
+      checkpointVersions.t3codeVersion !== currentVersions.t3codeVersion ||
+      checkpointVersions.sandboxSdkVersion !== currentVersions.sandboxSdkVersion
+    ) {
+      throw new InvalidRequestError(
+        "Checkpoint runtime version tuple does not match the Environment",
+      );
     }
     const previousId = input.snapshot.generation?.id;
     if (previousId !== undefined) {
