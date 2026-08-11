@@ -13,7 +13,13 @@ import {
   type PlatformCapabilities,
   type Sha256Digest,
 } from "./contract.ts";
-import { InvalidRequestError, SessionConflictError } from "./errors.ts";
+import {
+  InvalidRequestError,
+  ProfileContentDigestMismatchError,
+  ProfileDigestMismatchError,
+  ProfileRevisionNotFoundError,
+  SessionConflictError,
+} from "./errors.ts";
 import { SessionState, type SessionSnapshot } from "./session.ts";
 
 export type ProfileClassName =
@@ -37,9 +43,7 @@ const verifyProfileDigest = async (
   const canonicalContent = { ...content } satisfies CanonicalJsonValue;
   const computedDigest = await digestCanonical(canonicalContent, capabilities.sha256);
   if (declaredDigest !== computedDigest) {
-    throw new InvalidRequestError(
-      "Profile digest does not match the canonical registered Profile content",
-    );
+    throw new ProfileContentDigestMismatchError(declaredDigest, computedDigest);
   }
   return profile;
 };
@@ -52,15 +56,14 @@ export const resolveCatalogProfile = async (
   if (catalog === undefined) throw new InvalidRequestError("Profile catalog binding is required");
   const stored = await catalog.get(profileCatalogKey(task.profileId, task.profileRevision), "json");
   if (stored === null) {
-    throw new InvalidRequestError("Requested Profile revision is not registered");
+    throw new ProfileRevisionNotFoundError(task.profileId, task.profileRevision);
   }
   const profile = await verifyProfileDigest(decode(ProfileSchema, stored), capabilities);
-  if (
-    profile.profileId !== task.profileId ||
-    profile.profileRevision !== task.profileRevision ||
-    profile.profileDigest !== task.profileDigest
-  ) {
+  if (profile.profileId !== task.profileId || profile.profileRevision !== task.profileRevision) {
     throw new InvalidRequestError("Task Profile identity does not match the catalog revision");
+  }
+  if (profile.profileDigest !== task.profileDigest) {
+    throw new ProfileDigestMismatchError(task.profileDigest, profile.profileDigest);
   }
   return profile;
 };
@@ -96,12 +99,10 @@ export class ProfileRegistry {
   resolve(profileId: ProfileId, revision: ProfileRevision, digest: Sha256Digest): Profile {
     const profile = this.#profiles.get(profileKey(profileId, revision));
     if (profile === undefined) {
-      throw new InvalidRequestError("Requested Profile revision is not registered");
+      throw new ProfileRevisionNotFoundError(profileId, revision);
     }
     if (profile.profileDigest !== digest) {
-      throw new InvalidRequestError(
-        "Requested Profile digest does not match the registered revision",
-      );
+      throw new ProfileDigestMismatchError(digest, profile.profileDigest);
     }
     return profile;
   }

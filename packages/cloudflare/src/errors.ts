@@ -1,4 +1,9 @@
-import type { TerminalSessionState } from "@work-engine/protocol";
+import type {
+  ProfileId,
+  ProfileRevision,
+  Sha256Digest,
+  TerminalSessionState,
+} from "@work-engine/protocol";
 import type { Json } from "effect/Schema";
 
 export type CloudErrorTag =
@@ -18,6 +23,9 @@ export type CloudErrorTag =
   | "RepositoryAncestryViolation"
   | "CacheMiss"
   | "CacheDigestMismatch"
+  | "ProfileRevisionNotFound"
+  | "ProfileDigestMismatch"
+  | "ProfileContentDigestMismatch"
   | "ProviderUnavailable";
 
 export class CloudRuntimeError extends Error {
@@ -147,6 +155,41 @@ export class CacheDigestMismatchError extends CloudRuntimeError {
     super(
       "CacheDigestMismatch",
       `Dependency cache digest mismatch: expected ${expected}, observed ${observed}`,
+      {
+        expected,
+        observed,
+      },
+    );
+  }
+}
+
+export class ProfileRevisionNotFoundError extends CloudRuntimeError {
+  constructor(profileId: ProfileId, profileRevision: ProfileRevision) {
+    super("ProfileRevisionNotFound", "Requested Profile revision is not registered", {
+      profileId,
+      profileRevision,
+    });
+  }
+}
+
+export class ProfileDigestMismatchError extends CloudRuntimeError {
+  constructor(expected: Sha256Digest, observed: Sha256Digest) {
+    super(
+      "ProfileDigestMismatch",
+      "Requested Profile digest does not match the registered revision",
+      {
+        expected,
+        observed,
+      },
+    );
+  }
+}
+
+export class ProfileContentDigestMismatchError extends CloudRuntimeError {
+  constructor(expected: Sha256Digest, observed: Sha256Digest) {
+    super(
+      "ProfileContentDigestMismatch",
+      "Profile digest does not match the canonical registered Profile content",
       {
         expected,
         observed,

@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Layer } from "effect";
+import { ProfileRegistry as ProfileRegistryService } from "@work-engine/runtime";
 import { MemoryRevisionSchema, Sha256DigestSchema, TimestampSchema } from "@work-engine/protocol";
 import {
   CacheDigestMismatchError,
+  CloudRuntimeError,
   CloudflareProjectMemory,
   CloudflareCloudTaskClient,
   CloudTaskSchema,
   decode,
   InMemoryCloudTaskDirectory,
+  ProfileContentDigestMismatchError,
+  ProfileDigestMismatchError,
+  ProfileRegistry as LocalProfileRegistry,
+  ProfileRegistryLive,
+  ProfileSchema,
+  ProfileRevisionNotFoundError,
   ProjectMemoryDurableObject,
   ProjectMemoryState,
   ProjectMemoryProvenanceSchema,
@@ -53,6 +61,22 @@ const task = (): CloudTask =>
     deadline: "2026-08-10T00:00:00.000Z",
     outputLimitBytes: 100_000,
   });
+const registryThatFails = (cause: unknown): LocalProfileRegistry =>
+  ({
+    resolve: () => {
+      throw cause;
+    },
+  }) as unknown as LocalProfileRegistry;
+
+const resolveProfile = (cause: unknown) =>
+  Effect.runPromise(
+    ProfileRegistryService.pipe(
+      Effect.flatMap((registry) =>
+        registry.resolve(task().profileId, task().profileRevision, task().profileDigest),
+      ),
+      Effect.provide(ProfileRegistryLive(registryThatFails(cause))),
+    ),
+  );
 
 const request = (payload: Record<string, unknown>, token = "test-token"): Request =>
   new Request("https://cloud-task/v1/cloud-tasks", {
@@ -466,6 +490,92 @@ describe("Dependency cache", () => {
     });
     await expect(publisher.checkout(grant, task().sessionId)).rejects.toMatchObject({
       _tag: "ProviderUnavailable",
+    });
+  });
+});
+describe("Profile registry failure mapping", () => {
+  it("maps missing revisions from structured details, not error prose", async () => {
+    const cause = new ProfileRevisionNotFoundError(task().profileId, task().profileRevision);
+    cause.message = "profile wording changed";
+    await expect(resolveProfile(cause)).rejects.toMatchObject({
+      _tag: "ProfileNotFound",
+      profileId: task().profileId,
+      profileRevision: task().profileRevision,
+    });
+  });
+
+  it("maps requested digest mismatches with validated details", async () => {
+    const expected = digest("2");
+    const observed = digest("3");
+    const cause = new ProfileDigestMismatchError(expected, observed);
+    cause.message = "requested digest wording changed";
+    await expect(resolveProfile(cause)).rejects.toMatchObject({
+      _tag: "ProfileDigestMismatch",
+      expected,
+      observed,
+    });
+  });
+
+  it("reports requested and registered digests in semantic order", async () => {
+    const registeredDigest = digest("f");
+    const requestedDigest = digest("6");
+    const profile = decode(ProfileSchema, {
+      _tag: "Profile",
+      profileId: task().profileId,
+      profileRevision: task().profileRevision,
+      profileDigest: registeredDigest,
+      role: "worker",
+      roleInstructions: "Perform bounded work",
+      modelPolicy: {},
+      capabilities: [],
+      skillRefs: [],
+      hookRefs: [],
+      sandboxPolicy: {},
+      memoryCapabilities: [],
+      repositoryCapabilities: [],
+      executionBudget: {},
+      evidenceBudget: {},
+    });
+    const registry = new LocalProfileRegistry(capabilities);
+    await registry.register(profile);
+
+    let failure: unknown;
+    try {
+      registry.resolve(profile.profileId, profile.profileRevision, requestedDigest);
+    } catch (cause) {
+      failure = cause;
+    }
+    expect(failure).toMatchObject({
+      _tag: "ProfileDigestMismatch",
+      details: { expected: requestedDigest, observed: registeredDigest },
+    });
+  });
+
+  it("maps canonical-content digest mismatches to the same public failure", async () => {
+    const expected = digest("4");
+    const observed = digest("5");
+    const cause = new ProfileContentDigestMismatchError(expected, observed);
+    await expect(resolveProfile(cause)).rejects.toMatchObject({
+      _tag: "ProfileDigestMismatch",
+      expected,
+      observed,
+    });
+  });
+
+  it("maps malformed digest details to a retryable registry failure", async () => {
+    const cause = new CloudRuntimeError("ProfileContentDigestMismatch", "changed wording", {
+      expected: "not-a-sha256-digest",
+      observed: digest("5"),
+    });
+    await expect(resolveProfile(cause)).rejects.toMatchObject({
+      _tag: "ProfileRegistryUnavailable",
+    });
+  });
+
+  it("keeps provider faults retryable", async () => {
+    const cause = new ProviderUnavailableError("Profile catalog", "provider wording changed");
+    await expect(resolveProfile(cause)).rejects.toMatchObject({
+      _tag: "ProfileRegistryUnavailable",
     });
   });
 });

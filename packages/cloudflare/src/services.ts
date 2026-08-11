@@ -38,8 +38,6 @@ import {
   type MemoryProposalId,
   type MemoryRevision,
   type MessageId,
-  type ProfileId,
-  type ProfileRevision,
   type ProjectMemoryProvenance,
   type RepositoryGrant,
   type SessionId,
@@ -61,6 +59,7 @@ import {
   DependencyCachePayloadMismatch,
   DependencyCacheUnavailable,
   ProfileNotFound,
+  ProfileDigestMismatch,
   ProfileRegistryUnavailable,
   MemoryProposalNotFound,
   MemoryRevisionStale,
@@ -117,6 +116,15 @@ const MemoryRevisionMismatchDetailsSchema = Schema.Struct({
   observed: MemoryRevisionSchema,
 });
 
+const ProfileRevisionNotFoundDetailsSchema = Schema.Struct({
+  profileId: ProfileIdSchema,
+  profileRevision: ProfileRevisionSchema,
+});
+
+const ProfileDigestMismatchDetailsSchema = Schema.Struct({
+  expected: Sha256DigestSchema,
+  observed: Sha256DigestSchema,
+});
 const MemoryProposalNotFoundDetailsSchema = Schema.Struct({
   proposalId: MemoryProposalIdSchema,
 });
@@ -606,22 +614,39 @@ export const DependencyCacheLive = (
   return Layer.succeed(DependencyCacheService, service);
 };
 
-const profileFailure = (
-  profileId: ProfileId | undefined,
-  profileRevision: ProfileRevision | undefined,
-  cause: unknown,
-): ProfileRegistryError => {
-  if (
-    profileId !== undefined &&
-    profileRevision !== undefined &&
-    cause instanceof InvalidRequestError &&
-    cause.message === "Requested Profile revision is not registered"
-  ) {
-    return new ProfileNotFound({ profileId, profileRevision });
+const profileFailure = (cause: unknown): ProfileRegistryError => {
+  if (!(cause instanceof CloudRuntimeError)) {
+    return new ProfileRegistryUnavailable({
+      reason: reasonOf(cause, "Profile registry unavailable"),
+    });
   }
-  return new ProfileRegistryUnavailable({
-    reason: reasonOf(cause, "Profile registry unavailable"),
-  });
+  switch (cause._tag) {
+    case "ProfileRevisionNotFound": {
+      const details = decodeOrUndefined(ProfileRevisionNotFoundDetailsSchema, cause.details);
+      return details === undefined
+        ? new ProfileRegistryUnavailable({
+            reason: "Profile registry returned malformed revision details",
+          })
+        : new ProfileNotFound(details);
+    }
+    case "ProfileDigestMismatch":
+    case "ProfileContentDigestMismatch": {
+      const details = decodeOrUndefined(ProfileDigestMismatchDetailsSchema, cause.details);
+      return details === undefined
+        ? new ProfileRegistryUnavailable({
+            reason: "Profile registry returned malformed digest details",
+          })
+        : new ProfileDigestMismatch(details);
+    }
+    case "ProviderUnavailable":
+      return new ProfileRegistryUnavailable({
+        reason: reasonOf(cause, "Profile registry unavailable"),
+      });
+    default:
+      return new ProfileRegistryUnavailable({
+        reason: "Profile registry unavailable",
+      });
+  }
 };
 
 export const ProfileRegistryLive = (
@@ -639,12 +664,7 @@ export const ProfileRegistryLive = (
               decode(Sha256DigestSchema, profileDigest),
             ),
           ),
-        catch: (cause) =>
-          profileFailure(
-            decodeOrUndefined(ProfileIdSchema, profileId),
-            decodeOrUndefined(ProfileRevisionSchema, profileRevision),
-            cause,
-          ),
+        catch: (cause) => profileFailure(cause),
       }),
   };
   return Layer.succeed(ProfileRegistryService, service);
