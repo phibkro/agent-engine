@@ -1,24 +1,49 @@
-import { EnvironmentCredentialLeaseSchema, decodeUnknownStrict } from "@work-engine/protocol";
+import * as Schema from "effect/Schema";
+import {
+  AgentProviderSchema,
+  EnvironmentCredentialLeaseSchema,
+  EnvironmentIdSchema,
+  GitRepositorySchema,
+  NonEmptyStringSchema,
+  decodeUnknownStrict,
+} from "@work-engine/protocol";
 import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
 
+const EnvironmentCredentialSubjectSchema = Schema.Struct({
+  environmentId: EnvironmentIdSchema,
+  generationId: NonEmptyStringSchema,
+});
+const EnvironmentCredentialLeaseRequestSchema = Schema.Struct({
+  ...EnvironmentCredentialSubjectSchema.fields,
+  repository: GitRepositorySchema,
+  provider: AgentProviderSchema,
+});
+const EnvironmentCredentialFailureSchema = Schema.TaggedStruct("EnvironmentCredentialFailure", {
+  reason: NonEmptyStringSchema,
+});
+const EnvironmentCredentialLeaseFromJsonSchema = Schema.fromJsonString(
+  EnvironmentCredentialLeaseSchema,
+);
+const EnvironmentCredentialFailureFromJsonSchema = Schema.fromJsonString(
+  EnvironmentCredentialFailureSchema,
+);
+
 type ProtocolEnvironmentCredentialLease = typeof EnvironmentCredentialLeaseSchema.Type;
+export interface EnvironmentCredentialSubject {
+  readonly environmentId: string;
+  readonly generationId: string;
+}
+export interface EnvironmentCredentialLeaseInput extends EnvironmentCredentialSubject {
+  readonly repository: { readonly owner: string; readonly name: string };
+  readonly provider: "claude" | "codex";
+}
 
 export type EnvironmentCredentialLease = ProtocolEnvironmentCredentialLease & {
   readonly brokerOrigin: string;
 };
 
-export interface EnvironmentCredentialSubject {
-  readonly environmentId: string;
-  readonly generationId: string;
-}
-
 export interface EnvironmentCredentialBroker {
-  lease(
-    input: EnvironmentCredentialSubject & {
-      readonly repository: { readonly owner: string; readonly name: string };
-      readonly provider: "claude" | "codex";
-    },
-  ): Promise<EnvironmentCredentialLease>;
+  lease(input: EnvironmentCredentialLeaseInput): Promise<EnvironmentCredentialLease>;
   revoke(input: EnvironmentCredentialSubject): Promise<void>;
 }
 
@@ -48,16 +73,14 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
     this.#brokerOrigin = endpointUrl.origin;
   }
 
-  async lease(
-    input: EnvironmentCredentialSubject & {
-      readonly repository: { readonly owner: string; readonly name: string };
-      readonly provider: "claude" | "codex";
-    },
-  ): Promise<EnvironmentCredentialLease> {
-    const response = await this.#request("POST", input);
+  async lease(input: EnvironmentCredentialLeaseInput): Promise<EnvironmentCredentialLease> {
+    const response = await this.#request("POST", EnvironmentCredentialLeaseRequestSchema, input);
     let payload: ProtocolEnvironmentCredentialLease;
     try {
-      payload = decodeUnknownStrict(EnvironmentCredentialLeaseSchema, await response.json());
+      payload = decodeUnknownStrict(
+        EnvironmentCredentialLeaseFromJsonSchema,
+        await response.text(),
+      );
     } catch {
       throw new ProviderUnavailableError("Credential broker", "invalid lease response");
     }
@@ -65,19 +88,29 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
   }
 
   async revoke(input: EnvironmentCredentialSubject): Promise<void> {
-    await this.#request("DELETE", input);
+    await this.#request("DELETE", EnvironmentCredentialSubjectSchema, input);
   }
 
-  async #request(method: "POST" | "DELETE", body: object): Promise<Response> {
+  async #request<S extends Schema.ConstraintDecoder<unknown>>(
+    method: "POST" | "DELETE",
+    requestSchema: S,
+    input: unknown,
+  ): Promise<Response> {
+    const body = decodeUnknownStrict(requestSchema, input);
     const response = await this.#fetcher.fetch(this.#endpoint, {
       method,
       headers: {
         Authorization: `Bearer ${this.#authorization}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(body),
+      body: Schema.encodeSync(Schema.UnknownFromJsonString)(body),
     });
     if (!response.ok) {
+      try {
+        decodeUnknownStrict(EnvironmentCredentialFailureFromJsonSchema, await response.text());
+      } catch {
+        throw new ProviderUnavailableError("Credential broker", "invalid failure response");
+      }
       throw new ProviderUnavailableError(
         "Credential broker",
         method === "POST" ? "lease request rejected" : "revocation request rejected",

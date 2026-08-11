@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 import { FetcherEnvironmentCredentialBroker } from "../src/index.ts";
 
@@ -39,6 +40,9 @@ describe("FetcherEnvironmentCredentialBroker", () => {
     expect(requests[0]?.init?.headers).toMatchObject({
       Authorization: "Bearer broker-secret",
     });
+    expect(
+      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(String(requests[0]?.init?.body)),
+    ).toEqual(leaseInput);
   });
 
   it("rejects malformed leases", async () => {
@@ -48,5 +52,18 @@ describe("FetcherEnvironmentCredentialBroker", () => {
       "broker-secret",
     );
     await expect(broker.lease(leaseInput)).rejects.toThrow("invalid");
+  });
+
+  it("rejects malformed broker failure envelopes", async () => {
+    const broker = new FetcherEnvironmentCredentialBroker(
+      {
+        fetch: async () =>
+          Response.json({ reason: "unavailable", unexpected: true }, { status: 503 }),
+      },
+      "https://vault.example/v1/environment-lease",
+      "broker-secret",
+    );
+
+    await expect(broker.lease(leaseInput)).rejects.toThrow("invalid failure response");
   });
 });
