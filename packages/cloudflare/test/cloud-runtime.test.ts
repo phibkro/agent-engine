@@ -1,17 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { MemoryRevisionSchema, Sha256DigestSchema, TimestampSchema } from "@work-engine/protocol";
 import {
   CacheDigestMismatchError,
   CloudflareProjectMemory,
   CloudTaskSchema,
   decode,
   InMemoryCloudTaskDirectory,
-  MemoryRevisionSchema,
   ProjectMemoryDurableObject,
   ProjectMemoryState,
   ProjectMemoryProvenanceSchema,
   SessionState,
-  Sha256DigestSchema,
-  TimestampSchema,
   TrustedRepositoryPublisher,
   makeRepositoryGrant,
   refsAreDistinct,
@@ -28,6 +26,7 @@ import type {
 const uuid = "00000000-0000-4000-8000-000000000001";
 const digest = (hex: string) => Sha256DigestSchema.make(`sha256:${hex.repeat(64 / hex.length)}`);
 const now = TimestampSchema.make("2026-08-10T00:00:00.000Z");
+const initialMemoryRevision = MemoryRevisionSchema.make(0);
 const capabilities: PlatformCapabilities = {
   now: () => now,
   uuid: () => uuid,
@@ -355,7 +354,7 @@ describe("Dependency cache", () => {
   });
 
   it("does not claim provider success when GitHub transport is absent", async () => {
-    const publisher = new TrustedRepositoryPublisher(undefined);
+    const publisher = new TrustedRepositoryPublisher(undefined, { now: () => now });
     const grant = makeRepositoryGrant({
       grantId: `grt_${uuid}`,
       sessionId: task().sessionId,
@@ -364,6 +363,7 @@ describe("Dependency cache", () => {
       baseCommit: task().baseCommit,
       writablePaths: ["packages/**"],
       expiresAt: "2099-08-11T00:00:00.000Z",
+      issuedAt: now,
     });
     await expect(publisher.checkout(grant, task().sessionId)).rejects.toMatchObject({
       _tag: "ProviderUnavailable",

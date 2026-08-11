@@ -47,8 +47,7 @@ export const Sha256DigestSchema = Schema.String.pipe(
 );
 export type Sha256Digest = typeof Sha256DigestSchema.Type;
 
-const CANONICAL_TIMESTAMP =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
+const CANONICAL_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
 
 const isLeapYear = (year: number): boolean =>
   year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
@@ -95,4 +94,3 @@ export type Timestamp = typeof TimestampSchema.Type;
 export const NonEmptyStringSchema = Schema.NonEmptyString;
 export const SchemaVersionSchema = Schema.Literal("work-engine/v2");
 export type SchemaVersion = typeof SchemaVersionSchema.Type;
-

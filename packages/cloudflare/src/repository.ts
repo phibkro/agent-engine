@@ -6,7 +6,6 @@ import {
   RepositoryGrantSchema,
   VerifiedWorkspaceSchema,
   decode,
-  encode,
   type CandidateReceipt,
   type CheckpointReceipt,
   type CommitSha,
@@ -456,8 +455,7 @@ class FetcherRepositoryTransport implements RepositoryTransport {
 
   async readRef(ref: string): Promise<GitRefState> {
     const request = decode(ReadRefRequestSchema, { ref });
-    const payload = JSON.stringify(encode(ReadRefRequestSchema, request));
-    if (payload === undefined) throw providerResponseFailure("read-ref request");
+    const payload = Schema.encodeSync(Schema.fromJsonString(ReadRefRequestSchema))(request);
     const response = this.#decode(
       ReadRefResponseSchema,
       await this.#call("/read-ref", payload),
@@ -472,8 +470,7 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly repository: RepositoryIdentity;
   }): Promise<GitCandidateVerification> {
     const request = decode(VerifyCandidateRequestSchema, input);
-    const payload = JSON.stringify(encode(VerifyCandidateRequestSchema, request));
-    if (payload === undefined) throw providerResponseFailure("verify request");
+    const payload = Schema.encodeSync(Schema.fromJsonString(VerifyCandidateRequestSchema))(request);
     const response = this.#decode(
       VerifyCandidateSucceededSchema,
       await this.#call("/verify", payload),
@@ -492,9 +489,13 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly nextSha: string;
     readonly force: false;
   }): Promise<GitRefState> {
-    const request = decode(UpdateRefRequestSchema, input);
-    const payload = JSON.stringify(encode(UpdateRefRequestSchema, request));
-    if (payload === undefined) throw providerResponseFailure("update-ref request");
+    const request = decode(UpdateRefRequestSchema, {
+      ref: input.ref,
+      ...(input.expectedSha === undefined ? {} : { expectedSha: input.expectedSha }),
+      nextSha: input.nextSha,
+      force: input.force,
+    });
+    const payload = Schema.encodeSync(Schema.fromJsonString(UpdateRefRequestSchema))(request);
     const response = this.#decode(
       UpdateRefSucceededSchema,
       await this.#call("/update-ref", payload),

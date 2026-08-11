@@ -20,9 +20,10 @@ import {
 } from "../src/index.ts";
 
 const now = TimestampSchema.make("2026-08-10T00:00:00.000Z");
+let uuidSequence = 1;
 const capabilities: PlatformCapabilities = {
   now: () => now,
-  uuid: () => "00000000-0000-4000-8000-000000000001",
+  uuid: () => `00000000-0000-4000-8000-${(uuidSequence++).toString(16).padStart(12, "0")}`,
   sha256: async () => Sha256DigestSchema.make(`sha256:${"a".repeat(64)}`),
 };
 const versions = decodeUnknownStrict(RuntimeVersionTupleSchema, {

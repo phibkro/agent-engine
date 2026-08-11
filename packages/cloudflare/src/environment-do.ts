@@ -8,10 +8,12 @@ import {
 } from "@work-engine/protocol";
 import type { EnvironmentStore } from "./environment.ts";
 import { EnvironmentCoordinator } from "./environment.ts";
+import type { PlatformCapabilities } from "./contract.ts";
 import { CloudflareSandboxEnvironmentRuntime } from "./environment-runtime.ts";
 import { FetcherEnvironmentCredentialBroker } from "./environment-credentials.ts";
 import type { CloudflareRuntimeEnv } from "./env.ts";
 import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
+import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
 
 const SNAPSHOT_KEY = "environment";
 const MAX_CONNECTIONS = 10;
@@ -92,11 +94,17 @@ const jsonError = (cause: unknown): Response => {
 export class EnvironmentDurableObject implements DurableObject {
   readonly #state: DurableObjectState;
   readonly #env: CloudflareRuntimeEnv;
+  readonly #capabilities: PlatformCapabilities;
   #activeConnections = 0;
 
-  constructor(state: DurableObjectState, env: CloudflareRuntimeEnv) {
+  constructor(
+    state: DurableObjectState,
+    env: CloudflareRuntimeEnv,
+    capabilities: PlatformCapabilities = cloudflarePlatformCapabilities,
+  ) {
     this.#state = state;
     this.#env = env;
+    this.#capabilities = capabilities;
   }
 
   #coordinator(): {
@@ -130,7 +138,7 @@ export class EnvironmentDurableObject implements DurableObject {
       backupBucket,
       credentials,
       publicOrigin: publicOrigin.replace(/\/$/u, ""),
-      now: () => new Date().toISOString(),
+      now: this.#capabilities.now,
     });
     const versions = decodeUnknownStrict(RuntimeVersionTupleSchema, {
       imageDigest: this.#env.ENVIRONMENT_IMAGE_DIGEST,
@@ -143,7 +151,7 @@ export class EnvironmentDurableObject implements DurableObject {
         store: new DurableEnvironmentStore(this.#state.storage),
         runtime,
         versions,
-        now: () => new Date().toISOString(),
+        capabilities: this.#capabilities,
       }),
     };
   }
@@ -162,7 +170,7 @@ export class EnvironmentDurableObject implements DurableObject {
       return;
     }
     if (snapshot.lifecycle === "Failed") {
-      await this.#state.storage.setAlarm(Date.now() + 60_000);
+      await this.#state.storage.setAlarm(Date.parse(this.#capabilities.now()) + 60_000);
       return;
     }
     await this.#state.storage.setAlarm(
@@ -248,7 +256,7 @@ export class EnvironmentDurableObject implements DurableObject {
         if (!(await runtime.isReady(current.generation.id))) {
           current = await coordinator.recover({
             _tag: "RecoverEnvironment",
-            commandId: `recover-${crypto.randomUUID()}`,
+            commandId: `recover-${this.#capabilities.uuid()}`,
             environmentId: current.environmentId,
           });
           await this.#schedule(current);
@@ -332,12 +340,21 @@ export class EnvironmentDurableObject implements DurableObject {
     }
   }
 
+  async #rescheduleAfterFailure(
+    coordinator: EnvironmentCoordinator,
+    cause: unknown,
+  ): Promise<never> {
+    const latest = await coordinator.inspect();
+    if (latest !== undefined) await this.#schedule(latest);
+    throw cause;
+  }
+
   async alarm(): Promise<void> {
     const { coordinator, runtime } = this.#coordinator();
     const current = await coordinator.inspect();
     if (current === undefined || current.lifecycle === "Destroyed") return;
-    const now = Date.now();
-    await runtime.cleanupBackups(current).catch(() => undefined);
+    const now = Date.parse(this.#capabilities.now());
+    await runtime.cleanupBackups(current);
     if (current.lifecycle === "Failed") {
       const destroyed = await coordinator
         .destroy({
@@ -345,7 +362,7 @@ export class EnvironmentDurableObject implements DurableObject {
           commandId: "destroy-00000000-0000-4000-8000-000000000000",
           environmentId: current.environmentId,
         })
-        .catch(async () => (await coordinator.inspect()) ?? current);
+        .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
       await this.#schedule(destroyed);
       return;
     }
@@ -357,7 +374,7 @@ export class EnvironmentDurableObject implements DurableObject {
     ) {
       const recovered = await coordinator
         .recover(current.recoveryRequest)
-        .catch(async () => (await coordinator.inspect()) ?? current);
+        .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
       await this.#schedule(recovered);
       return;
     }
@@ -368,7 +385,7 @@ export class EnvironmentDurableObject implements DurableObject {
     ) {
       const checkpointed = await coordinator
         .checkpoint()
-        .catch(async () => (await coordinator.inspect()) ?? current);
+        .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
       await this.#schedule(checkpointed);
       return;
     }

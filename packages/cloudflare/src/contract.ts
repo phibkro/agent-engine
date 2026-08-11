@@ -168,4 +168,3 @@ export const tagOf = (value: unknown): string | undefined => {
   const tag = (value as Record<string, unknown>)["_tag"];
   return typeof tag === "string" ? tag : undefined;
 };
-

@@ -5,6 +5,7 @@ import {
   EnvironmentPairingSchema,
   EnvironmentRecoverRequestSchema,
   RuntimeVersionTupleSchema,
+  TimestampSchema,
   decodeUnknownStrict,
   type EnvironmentCheckpoint,
   type EnvironmentPairing,
@@ -15,8 +16,9 @@ import {
   InMemoryEnvironmentStore,
   type EnvironmentRuntime,
 } from "../../packages/cloudflare/src/environment.ts";
+import { cloudflarePlatformCapabilities } from "../../packages/cloudflare/src/platform-capabilities.ts";
 
-const timestamp = "2026-08-10T00:00:00.000Z";
+const timestamp = decodeUnknownStrict(TimestampSchema, "2026-08-10T00:00:00.000Z");
 const versions = decodeUnknownStrict(RuntimeVersionTupleSchema, {
   imageDigest: `sha256:${"a".repeat(64)}`,
   t3codeVersion: "0.0.33",
@@ -93,7 +95,7 @@ export const runLocalEnvironmentTracer = async (): Promise<LocalEnvironmentTrace
     store: new InMemoryEnvironmentStore(),
     runtime,
     versions,
-    now: () => timestamp,
+    capabilities: { ...cloudflarePlatformCapabilities, now: () => timestamp },
   });
   const lifecycle: string[] = [];
   const created = await coordinator.create(

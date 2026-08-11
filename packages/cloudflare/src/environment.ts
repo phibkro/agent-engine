@@ -77,8 +77,7 @@ const digestText = async (
   );
 
 const MILLIS_PER_DAY = 86_400_000;
-const TIMESTAMP_PARTS =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
+const TIMESTAMP_PARTS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
 
 const daysFromCivil = (year: number, month: number, day: number): number => {
   const adjustedYear = year - (month <= 2 ? 1 : 0);
@@ -87,14 +86,13 @@ const daysFromCivil = (year: number, month: number, day: number): number => {
   const monthOfYear = month + (month > 2 ? -3 : 9);
   const dayOfYear = Math.floor((153 * monthOfYear + 2) / 5) + day - 1;
   const dayOfEra =
-    yearOfEra * 365 +
-    Math.floor(yearOfEra / 4) -
-    Math.floor(yearOfEra / 100) +
-    dayOfYear;
+    yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
   return era * 146097 + dayOfEra - 719468;
 };
 
-const civilFromDays = (days: number): {
+const civilFromDays = (
+  days: number,
+): {
   readonly year: number;
   readonly month: number;
   readonly day: number;
@@ -181,10 +179,7 @@ export class EnvironmentCoordinator {
 
   async create(input: unknown): Promise<EnvironmentCreated> {
     const request = decodeUnknownStrict(EnvironmentCreateRequestSchema, input);
-    const requestDigest = await digestText(
-      JSON.stringify(request),
-      this.#options.capabilities,
-    );
+    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
     const existing = await this.#options.store.load();
     if (existing !== undefined) {
       const receipt = existing.commandReceipts.find(
@@ -308,12 +303,14 @@ export class EnvironmentCoordinator {
           }),
         );
       } catch (saveFailure) {
+        // eslint-disable-next-line preserve-caught-error -- AggregateError retains every failure.
         throw new AggregateError(
           [cause, ...(cleanupFailure === undefined ? [] : [cleanupFailure]), saveFailure],
           "Environment creation failure could not be fully persisted",
         );
       }
       if (cleanupFailure !== undefined) {
+        // eslint-disable-next-line preserve-caught-error -- AggregateError retains both failures.
         throw new AggregateError(
           [cause, cleanupFailure],
           "Environment creation and cleanup both failed",
@@ -344,10 +341,7 @@ export class EnvironmentCoordinator {
     if (current.environmentId !== request.environmentId) {
       throw new InvalidRequestError("Environment identifier does not match this coordinator");
     }
-    const requestDigest = await digestText(
-      JSON.stringify(request),
-      this.#options.capabilities,
-    );
+    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
     const existingReceipt = current.commandReceipts.find(
       (receipt) => receipt.commandId === request.commandId,
     );
@@ -454,10 +448,7 @@ export class EnvironmentCoordinator {
       throw new InvalidRequestError("Environment has no generation to replace");
     }
 
-    const requestDigest = await digestText(
-      JSON.stringify(request),
-      this.#options.capabilities,
-    );
+    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
     if (current.lifecycle !== "Ready" && current.lifecycle !== "Failed") {
       throw new InvalidRequestError("Environment recovery is already in progress");
     }
@@ -495,6 +486,7 @@ export class EnvironmentCoordinator {
             }),
           );
         } catch (cleanupFailure) {
+          // eslint-disable-next-line preserve-caught-error -- AggregateError retains both failures.
           throw new AggregateError(
             [superseded, cleanupFailure],
             "Environment recovery superseded and cleanup failed",
@@ -550,10 +542,7 @@ export class EnvironmentCoordinator {
   async destroy(input: unknown): Promise<EnvironmentSnapshot> {
     const request = decodeUnknownStrict(EnvironmentDestroyRequestSchema, input);
     const current = await this.#requireEnvironment(request.environmentId);
-    const requestDigest = await digestText(
-      JSON.stringify(request),
-      this.#options.capabilities,
-    );
+    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
     const existingReceipt = current.commandReceipts.find(
       (receipt) => receipt.commandId === request.commandId,
     );

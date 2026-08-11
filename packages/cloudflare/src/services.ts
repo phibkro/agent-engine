@@ -439,79 +439,84 @@ const repositoryFailure = (
 
 export const RepositoryPublisherLive = (
   binding: Fetcher | undefined,
-): Layer.Layer<RepositoryPublisher> => {
-  const adapter = new CloudflareRepositoryPublisher(binding);
-  const service: RepositoryPublisher = {
-    checkout: (grant: RepositoryGrant, commit: CloudTask["baseCommit"]) =>
-      Effect.clockWith((clock) =>
-        Effect.tryPromise({
-          try: async () => {
-            const decodedGrant = decode(RepositoryGrantSchema, grant);
-            const decodedCommit = decode(CommitShaSchema, commit);
-            return decode(
-              VerifiedWorkspaceSchema,
-              await adapter.checkout(decodedGrant, decodedGrant.sessionId, decodedCommit),
-            );
-          },
-          catch: (cause) =>
-            repositoryFailure(
-              decodeOrUndefined(RepositoryGrantSchema, grant),
-              cause,
-              clock.currentTimeMillisUnsafe(),
-            ),
-        }),
-      ),
-    checkpoint: (
-      grant: RepositoryGrant,
-      commit: CloudTask["baseCommit"],
-      expectedRemoteCommit: CloudTask["baseCommit"],
-    ) =>
-      Effect.clockWith((clock) =>
-        Effect.tryPromise({
-          try: async () => {
-            const decodedGrant = decode(RepositoryGrantSchema, grant);
-            const decodedCommit = decode(CommitShaSchema, commit);
-            const decodedExpectedRemoteCommit = decode(CommitShaSchema, expectedRemoteCommit);
-            return decode(
-              CheckpointReceiptSchema,
-              await adapter.checkpoint(
-                decodedGrant,
-                decodedGrant.sessionId,
-                decodedCommit,
-                decodedExpectedRemoteCommit,
-              ),
-            );
-          },
-          catch: (cause) =>
-            repositoryFailure(
-              decodeOrUndefined(RepositoryGrantSchema, grant),
-              cause,
-              clock.currentTimeMillisUnsafe(),
-            ),
-        }),
-      ),
-    publishCandidate: (grant: RepositoryGrant, commit: CloudTask["baseCommit"]) =>
-      Effect.clockWith((clock) =>
-        Effect.tryPromise({
-          try: async () => {
-            const decodedGrant = decode(RepositoryGrantSchema, grant);
-            const decodedCommit = decode(CommitShaSchema, commit);
-            return decode(
-              CandidateReceiptSchema,
-              await adapter.publishCandidate(decodedGrant, decodedGrant.sessionId, decodedCommit),
-            );
-          },
-          catch: (cause) =>
-            repositoryFailure(
-              decodeOrUndefined(RepositoryGrantSchema, grant),
-              cause,
-              clock.currentTimeMillisUnsafe(),
-            ),
-        }),
-      ),
-  };
-  return Layer.succeed(RepositoryPublisherService, service);
-};
+): Layer.Layer<RepositoryPublisher> =>
+  Layer.effect(
+    RepositoryPublisherService,
+    Effect.clockWith((clock) =>
+      Effect.sync(() => {
+        const now = () => DateTime.formatIso(DateTime.makeUnsafe(clock.currentTimeMillisUnsafe()));
+        const adapter = new CloudflareRepositoryPublisher(binding, { now });
+        const service: RepositoryPublisher = {
+          checkout: (grant: RepositoryGrant, commit: CloudTask["baseCommit"]) =>
+            Effect.tryPromise({
+              try: async () => {
+                const decodedGrant = decode(RepositoryGrantSchema, grant);
+                const decodedCommit = decode(CommitShaSchema, commit);
+                return decode(
+                  VerifiedWorkspaceSchema,
+                  await adapter.checkout(decodedGrant, decodedGrant.sessionId, decodedCommit),
+                );
+              },
+              catch: (cause) =>
+                repositoryFailure(
+                  decodeOrUndefined(RepositoryGrantSchema, grant),
+                  cause,
+                  clock.currentTimeMillisUnsafe(),
+                ),
+            }),
+          checkpoint: (
+            grant: RepositoryGrant,
+            commit: CloudTask["baseCommit"],
+            expectedRemoteCommit: CloudTask["baseCommit"],
+          ) =>
+            Effect.tryPromise({
+              try: async () => {
+                const decodedGrant = decode(RepositoryGrantSchema, grant);
+                const decodedCommit = decode(CommitShaSchema, commit);
+                const decodedExpectedRemoteCommit = decode(CommitShaSchema, expectedRemoteCommit);
+                return decode(
+                  CheckpointReceiptSchema,
+                  await adapter.checkpoint(
+                    decodedGrant,
+                    decodedGrant.sessionId,
+                    decodedCommit,
+                    decodedExpectedRemoteCommit,
+                  ),
+                );
+              },
+              catch: (cause) =>
+                repositoryFailure(
+                  decodeOrUndefined(RepositoryGrantSchema, grant),
+                  cause,
+                  clock.currentTimeMillisUnsafe(),
+                ),
+            }),
+          publishCandidate: (grant: RepositoryGrant, commit: CloudTask["baseCommit"]) =>
+            Effect.tryPromise({
+              try: async () => {
+                const decodedGrant = decode(RepositoryGrantSchema, grant);
+                const decodedCommit = decode(CommitShaSchema, commit);
+                return decode(
+                  CandidateReceiptSchema,
+                  await adapter.publishCandidate(
+                    decodedGrant,
+                    decodedGrant.sessionId,
+                    decodedCommit,
+                  ),
+                );
+              },
+              catch: (cause) =>
+                repositoryFailure(
+                  decodeOrUndefined(RepositoryGrantSchema, grant),
+                  cause,
+                  clock.currentTimeMillisUnsafe(),
+                ),
+            }),
+        };
+        return service;
+      }),
+    ),
+  );
 
 const cacheDigestValue = (
   value: string,

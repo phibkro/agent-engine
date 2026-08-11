@@ -1,6 +1,7 @@
 export * from "./contract.ts";
 export * from "./errors.ts";
 export * from "./env.ts";
+export * from "./platform-capabilities.ts";
 export * from "./session.ts";
 export * from "./cloud-task.ts";
 export * from "./project-memory.ts";

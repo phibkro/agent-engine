@@ -37,6 +37,7 @@ import {
   MemoryUnauthorizedError,
   ProviderUnavailableError,
 } from "./errors.ts";
+import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
 const ProjectMemoryFailureSchema = Schema.Union([
   Schema.TaggedStruct("InvalidRequest", { reason: NonEmptyStringSchema }),
   Schema.TaggedStruct("MemoryRevisionUnavailable", { reason: NonEmptyStringSchema }),
@@ -325,7 +326,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
   constructor(
     state: DurableObjectState,
     env: { readonly PROJECT_MEMORY_COORDINATOR_SECRET?: string },
-    capabilities: MemoryCapabilities,
+    capabilities: MemoryCapabilities = cloudflarePlatformCapabilities,
   ) {
     this.#state = state;
     this.#capabilities = capabilities;
@@ -372,11 +373,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
         const sessionHeader = request.headers.get("X-Cloud-Task-Session");
         if (sessionHeader === null) throw new MemoryUnauthorizedError();
         const sessionId = decode(SessionIdSchema, sessionHeader);
-        const nextMemory = new ProjectMemoryState(
-          projectId,
-          this.#capabilities,
-          memory.snapshot,
-        );
+        const nextMemory = new ProjectMemoryState(projectId, this.#capabilities, memory.snapshot);
         const proposal = nextMemory.proposeMemory(
           sessionId,
           input.expectedRevision,
@@ -396,11 +393,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
         ) {
           throw new MemoryUnauthorizedError();
         }
-        const nextMemory = new ProjectMemoryState(
-          projectId,
-          this.#capabilities,
-          memory.snapshot,
-        );
+        const nextMemory = new ProjectMemoryState(projectId, this.#capabilities, memory.snapshot);
         const revision = nextMemory.acceptMemory(input.proposalId, input.expectedRevision);
         await this.#save(nextMemory);
         return Response.json(revision);

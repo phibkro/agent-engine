@@ -27,6 +27,7 @@ import {
   UnauthorizedError,
 } from "./errors.ts";
 import { resolveCatalogProfile } from "./profiles.ts";
+import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
 import { SessionSnapshotSchema, SessionState, decodeSessionSnapshot } from "./session.ts";
 
 export interface CloudTaskCaller {
@@ -119,7 +120,7 @@ export class SessionDurableObject implements DurableObject {
   constructor(
     state: DurableObjectState,
     env: CloudflareRuntimeEnv,
-    capabilities: PlatformCapabilities,
+    capabilities: PlatformCapabilities = cloudflarePlatformCapabilities,
   ) {
     this.#state = state;
     this.#env = env;

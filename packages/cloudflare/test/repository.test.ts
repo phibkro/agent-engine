@@ -68,9 +68,9 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
       "/update-ref": validUpdateRef,
     });
 
-    await expect(publisher.publishCandidate(grant, sessionId, candidateCommit)).rejects.toBeInstanceOf(
-      ProviderUnavailableError,
-    );
+    await expect(
+      publisher.publishCandidate(grant, sessionId, candidateCommit),
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
     expect(paths).toEqual(["/verify"]);
   });
 
@@ -82,9 +82,9 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
       ),
     });
 
-    await expect(publisher.publishCandidate(grant, sessionId, candidateCommit)).rejects.toBeInstanceOf(
-      RepositoryConflictError,
-    );
+    await expect(
+      publisher.publishCandidate(grant, sessionId, candidateCommit),
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
     expect(paths).toEqual(["/verify"]);
   });
 
@@ -108,9 +108,9 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
       "/verify": new Response("not-json", { status: 502 }),
     });
 
-    await expect(publisher.publishCandidate(grant, sessionId, candidateCommit)).rejects.toBeInstanceOf(
-      ProviderUnavailableError,
-    );
+    await expect(
+      publisher.publishCandidate(grant, sessionId, candidateCommit),
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
     expect(paths).toEqual(["/verify"]);
   });
 
@@ -121,9 +121,9 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
       "/update-ref": { _tag: "UpdateRefSucceeded" },
     });
 
-    await expect(publisher.publishCandidate(grant, sessionId, candidateCommit)).rejects.toBeInstanceOf(
-      ProviderUnavailableError,
-    );
+    await expect(
+      publisher.publishCandidate(grant, sessionId, candidateCommit),
+    ).rejects.toBeInstanceOf(ProviderUnavailableError);
     expect(paths).toEqual(["/verify", "/read-ref", "/update-ref"]);
   });
 
@@ -139,7 +139,8 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
     expect(receipt).toMatchObject({
       _tag: "CandidateReceipt",
       candidateCommit,
-      candidateRef: "agent/prj_00000000-0000-4000-8000-000000000001/ses_00000000-0000-4000-8000-000000000001/candidate",
+      candidateRef:
+        "agent/prj_00000000-0000-4000-8000-000000000001/ses_00000000-0000-4000-8000-000000000001/candidate",
     });
     expect(paths).toEqual(["/verify", "/read-ref", "/update-ref"]);
   });
