@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@work-engine/cloudflare": "0.0.0",
+    "@work-engine/protocol": "0.0.0",
     "effect": "4.0.0-beta.102"
   },
   "devDependencies": {

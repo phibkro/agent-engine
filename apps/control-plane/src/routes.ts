@@ -5,11 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import {
-  decodeUnknownStrict,
-  Sha256DigestSchema,
-  type Sha256Digest,
-} from "@work-engine/protocol";
+import { decodeUnknownStrict, Sha256DigestSchema, type Sha256Digest } from "@work-engine/protocol";
 import { CloudTaskRouter, EnvironmentRouter } from "@work-engine/cloudflare";
 import type { ExecutionContext } from "@cloudflare/workers-types";
 import type { ControlPlaneEnv } from "./env.ts";
@@ -155,7 +151,7 @@ export const ControlPlaneDependenciesLive = (
         bindings.environmentConnectRate === undefined ||
         bindings.environmentHttpRate === undefined
       ) {
-        return yield* Effect.fail(new ControlPlaneConfigurationError());
+        return yield* new ControlPlaneConfigurationError();
       }
       return {
         configuration,
@@ -182,9 +178,7 @@ export const ControlPlaneRoutersLive = (
             BACKUP_BUCKET: dependencies.backupBucket,
             ENVIRONMENT_CONNECT_RATE: dependencies.environmentConnectRate,
             ENVIRONMENT_HTTP_RATE: dependencies.environmentHttpRate,
-            CLOUD_TASK_AUTH_TOKEN: Redacted.value(
-              dependencies.configuration.cloudTaskAuthToken,
-            ),
+            CLOUD_TASK_AUTH_TOKEN: Redacted.value(dependencies.configuration.cloudTaskAuthToken),
             CLOUD_TASK_ROUTER_SECRET: Redacted.value(
               dependencies.configuration.cloudTaskRouterSecret,
             ),
@@ -195,7 +189,8 @@ export const ControlPlaneRoutersLive = (
             ENVIRONMENT_ROUTER_SECRET: Redacted.value(
               dependencies.configuration.environmentRouterSecret,
             ),
-            ENVIRONMENT_PUBLIC_ORIGIN: dependencies.configuration.environmentPublicOrigin.toString(),
+            ENVIRONMENT_PUBLIC_ORIGIN:
+              dependencies.configuration.environmentPublicOrigin.toString(),
             ENVIRONMENT_IMAGE_DIGEST: dependencies.configuration.environmentImageDigest,
             T3CODE_VERSION: dependencies.configuration.t3codeVersion,
             SANDBOX_SDK_VERSION: dependencies.configuration.sandboxSdkVersion,
@@ -283,7 +278,7 @@ const route = (
       return yield* invokeRouter(routers.environment, request);
     }
     if (!url.pathname.startsWith("/v1/cloud-tasks")) {
-      return yield* Effect.fail(new ControlPlaneNotFoundError());
+      return yield* new ControlPlaneNotFoundError();
     }
     return yield* invokeRouter(routers.cloudTask, request);
   });
@@ -301,11 +296,9 @@ export const handleRequest = (
     Effect.provide(
       ControlPlaneRoutersLive(env).pipe(
         Layer.provide(
-          ControlPlaneDependenciesLive(env).pipe(
-            Layer.provide(ControlPlaneConfigurationLive(env)),
-          ),
+          ControlPlaneDependenciesLive(env).pipe(Layer.provide(ControlPlaneConfigurationLive(env))),
         ),
       ),
     ),
-    Effect.catchAll((failure) => Effect.succeed(failureResponse(failure))),
+    Effect.catch((failure) => Effect.succeed(failureResponse(failure))),
   );

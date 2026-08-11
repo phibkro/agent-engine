@@ -1,4 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("@cloudflare/sandbox", () => {
+  class SandboxTestDouble {
+    identity(): this {
+      return this;
+    }
+  }
+  return {
+    ContainerProxy: SandboxTestDouble,
+    Sandbox: SandboxTestDouble,
+    getSandbox: () => ({}),
+  };
+});
+
 import type { ExecutionContext } from "@cloudflare/workers-types";
 import { fetch as workerFetch } from "../src/index.ts";
 import type { ControlPlaneEnv } from "../src/env.ts";
@@ -8,7 +21,9 @@ const digest = `sha256:${"a".repeat(64)}`;
 
 const makeEnv = (): ControlPlaneEnv => {
   const sessionStub = {
-    fetch: async (request: Request): Promise<Response> => {
+    fetch: async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+      const request =
+        input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
       expect(request.headers.get("X-Cloud-Task-Internal")).toBe("router-secret");
       return Response.json({
         _tag: "Result",
@@ -90,10 +105,12 @@ describe("control-plane composition root", () => {
       context,
     );
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      _tag: "Result",
-      result: { _tag: "Pending", sessionId },
+    expect({ status: response.status, body: await response.json() }).toEqual({
+      status: 200,
+      body: {
+        _tag: "Result",
+        result: { _tag: "Pending", sessionId },
+      },
     });
   });
 });
