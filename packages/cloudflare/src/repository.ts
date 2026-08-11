@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import {
   CandidateReceiptSchema,
   CheckpointReceiptSchema,
@@ -5,16 +6,20 @@ import {
   RepositoryGrantSchema,
   VerifiedWorkspaceSchema,
   decode,
-  nowIso,
+  encode,
   type CandidateReceipt,
   type CheckpointReceipt,
+  type CommitSha,
   type RepositoryGrant,
   type RepositoryIdentity,
   type VerifiedWorkspace,
 } from "./contract.ts";
 import {
-  RepositoryCandidateVerificationSchema,
-  RepositoryRefStateSchema,
+  CommitMetadataSchema,
+  PathPatternSchema,
+  RepositoryIdentitySchema,
+  type CommitMetadata,
+  type PathPattern,
 } from "@work-engine/protocol";
 import {
   ProviderUnavailableError,
@@ -24,14 +29,51 @@ import {
   RepositoryScopeViolationError,
 } from "./errors.ts";
 
+const ProviderFailureCodeSchema = Schema.Literals(["conflict", "unavailable"] as const);
+type ProviderFailureCode = typeof ProviderFailureCodeSchema.Type;
+
+const ProviderFailureSchema = Schema.TaggedStruct("ProviderFailure", {
+  code: ProviderFailureCodeSchema,
+  reason: Schema.NonEmptyString,
+});
+
+const ReadRefRequestSchema = Schema.Struct({
+  ref: Schema.NonEmptyString,
+});
+const ReadRefSucceededSchema = Schema.TaggedStruct("ReadRefSucceeded", {
+  sha: Schema.optionalKey(CommitShaSchema),
+});
+const ReadRefResponseSchema = ReadRefSucceededSchema;
+
+const VerifyCandidateRequestSchema = Schema.Struct({
+  baseCommit: CommitShaSchema,
+  candidateCommit: CommitShaSchema,
+  repository: RepositoryIdentitySchema,
+});
+const VerifyCandidateSucceededSchema = Schema.TaggedStruct("VerifyCandidateSucceeded", {
+  descendedFromBase: Schema.Boolean,
+  changedPaths: Schema.Array(PathPatternSchema),
+  commitMetadata: CommitMetadataSchema,
+});
+
+const UpdateRefRequestSchema = Schema.Struct({
+  ref: Schema.NonEmptyString,
+  expectedSha: Schema.optionalKey(CommitShaSchema),
+  nextSha: CommitShaSchema,
+  force: Schema.Literal(false),
+});
+const UpdateRefSucceededSchema = Schema.TaggedStruct("UpdateRefSucceeded", {
+  sha: CommitShaSchema,
+});
+
 export interface GitRefState {
-  readonly sha: string | undefined;
+  readonly sha: CommitSha | undefined;
 }
 
 export interface GitCandidateVerification {
   readonly descendedFromBase: boolean;
-  readonly changedPaths: readonly string[];
-  readonly commitMetadata: Readonly<Record<string, unknown>>;
+  readonly changedPaths: readonly PathPattern[];
+  readonly commitMetadata: CommitMetadata;
 }
 
 export interface RepositoryTransport {
@@ -50,9 +92,8 @@ export interface RepositoryTransport {
 }
 
 export interface RepositoryPublisherOptions {
-  readonly now?: () => string;
+  readonly now: () => string;
 }
-
 export interface SessionRefs {
   readonly wip: string;
   readonly candidate: string;
@@ -109,7 +150,7 @@ export interface RepositoryGrantInput {
   readonly baseCommit: string;
   readonly writablePaths: readonly string[];
   readonly expiresAt: string;
-  readonly issuedAt?: string;
+  readonly issuedAt: string;
 }
 
 export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGrant => {
@@ -125,7 +166,7 @@ export const makeRepositoryGrant = (input: RepositoryGrantInput): RepositoryGran
     wipRef: refs.wip,
     candidateRef: refs.candidate,
     expiresAt: input.expiresAt,
-    issuedAt: input.issuedAt ?? nowIso(),
+    issuedAt: input.issuedAt,
   });
 };
 
@@ -145,12 +186,9 @@ export class TrustedRepositoryPublisher {
   #published = new Map<string, CandidateReceipt>();
   #checkpoints = new Map<string, CheckpointReceipt>();
 
-  constructor(
-    transport: RepositoryTransport | undefined,
-    options: RepositoryPublisherOptions = {},
-  ) {
+  constructor(transport: RepositoryTransport | undefined, options: RepositoryPublisherOptions) {
     this.#transport = transport;
-    this.#now = options.now ?? nowIso;
+    this.#now = options.now;
   }
 
   #requireTransport(): RepositoryTransport {
@@ -317,7 +355,7 @@ export class CloudflareRepositoryPublisher {
   #binding: Fetcher | undefined;
   #transport: TrustedRepositoryPublisher;
 
-  constructor(binding: Fetcher | undefined, options: RepositoryPublisherOptions = {}) {
+  constructor(binding: Fetcher | undefined, options: RepositoryPublisherOptions) {
     this.#binding = binding;
     this.#transport = new TrustedRepositoryPublisher(
       binding === undefined ? undefined : new FetcherRepositoryTransport(binding),
@@ -353,47 +391,79 @@ const providerResponseFailure = (operation: string): ProviderUnavailableError =>
     `Outbound Worker returned an invalid ${operation} response`,
   );
 
-const decodeRefState = (value: unknown): GitRefState => {
-  try {
-    const decoded = decode(RepositoryRefStateSchema, value);
-    return { sha: decoded.sha };
-  } catch {
-    throw providerResponseFailure("ref state");
-  }
+const unhandledProviderFailureCode = (_code: never): never => {
+  throw new ProviderUnavailableError(
+    "GitHub repository transport",
+    "Outbound Worker returned an unsupported provider failure code",
+  );
 };
 
-const decodeCandidateVerification = (value: unknown): GitCandidateVerification => {
-  try {
-    return decode(RepositoryCandidateVerificationSchema, value);
-  } catch {
-    throw providerResponseFailure("candidate verification");
+const mapProviderFailure = (code: ProviderFailureCode): never => {
+  switch (code) {
+    case "conflict":
+      throw new RepositoryConflictError("Outbound repository operation conflicted");
+    case "unavailable":
+      throw new ProviderUnavailableError("GitHub repository transport");
+    default:
+      return unhandledProviderFailureCode(code);
   }
 };
 
 class FetcherRepositoryTransport implements RepositoryTransport {
   #binding: Fetcher;
+
   constructor(binding: Fetcher) {
     this.#binding = binding;
   }
 
-  async #call(path: string, payload: unknown): Promise<unknown> {
+  #decode<S extends Schema.ConstraintDecoder<unknown>>(
+    schema: S,
+    value: unknown,
+    operation: string,
+  ): S["Type"] {
     try {
-      const response = await this.#binding.fetch(`https://outbound-git${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok)
-        throw new RepositoryConflictError(`Outbound Worker returned ${response.status}`);
-      return await response.json();
-    } catch (cause) {
-      if (cause instanceof RepositoryConflictError) throw cause;
-      throw new ProviderUnavailableError("GitHub repository transport");
+      return decode(schema, value);
+    } catch {
+      throw providerResponseFailure(operation);
     }
   }
 
+  async #call(path: string, payload: string): Promise<unknown> {
+    let response: Response;
+    try {
+      response = await this.#binding.fetch(`https://outbound-git${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload,
+      });
+    } catch {
+      throw new ProviderUnavailableError("GitHub repository transport");
+    }
+
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw providerResponseFailure("response");
+    }
+
+    if (!response.ok) {
+      const failure = this.#decode(ProviderFailureSchema, body, "failure");
+      return mapProviderFailure(failure.code);
+    }
+    return body;
+  }
+
   async readRef(ref: string): Promise<GitRefState> {
-    return decodeRefState(await this.#call("/read-ref", { ref }));
+    const request = decode(ReadRefRequestSchema, { ref });
+    const payload = JSON.stringify(encode(ReadRefRequestSchema, request));
+    if (payload === undefined) throw providerResponseFailure("read-ref request");
+    const response = this.#decode(
+      ReadRefResponseSchema,
+      await this.#call("/read-ref", payload),
+      "read-ref",
+    );
+    return { sha: response.sha };
   }
 
   async verifyCandidate(input: {
@@ -401,7 +471,19 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly candidateCommit: string;
     readonly repository: RepositoryIdentity;
   }): Promise<GitCandidateVerification> {
-    return decodeCandidateVerification(await this.#call("/verify", input));
+    const request = decode(VerifyCandidateRequestSchema, input);
+    const payload = JSON.stringify(encode(VerifyCandidateRequestSchema, request));
+    if (payload === undefined) throw providerResponseFailure("verify request");
+    const response = this.#decode(
+      VerifyCandidateSucceededSchema,
+      await this.#call("/verify", payload),
+      "candidate verification",
+    );
+    return {
+      descendedFromBase: response.descendedFromBase,
+      changedPaths: response.changedPaths,
+      commitMetadata: response.commitMetadata,
+    };
   }
 
   async updateRef(input: {
@@ -410,9 +492,15 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly nextSha: string;
     readonly force: false;
   }): Promise<GitRefState> {
-    const state = decodeRefState(await this.#call("/update-ref", input));
-    if (state.sha === undefined) throw providerResponseFailure("ref update");
-    return state;
+    const request = decode(UpdateRefRequestSchema, input);
+    const payload = JSON.stringify(encode(UpdateRefRequestSchema, request));
+    if (payload === undefined) throw providerResponseFailure("update-ref request");
+    const response = this.#decode(
+      UpdateRefSucceededSchema,
+      await this.#call("/update-ref", payload),
+      "ref update",
+    );
+    return { sha: response.sha };
   }
 }
 
