@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EnvironmentCheckpointRequestSchema,
   EnvironmentCheckpointSchema,
   EnvironmentCreateRequestSchema,
   EnvironmentPairingSchema,
@@ -215,6 +216,29 @@ describe("Environment creation", () => {
     );
     expect((await coordinator.inspect())?.lifecycle).toBe("Ready");
   });
+  it("records checkpoint receipts only for explicitly supplied commands", async () => {
+    const runtime = new RecordingRuntime();
+    const coordinator = new EnvironmentCoordinator({
+      store: new InMemoryEnvironmentStore(),
+      runtime,
+      versions,
+      capabilities,
+    });
+    await coordinator.create(request);
+
+    const internal = await coordinator.checkpoint();
+    expect(internal.commandReceipts).toHaveLength(1);
+
+    const explicit = decodeUnknownStrict(EnvironmentCheckpointRequestSchema, {
+      _tag: "CheckpointEnvironment",
+      commandId: "checkpoint-00000000-0000-4000-8000-000000000001",
+      environmentId: "demo-environment",
+    });
+    const publicCheckpoint = await coordinator.checkpoint(explicit);
+    expect(publicCheckpoint.commandReceipts).toHaveLength(2);
+    expect(publicCheckpoint.commandReceipts.at(-1)?.commandId).toBe(explicit.commandId);
+  });
+
   it("exhausts checkpoint retries into Failed with explicit data-loss state", async () => {
     const runtime = new RecordingRuntime();
     const coordinator = new EnvironmentCoordinator({

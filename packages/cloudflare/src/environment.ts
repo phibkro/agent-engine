@@ -324,6 +324,7 @@ export class EnvironmentCoordinator {
   }
   async checkpoint(input?: unknown): Promise<EnvironmentSnapshot> {
     const current = await this.#requireSnapshot();
+    const publicCommand = input !== undefined;
     const request = decodeUnknownStrict(
       EnvironmentCheckpointRequestSchema,
       input === undefined
@@ -391,19 +392,21 @@ export class EnvironmentCoordinator {
         dataLossWarning: false,
         checkpointFailures: 0,
         checkpointRetryAt: null,
-        commandReceipts: [
-          ...current.commandReceipts,
-          {
-            commandId: request.commandId,
-            requestDigest,
-            result: {
-              _tag: "EnvironmentCheckpointed",
-              lifecycle: "Ready",
-              checkpoint: acceptedCheckpoint,
-            },
-            acceptedAt,
-          },
-        ],
+        commandReceipts: publicCommand
+          ? [
+              ...current.commandReceipts,
+              {
+                commandId: request.commandId,
+                requestDigest,
+                result: {
+                  _tag: "EnvironmentCheckpointed",
+                  lifecycle: "Ready",
+                  checkpoint: acceptedCheckpoint,
+                },
+                acceptedAt,
+              },
+            ]
+          : current.commandReceipts,
         lastActivityAt: acceptedAt,
       });
       await this.#options.store.save(ready);

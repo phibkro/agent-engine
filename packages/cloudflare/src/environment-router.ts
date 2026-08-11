@@ -294,7 +294,7 @@ export class EnvironmentRouter {
       }
 
       const headers = new Headers(request.headers);
-      headers.delete("Authorization");
+      if (!connect) headers.delete("Authorization");
       headers.set("X-Environment-Internal", secret);
       if (body !== undefined) headers.set("content-type", "application/json");
       const forwarded = new Request(request, {

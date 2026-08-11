@@ -209,7 +209,9 @@ export class EnvironmentDurableObject implements DurableObject {
       Math.min(
         Date.parse(snapshot.expiresAt),
         Date.parse(snapshot.inactivityDeadline),
-        ...(snapshot.checkpointRetryAt === null ? [] : [Date.parse(snapshot.checkpointRetryAt)]),
+        ...(this.#activeConnections === 0 && snapshot.checkpointRetryAt !== null
+          ? [Date.parse(snapshot.checkpointRetryAt)]
+          : []),
         ...(snapshot.recoveryRetryAt === null ? [] : [Date.parse(snapshot.recoveryRetryAt)]),
       ),
     );
@@ -317,9 +319,10 @@ export class EnvironmentDurableObject implements DurableObject {
         return response;
       }
       if (request.method === "GET") {
+        const inspected = await coordinator.inspect();
         return jsonResponse(EnvironmentInspectedResponseSchema, {
           _tag: "EnvironmentInspected",
-          snapshot: publicSnapshot(await coordinator.inspect()),
+          ...(inspected === undefined ? {} : { snapshot: publicSnapshot(inspected) }),
         });
       }
       const payload = await requestPayload(request);
@@ -400,55 +403,69 @@ export class EnvironmentDurableObject implements DurableObject {
     const current = await coordinator.inspect();
     if (current === undefined || current.lifecycle === "Destroyed") return;
     const now = Date.parse(this.#capabilities.now());
-    await runtime.cleanupBackups(current);
+    const cleanupBackups = async (next: EnvironmentSnapshot): Promise<void> => {
+      try {
+        await runtime.cleanupBackups(next);
+      } catch (cause) {
+        const failure =
+          cause instanceof ProviderUnavailableError
+            ? cause
+            : new ProviderUnavailableError(
+                "Environment backup storage",
+                "Backup garbage collection failed",
+                cause,
+              );
+        await this.#rescheduleAfterFailure(coordinator, failure);
+      }
+    };
+
+    let next: EnvironmentSnapshot;
+    let terminal = false;
     if (current.lifecycle === "Failed") {
-      const destroyed = await coordinator
+      next = await coordinator
         .destroy({
           _tag: "DestroyEnvironment",
           commandId: "destroy-00000000-0000-4000-8000-000000000000",
           environmentId: current.environmentId,
         })
         .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
-      await this.#schedule(destroyed);
-      return;
-    }
-    if (
+      terminal = true;
+    } else if (
       current.lifecycle === "Ready" &&
       current.recoveryRetryAt !== null &&
       current.recoveryRequest !== null &&
       now >= Date.parse(current.recoveryRetryAt)
     ) {
-      const recovered = await coordinator
+      next = await coordinator
         .recover(current.recoveryRequest)
         .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
-      await this.#schedule(recovered);
-      return;
-    }
-    if (
+    } else if (
       current.lifecycle === "Ready" &&
       current.checkpointRetryAt !== null &&
-      now >= Date.parse(current.checkpointRetryAt)
+      now >= Date.parse(current.checkpointRetryAt) &&
+      this.#activeConnections === 0
     ) {
-      const checkpointed = await coordinator
+      next = await coordinator
         .checkpoint()
         .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
-      await this.#schedule(checkpointed);
-      return;
+    } else if (this.#activeConnections > 0 && now < Date.parse(current.expiresAt)) {
+      next = await coordinator.recordActivity();
+    } else if (
+      now < Date.parse(current.expiresAt) &&
+      now < Date.parse(current.inactivityDeadline)
+    ) {
+      next = current;
+    } else {
+      next = await coordinator.destroy({
+        _tag: "DestroyEnvironment",
+        commandId: "destroy-00000000-0000-4000-8000-000000000000",
+        environmentId: current.environmentId,
+      });
+      terminal = true;
     }
-    if (this.#activeConnections > 0 && now < Date.parse(current.expiresAt)) {
-      const active = await coordinator.recordActivity();
-      await this.#schedule(active);
-      return;
-    }
-    if (now < Date.parse(current.expiresAt) && now < Date.parse(current.inactivityDeadline)) {
-      await this.#schedule(current);
-      return;
-    }
-    const destroyed = await coordinator.destroy({
-      _tag: "DestroyEnvironment",
-      commandId: "destroy-00000000-0000-4000-8000-000000000000",
-      environmentId: current.environmentId,
-    });
-    await this.#schedule(destroyed);
+
+    await this.#schedule(next);
+    if (terminal) return;
+    await cleanupBackups(next);
   }
 }

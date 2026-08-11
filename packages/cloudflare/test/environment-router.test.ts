@@ -142,11 +142,28 @@ describe("EnvironmentRouter", () => {
     const { env, keys, requests } = makeEnv();
     const response = await new EnvironmentRouter(env).fetch(
       new Request("https://work.example/v1/environments/demo-environment/connect/api", {
-        headers: { "CF-Connecting-IP": "203.0.113.7" },
+        headers: {
+          "CF-Connecting-IP": "203.0.113.7",
+          Authorization: "Bearer client-token",
+        },
       }),
     );
     expect(response.status).toBe(200);
     expect(keys).toEqual(["203.0.113.7:demo-environment"]);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.get("Authorization")).toBe("Bearer client-token");
+  });
+
+  it("omits the snapshot when an inspect response has no Environment state", async () => {
+    const { env, requests } = makeEnv(Response.json({ _tag: "EnvironmentInspected" }));
+    const response = await new EnvironmentRouter(env).fetch(
+      new Request("https://work.example/v1/environments/demo-environment", {
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ _tag: "EnvironmentInspected" });
     expect(requests).toHaveLength(1);
   });
 
