@@ -6,6 +6,8 @@ import {
   EnvironmentRecoverRequestSchema,
   EnvironmentDestroyRequestSchema,
   RuntimeVersionTupleSchema,
+  Sha256DigestSchema,
+  TimestampSchema,
   decodeUnknownStrict,
   type EnvironmentCheckpoint,
   type EnvironmentSnapshot,
@@ -14,9 +16,15 @@ import {
   EnvironmentCoordinator,
   InMemoryEnvironmentStore,
   type EnvironmentRuntime,
+  type PlatformCapabilities,
 } from "../src/index.ts";
 
-const now = "2026-08-10T00:00:00.000Z";
+const now = TimestampSchema.make("2026-08-10T00:00:00.000Z");
+const capabilities: PlatformCapabilities = {
+  now: () => now,
+  uuid: () => "00000000-0000-4000-8000-000000000001",
+  sha256: async () => Sha256DigestSchema.make(`sha256:${"a".repeat(64)}`),
+};
 const versions = decodeUnknownStrict(RuntimeVersionTupleSchema, {
   imageDigest: `sha256:${"a".repeat(64)}`,
   t3codeVersion: "0.9.0",
@@ -110,7 +118,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
 
     const first = await coordinator.create(request);
@@ -128,7 +136,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
 
     await expect(coordinator.create(request)).rejects.toThrow("initialization failed");
@@ -144,7 +152,7 @@ describe("Environment creation", () => {
       store,
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
 
@@ -195,7 +203,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
     const accepted = await coordinator.checkpoint();
@@ -212,7 +220,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
     runtime.failCheckpoint = true;
@@ -232,7 +240,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
     await coordinator.checkpoint();
@@ -250,7 +258,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
     const checkpointed = await coordinator.checkpoint();
@@ -276,7 +284,7 @@ describe("Environment creation", () => {
       store: new InMemoryEnvironmentStore(),
       runtime,
       versions,
-      now: () => now,
+      capabilities,
     });
     await coordinator.create(request);
     runtime.failCheckpoint = true;

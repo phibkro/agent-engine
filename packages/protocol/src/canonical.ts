@@ -8,27 +8,21 @@ export type CanonicalJsonValue =
   | { readonly [key: string]: CanonicalJsonValue };
 
 /** RFC 8785 JSON Canonicalization Scheme encoding. */
-export const canonicalize = (value: CanonicalJsonValue): string =>
-  canonicalizeEx(value, {
-    allowCircular: false,
-    filterUndefined: true,
-    undefinedInArrayToNull: true,
-  });
+export const canonicalize = (value: CanonicalJsonValue): string => canonicalizeEx(value);
 
 export const canonicalJsonBytes = (value: CanonicalJsonValue): Uint8Array =>
   new TextEncoder().encode(canonicalize(value));
 
-const hex = (bytes: Uint8Array): string =>
-  Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+/** Explicit SHA-256 capability for deterministic protocol helpers. */
+export type Sha256 = (bytes: Uint8Array) => Promise<Sha256Digest>;
 
-/** SHA-256 of exact bytes, using the Web Crypto API available in Workers and browsers. */
-export const sha256 = async (bytes: Uint8Array): Promise<Sha256Digest> => {
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
-  return Sha256DigestSchema.make(`sha256:${hex(new Uint8Array(digest))}`);
+export const digestCanonical = async (
+  value: CanonicalJsonValue,
+  sha256: Sha256,
+): Promise<Sha256Digest> => {
+  const digest = await sha256(canonicalJsonBytes(value));
+  return Sha256DigestSchema.make(digest);
 };
-
-export const digestCanonical = async (value: CanonicalJsonValue): Promise<Sha256Digest> =>
-  sha256(canonicalJsonBytes(value));
 
 const utf8Encoder = new TextEncoder();
 export const compareUtf8PathBytes = (left: string, right: string): number => {
@@ -52,4 +46,5 @@ export const digestManifest = async (
     readonly digest: Sha256Digest;
     readonly bytes: number;
   }[],
-): Promise<Sha256Digest> => digestCanonical(sortManifestEntries(entries));
+  sha256: Sha256,
+): Promise<Sha256Digest> => digestCanonical(sortManifestEntries(entries), sha256);

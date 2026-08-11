@@ -23,6 +23,7 @@ import {
   SessionIdSchema,
   SessionObservationSchema,
   SessionResultSchema,
+  Sha256DigestSchema,
   TrialManifestSchema,
   TrialRecordSchema,
   VerifiedWorkspaceSchema,
@@ -47,6 +48,9 @@ import {
   type SessionId,
   type SessionObservation,
   type SessionResult,
+  type Sha256,
+  type Sha256Digest,
+  type Timestamp,
   type TrialManifest,
   type TrialRecord,
   type VerifiedWorkspace,
@@ -83,6 +87,7 @@ export {
   SessionIdSchema,
   SessionObservationSchema,
   SessionResultSchema,
+  Sha256DigestSchema,
   TrialManifestSchema,
   TrialRecordSchema,
   VerifiedWorkspaceSchema,
@@ -110,6 +115,7 @@ export type {
   SessionId,
   SessionObservation,
   SessionResult,
+  Sha256Digest,
   TrialManifest,
   TrialRecord,
   VerifiedWorkspace,
@@ -122,6 +128,11 @@ export type {
   RuntimeProjectMemory,
   RepositoryPublisher,
 };
+export interface PlatformCapabilities {
+  readonly now: () => Timestamp;
+  readonly uuid: () => string;
+  readonly sha256: Sha256;
+}
 
 /** Decode every public/persisted boundary with strict excess-property rejection. */
 export const decode = <S extends Schema.ConstraintDecoder<unknown>>(
@@ -158,11 +169,3 @@ export const tagOf = (value: unknown): string | undefined => {
   return typeof tag === "string" ? tag : undefined;
 };
 
-export const nowIso = (): string => new Date().toISOString();
-
-export const newId = (prefix: string): string => `${prefix}${crypto.randomUUID()}`;
-
-export const sha256 = async (bytes: Uint8Array): Promise<string> => {
-  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes));
-  return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
-};

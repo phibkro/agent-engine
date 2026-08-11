@@ -10,17 +10,29 @@ import {
   ProjectMemoryState,
   ProjectMemoryProvenanceSchema,
   SessionState,
+  Sha256DigestSchema,
+  TimestampSchema,
   TrustedRepositoryPublisher,
   makeRepositoryGrant,
   refsAreDistinct,
   sessionRefs,
   verifyDependencyCache,
 } from "../src/index.ts";
-import type { CloudTask, DependencyCacheManifest, SessionSnapshot } from "../src/index.ts";
+import type {
+  CloudTask,
+  DependencyCacheManifest,
+  PlatformCapabilities,
+  SessionSnapshot,
+} from "../src/index.ts";
 
 const uuid = "00000000-0000-4000-8000-000000000001";
-const digest = (hex: string): string => `sha256:${hex.repeat(64 / hex.length)}`;
-const initialMemoryRevision = MemoryRevisionSchema.make(0);
+const digest = (hex: string) => Sha256DigestSchema.make(`sha256:${hex.repeat(64 / hex.length)}`);
+const now = TimestampSchema.make("2026-08-10T00:00:00.000Z");
+const capabilities: PlatformCapabilities = {
+  now: () => now,
+  uuid: () => uuid,
+  sha256: async () => digest("f"),
+};
 const task = (): CloudTask =>
   decode(CloudTaskSchema, {
     _tag: "CloudTask",
@@ -78,7 +90,7 @@ const sendAndObserve = async (
 
 describe("authenticated CloudTask routing", () => {
   it("deduplicates spawn and send by caller-minted identities", async () => {
-    const directory = new InMemoryCloudTaskDirectory();
+    const directory = new InMemoryCloudTaskDirectory(capabilities);
     const first = await directory.fetch(
       request({ _tag: "Spawn", sessionId: task().sessionId, task: task() }),
     );
@@ -99,7 +111,7 @@ describe("authenticated CloudTask routing", () => {
   });
 
   it("rejects a valid sessionId without caller authentication", async () => {
-    const directory = new InMemoryCloudTaskDirectory();
+    const directory = new InMemoryCloudTaskDirectory(capabilities);
     const response = await directory.fetch(
       request({ _tag: "Result", sessionId: task().sessionId }, "wrong-token"),
     );
@@ -107,7 +119,7 @@ describe("authenticated CloudTask routing", () => {
   });
 
   it("rejects a route session that differs from the decoded task", async () => {
-    const directory = new InMemoryCloudTaskDirectory();
+    const directory = new InMemoryCloudTaskDirectory(capabilities);
     const response = await directory.fetch(
       request({
         _tag: "Spawn",
@@ -123,34 +135,34 @@ describe("CloudTask Send JSON values", () => {
   it("round-trips object values through request and observe", async () => {
     const value = { nested: { enabled: true }, values: [1, null] };
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(capabilities), value, `msg_${uuid}`),
     ).resolves.toEqual(value);
   });
 
   it("round-trips array values through request and observe", async () => {
     const value = ["alpha", false, { count: 2 }];
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(capabilities), value, `msg_${uuid}`),
     ).resolves.toEqual(value);
   });
 
   it("round-trips boolean values through request and observe", async () => {
     const value = false;
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(capabilities), value, `msg_${uuid}`),
     ).resolves.toBe(value);
   });
 
   it("round-trips number values through request and observe", async () => {
     const value = 42.5;
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), value, `msg_${uuid}`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(capabilities), value, `msg_${uuid}`),
     ).resolves.toBe(value);
   });
 
   it("round-trips null values through request and observe", async () => {
     await expect(
-      sendAndObserve(new InMemoryCloudTaskDirectory(), null, `msg_${uuid}`),
+      sendAndObserve(new InMemoryCloudTaskDirectory(capabilities), null, `msg_${uuid}`),
     ).resolves.toBeNull();
   });
 });
@@ -164,7 +176,7 @@ const provenance = () =>
 
 describe("Project Memory authority", () => {
   it("rejects stale acceptance while preserving pinned reads", () => {
-    const memory = new ProjectMemoryState(task().projectId);
+    const memory = new ProjectMemoryState(task().projectId, capabilities);
     const source = provenance();
     const proposal = memory.proposeMemory(
       task().sessionId,
@@ -212,9 +224,11 @@ describe("Project Memory authority", () => {
         },
       },
     } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
-    const memory = new ProjectMemoryDurableObject(fakeState, {
-      PROJECT_MEMORY_COORDINATOR_SECRET: "coordinator-secret",
-    });
+    const memory = new ProjectMemoryDurableObject(
+      fakeState,
+      { PROJECT_MEMORY_COORDINATOR_SECRET: "coordinator-secret" },
+      capabilities,
+    );
     const identity = {
       "content-type": "application/json",
       "X-Project-Identity": task().projectId,
@@ -273,7 +287,7 @@ describe("Project Memory authority", () => {
 
 describe("Session terminal and repository refs", () => {
   it("gives cancellation precedence over late completion and records side effects", () => {
-    const session = new SessionState(task());
+    const session = new SessionState(task(), capabilities);
     session.start();
     session.requestCancellation("operator stop");
     session.recordCandidate(
@@ -291,13 +305,13 @@ describe("Session terminal and repository refs", () => {
     expect(refs.candidate.endsWith("/wip")).toBe(false);
   });
   it("rejects a malformed terminal completion", () => {
-    const session = new SessionState(task());
+    const session = new SessionState(task(), capabilities);
     session.start();
     expect(() => session.complete({ _tag: "CompletedResult" })).toThrow();
   });
 
   it("rejects a persisted Session with a malformed terminal result", () => {
-    const persisted = new SessionState(task()).snapshot;
+    const persisted = new SessionState(task(), capabilities).snapshot;
     const malformed = {
       ...persisted,
       status: "completed",
@@ -307,7 +321,7 @@ describe("Session terminal and repository refs", () => {
         result: { _tag: "CompletedResult" },
       },
     } as unknown as SessionSnapshot;
-    expect(() => new SessionState(task(), malformed)).toThrow();
+    expect(() => new SessionState(task(), capabilities, malformed)).toThrow();
   });
 });
 
@@ -335,6 +349,7 @@ describe("Dependency cache", () => {
           lockfileDigest: digest("5"),
         },
         new TextEncoder().encode("wrong"),
+        capabilities,
       ),
     ).rejects.toBeInstanceOf(CacheDigestMismatchError);
   });

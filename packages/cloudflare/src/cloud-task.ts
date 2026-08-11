@@ -10,6 +10,7 @@ import {
   encode,
   json,
   type CloudTask,
+  type PlatformCapabilities,
   type SessionId,
 } from "./contract.ts";
 import {
@@ -110,14 +111,19 @@ const payloadBody = async (request: Request): Promise<CloudTaskRequest> => {
   return decode(CloudTaskRequestSchema, value);
 };
 
-/** One Session DO owns private lifecycle, cursor, messages, cancellation, and terminal result. */
 export class SessionDurableObject implements DurableObject {
   #state: DurableObjectState;
   #env: CloudflareRuntimeEnv;
+  #capabilities: PlatformCapabilities;
 
-  constructor(state: DurableObjectState, env: CloudflareRuntimeEnv) {
+  constructor(
+    state: DurableObjectState,
+    env: CloudflareRuntimeEnv,
+    capabilities: PlatformCapabilities,
+  ) {
     this.#state = state;
     this.#env = env;
+    this.#capabilities = capabilities;
   }
 
   async #authorized(request: Request): Promise<void> {
@@ -127,15 +133,14 @@ export class SessionDurableObject implements DurableObject {
       throw new UnauthorizedError("Session DO calls require the authenticated router binding");
     }
   }
-
   async #load(task?: CloudTask): Promise<SessionState> {
     const stored: unknown = await this.#state.storage.get("session");
     if (stored !== undefined) {
       const existing = decodeSessionSnapshot(stored);
-      return new SessionState(existing.task, existing);
+      return new SessionState(existing.task, this.#capabilities, existing);
     }
     if (task === undefined) throw new SessionNotFoundError(this.#state.id.toString());
-    return new SessionState(task);
+    return new SessionState(task, this.#capabilities);
   }
 
   async #save(session: SessionState): Promise<void> {
@@ -149,10 +154,10 @@ export class SessionDurableObject implements DurableObject {
       const payload = await payloadBody(request);
       const task = payload._tag === "Spawn" ? payload.task : undefined;
       if (task !== undefined) {
-        if (Date.parse(task.deadline) <= Date.now()) {
+        if (task.deadline <= this.#capabilities.now()) {
           throw new InvalidRequestError("CloudTask deadline has expired");
         }
-        await resolveCatalogProfile(this.#env.PROFILE_CATALOG, task);
+        await resolveCatalogProfile(this.#env.PROFILE_CATALOG, task, this.#capabilities);
       }
       const session = await this.#load(task);
       if (payload._tag === "Spawn") {
@@ -326,9 +331,11 @@ export class CloudflareCloudTaskClient {
 /** Focused-test directory with the same idempotent SessionState semantics, not a provider fallback. */
 export class InMemoryCloudTaskDirectory {
   #sessions = new Map<string, SessionState>();
+  #clock: Pick<PlatformCapabilities, "now">;
   #token: string;
 
-  constructor(token = "test-token") {
+  constructor(clock: Pick<PlatformCapabilities, "now">, token = "test-token") {
+    this.#clock = clock;
     this.#token = token;
   }
 
@@ -340,7 +347,7 @@ export class InMemoryCloudTaskDirectory {
       const sessionId = payload.sessionId;
       if (payload._tag === "Spawn") {
         const existing = this.#sessions.get(sessionId);
-        const session = existing ?? new SessionState(payload.task);
+        const session = existing ?? new SessionState(payload.task, this.#clock);
         const admission = session.spawn(payload.task);
         this.#sessions.set(sessionId, session);
         return Response.json(decode(CloudTaskResponseSchema, { _tag: "Spawned", admission }));

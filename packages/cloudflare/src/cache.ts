@@ -1,24 +1,28 @@
 import {
   DependencyCacheManifestSchema,
+  Sha256DigestSchema,
   decode,
-  sha256,
   type DependencyCacheManifest,
+  type PlatformCapabilities,
+  type Sha256Digest,
 } from "./contract.ts";
 import { CacheDigestMismatchError, ProviderUnavailableError } from "./errors.ts";
 
+type DigestCapability = Pick<PlatformCapabilities, "sha256">;
+
 export interface CacheExpectation {
-  readonly runtimeDigest: string;
-  readonly platformDigest: string;
-  readonly imageDigest: string;
-  readonly repositoryDigest: string;
-  readonly lockfileDigest: string;
+  readonly runtimeDigest: Sha256Digest;
+  readonly platformDigest: Sha256Digest;
+  readonly imageDigest: Sha256Digest;
+  readonly repositoryDigest: Sha256Digest;
+  readonly lockfileDigest: Sha256Digest;
 }
 
 export interface CacheHit {
   readonly kind: "hit";
   readonly manifest: DependencyCacheManifest;
   readonly payload: Uint8Array;
-  readonly payloadDigest: string;
+  readonly payloadDigest: Sha256Digest;
 }
 
 export interface CacheMiss {
@@ -31,7 +35,7 @@ export type CacheRestore = CacheHit | CacheMiss;
 const assertMatches = (
   manifest: DependencyCacheManifest,
   expectation: CacheExpectation,
-  observedPayloadDigest: string,
+  observedPayloadDigest: Sha256Digest,
 ): void => {
   const pairs: readonly [string, string, string][] = [
     ["runtimeDigest", manifest.runtimeDigest, expectation.runtimeDigest],
@@ -51,9 +55,10 @@ export const verifyDependencyCache = async (
   manifest: DependencyCacheManifest,
   expectation: CacheExpectation,
   payload: Uint8Array,
+  capabilities: DigestCapability,
 ): Promise<CacheHit> => {
   const decoded = decode(DependencyCacheManifestSchema, manifest);
-  const payloadDigest = await sha256(payload);
+  const payloadDigest = decode(Sha256DigestSchema, await capabilities.sha256(payload));
   assertMatches(decoded, expectation, payloadDigest);
   return { kind: "hit", manifest: decoded, payload, payloadDigest };
 };
@@ -65,9 +70,11 @@ export interface TrustedCacheWriter {
 /** R2 cache adapter. Only this trusted setup boundary can write payloads. */
 export class R2DependencyCache {
   #bucket: R2Bucket | undefined;
+  #capabilities: DigestCapability;
 
-  constructor(bucket: R2Bucket | undefined) {
+  constructor(bucket: R2Bucket | undefined, capabilities: DigestCapability) {
     this.#bucket = bucket;
+    this.#capabilities = capabilities;
   }
 
   async restore(
@@ -79,7 +86,7 @@ export class R2DependencyCache {
     const object = await this.#bucket.get(decoded.cacheKey);
     if (object === null) return { kind: "miss", reason: `No cache payload at ${decoded.cacheKey}` };
     const payload = new Uint8Array(await object.arrayBuffer());
-    return verifyDependencyCache(decoded, expectation, payload);
+    return verifyDependencyCache(decoded, expectation, payload, this.#capabilities);
   }
 
   async write(manifest: DependencyCacheManifest, payload: Uint8Array): Promise<void> {
@@ -92,7 +99,7 @@ export class R2DependencyCache {
       repositoryDigest: decoded.repositoryDigest,
       lockfileDigest: decoded.lockfileDigest,
     };
-    await verifyDependencyCache(decoded, expectation, payload);
+    await verifyDependencyCache(decoded, expectation, payload, this.#capabilities);
     await this.#bucket.put(decoded.cacheKey, payload, {
       httpMetadata: { contentType: "application/octet-stream" },
     });

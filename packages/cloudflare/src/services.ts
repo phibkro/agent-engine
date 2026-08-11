@@ -45,7 +45,7 @@ import {
   type RepositoryGrant,
   type SessionId,
 } from "@work-engine/protocol";
-import { decode } from "./contract.ts";
+import { decode, type PlatformCapabilities } from "./contract.ts";
 import {
   CloudTaskClient as CloudTaskClientService,
   ProjectMemory as ProjectMemoryService,
@@ -582,8 +582,11 @@ const cacheExpectation = (expectation: DependencyCacheExpectation): CacheExpecta
   lockfileDigest: decode(Sha256DigestSchema, expectation.lockfileDigest),
 });
 
-export const DependencyCacheLive = (bucket: R2Bucket | undefined): Layer.Layer<DependencyCache> => {
-  const adapter = new R2DependencyCache(bucket);
+export const DependencyCacheLive = (
+  bucket: R2Bucket | undefined,
+  capabilities: Pick<PlatformCapabilities, "sha256">,
+): Layer.Layer<DependencyCache> => {
+  const adapter = new R2DependencyCache(bucket, capabilities);
   const service: DependencyCache = {
     restore: (manifest: DependencyCacheManifest, expectation) =>
       Effect.clockWith((clock) =>

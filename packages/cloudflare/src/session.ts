@@ -8,6 +8,7 @@ import {
   SessionStateSchema,
   TimestampSchema,
   type SessionState as ProtocolSessionState,
+  type Timestamp,
 } from "@work-engine/protocol";
 import {
   CloudTaskSchema,
@@ -15,9 +16,8 @@ import {
   SessionObservationSchema,
   SessionResultSchema,
   decode,
-  newId,
-  nowIso,
   type CloudTask,
+  type PlatformCapabilities,
   type SessionAdmission,
   type SessionId,
   type SessionObservation,
@@ -127,19 +127,22 @@ const cloneSnapshot = (snapshot: SessionSnapshot): SessionSnapshot => ({
 });
 
 interface ObservationDetails {
-  readonly at?: string;
-  readonly startedAt?: string;
+  readonly at?: Timestamp;
+  readonly startedAt?: Timestamp;
   readonly reason?: string;
   readonly messageId?: string;
   readonly message?: Json;
   readonly event?: Json;
 }
 
+type SessionClock = Pick<PlatformCapabilities, "now">;
+
 const sessionState = (
   sessionId: SessionSnapshot["task"]["sessionId"],
   cursor: number,
   status: SessionLifecycle,
   details: ObservationDetails,
+  clock: SessionClock,
 ): ProtocolSessionState => {
   if (status === "admitted") {
     return decode(SessionStateSchema, { _tag: "Pending", sessionId, cursor });
@@ -149,7 +152,7 @@ const sessionState = (
       _tag: "Running",
       sessionId,
       cursor,
-      startedAt: details.startedAt ?? nowIso(),
+      startedAt: details.startedAt ?? clock.now(),
     });
   }
   if (status === "cancelled") {
@@ -157,7 +160,7 @@ const sessionState = (
       _tag: "Cancelled",
       sessionId,
       cursor,
-      cancelledAt: details.at ?? nowIso(),
+      cancelledAt: details.at ?? clock.now(),
       reason: details.reason ?? "Session cancelled",
     });
   }
@@ -166,7 +169,7 @@ const sessionState = (
       _tag: "Failed",
       sessionId,
       cursor,
-      failedAt: details.at ?? nowIso(),
+      failedAt: details.at ?? clock.now(),
       reason: details.reason ?? "Session failed",
     });
   }
@@ -174,7 +177,7 @@ const sessionState = (
     _tag: "Completed",
     sessionId,
     cursor,
-    completedAt: details.at ?? nowIso(),
+    completedAt: details.at ?? clock.now(),
   });
 };
 
@@ -182,20 +185,21 @@ const observation = (
   sessionId: SessionSnapshot["task"]["sessionId"],
   cursor: number,
   status: SessionLifecycle,
-  details: ObservationDetails = {},
+  details: ObservationDetails,
+  clock: SessionClock,
 ): SessionObservation =>
   decode(SessionObservationSchema, {
     _tag: "SessionObservation",
     sessionId,
     cursor,
-    observedAt: nowIso(),
-    state: sessionState(sessionId, cursor, status, details),
+    observedAt: clock.now(),
+    state: sessionState(sessionId, cursor, status, details, clock),
     ...(details.messageId === undefined ? {} : { messageId: details.messageId }),
     ...(details.message === undefined ? {} : { message: details.message }),
     ...(details.event === undefined ? {} : { event: details.event }),
   });
 
-const admission = (task: CloudTask): SessionAdmission =>
+const admission = (task: CloudTask, clock: SessionClock): SessionAdmission =>
   decode(SessionAdmissionSchema, {
     _tag: "SessionAdmission",
     sessionId: task.sessionId,
@@ -206,14 +210,15 @@ const admission = (task: CloudTask): SessionAdmission =>
     profileDigest: task.profileDigest,
     baseCommit: task.baseCommit,
     acceptedCursor: 0,
-    admittedAt: nowIso(),
+    admittedAt: clock.now(),
     ...(task.memoryRevision === undefined ? {} : { memoryRevision: task.memoryRevision }),
   });
 
 const result = (
   sessionId: SessionSnapshot["task"]["sessionId"],
   status: "pending" | "failed" | "cancelled",
-  reason?: string,
+  reason: string | undefined,
+  clock: SessionClock,
 ): SessionResult => {
   if (status === "pending") return decode(SessionResultSchema, { _tag: "Pending", sessionId });
   if (status === "failed") {
@@ -221,24 +226,26 @@ const result = (
       _tag: "Failed",
       sessionId,
       reason: reason ?? "Session failed",
-      completedAt: nowIso(),
+      completedAt: clock.now(),
     });
   }
   return decode(SessionResultSchema, {
     _tag: "Cancelled",
     sessionId,
     reason: reason ?? "Session cancelled",
-    completedAt: nowIso(),
+    completedAt: clock.now(),
   });
 };
 
 /** Pure lifecycle owner used by the Session Durable Object and focused tests. */
 export class SessionState {
   #snapshot: SessionSnapshot;
+  #clock: SessionClock;
 
-  constructor(task: CloudTask, existing?: SessionSnapshot) {
+  constructor(task: CloudTask, clock: SessionClock, existing?: SessionSnapshot) {
     const decoded = decode(CloudTaskSchema, task);
     const snapshot = existing === undefined ? undefined : decode(SessionSnapshotSchema, existing);
+    this.#clock = clock;
     if (snapshot !== undefined) {
       if (snapshot.task.sessionId !== decoded.sessionId) {
         throw new SessionConflictError(
@@ -252,14 +259,14 @@ export class SessionState {
       _tag: "SessionSnapshot",
       schemaVersion: "work-engine/v2",
       task: decoded,
-      admission: admission(decoded),
+      admission: admission(decoded, clock),
       status: "admitted",
       cursor: 0,
       observations: [],
       acceptedMessages: {},
       sideEffects: [],
       predecessorSandboxIds: [],
-      updatedAt: nowIso(),
+      updatedAt: clock.now(),
     });
   }
 
@@ -298,7 +305,7 @@ export class SessionState {
       cursor,
       observations: [
         ...this.#snapshot.observations,
-        observation(this.#snapshot.task.sessionId, cursor, status, details),
+        observation(this.#snapshot.task.sessionId, cursor, status, details, this.#clock),
       ],
     };
   }
@@ -351,10 +358,10 @@ export class SessionState {
       status: "cancelled",
       cancellationReason: decodedReason,
     };
-    this.#append("cancelled", { reason: decodedReason, at: nowIso() });
+    this.#append("cancelled", { reason: decodedReason, at: this.#clock.now() });
     this.#snapshot = {
       ...this.#snapshot,
-      terminalResult: result(this.sessionId, "cancelled", decodedReason),
+      terminalResult: result(this.sessionId, "cancelled", decodedReason, this.#clock),
     };
     const finalObservation = this.#snapshot.observations[this.#snapshot.observations.length - 1];
     if (finalObservation === undefined) throw new SessionTerminalError();
@@ -368,9 +375,9 @@ export class SessionState {
       throw new SessionTerminalError();
     }
     if (reason.length === 0) throw new InvalidRequestError("Failure reason cannot be empty");
-    const nextResult = result(this.#snapshot.task.sessionId, "failed", reason);
+    const nextResult = result(this.#snapshot.task.sessionId, "failed", reason, this.#clock);
     this.#snapshot = { ...this.#snapshot, status: "failed" };
-    this.#append("failed", { reason, at: nowIso() });
+    this.#append("failed", { reason, at: this.#clock.now() });
     this.#snapshot = { ...this.#snapshot, terminalResult: nextResult };
     return nextResult;
   }
@@ -391,7 +398,7 @@ export class SessionState {
       result: decodedResult,
     });
     this.#snapshot = { ...this.#snapshot, status: "completed" };
-    this.#append("completed", { at: nowIso() });
+    this.#append("completed", { at: this.#clock.now() });
     this.#snapshot = { ...this.#snapshot, terminalResult: nextResult };
     return nextResult;
   }
@@ -399,14 +406,19 @@ export class SessionState {
   recordSideEffect(kind: SessionSideEffect["kind"], details: Readonly<Record<string, Json>>): void {
     const effect: SessionSideEffect = {
       kind,
-      at: decode(TimestampSchema, nowIso()),
+      at: this.#clock.now(),
       details: { ...details },
     };
     this.#snapshot = { ...this.#snapshot, sideEffects: [...this.#snapshot.sideEffects, effect] };
     if (this.#snapshot.status === "cancelled" && this.#snapshot.terminalResult !== undefined) {
       this.#snapshot = {
         ...this.#snapshot,
-        terminalResult: result(this.sessionId, "cancelled", this.#snapshot.cancellationReason),
+        terminalResult: result(
+          this.sessionId,
+          "cancelled",
+          this.#snapshot.cancellationReason,
+          this.#clock,
+        ),
       };
     }
   }
@@ -448,4 +460,3 @@ export const decodeSessionSnapshot = (value: unknown): SessionSnapshot =>
   decode(SessionSnapshotSchema, value);
 
 export const sessionIdFromTask = (task: CloudTask): SessionId => task.sessionId;
-export const freshSessionTaskId = (): string => newId("tsk_");
