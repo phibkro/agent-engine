@@ -1,5 +1,12 @@
+import * as Schema from "effect/Schema";
 import {
+  EnvironmentCheckpointedResponseSchema,
   EnvironmentCommandRequestSchema,
+  EnvironmentCreatedResponseSchema,
+  EnvironmentDestroyedResponseSchema,
+  EnvironmentFailureSchema,
+  EnvironmentInspectedResponseSchema,
+  EnvironmentRecoveredResponseSchema,
   EnvironmentSnapshotSchema,
   RuntimeVersionTupleSchema,
   decodeUnknownStrict,
@@ -17,6 +24,15 @@ import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
 
 const SNAPSHOT_KEY = "environment";
 const MAX_CONNECTIONS = 10;
+const EnvironmentCommandJsonSchema = Schema.fromJsonString(EnvironmentCommandRequestSchema);
+const EnvironmentConnectionLimitSchema = Schema.TaggedStruct("EnvironmentConnectionLimit", {});
+
+const jsonResponse = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  value: unknown,
+  init?: ResponseInit,
+): Response => Response.json(decodeUnknownStrict(schema, value), init);
+
 const persistedSnapshot = (value: unknown): EnvironmentSnapshot => {
   try {
     return decodeUnknownStrict(EnvironmentSnapshotSchema, value);
@@ -43,14 +59,14 @@ class DurableEnvironmentStore implements EnvironmentStore {
 }
 
 const requestPayload = async (request: Request): Promise<EnvironmentCommandRequest> => {
-  let value: unknown;
+  let body: string;
   try {
-    value = await request.json();
+    body = await request.text();
   } catch {
     throw new InvalidRequestError("Environment command body must be JSON");
   }
   try {
-    return decodeUnknownStrict(EnvironmentCommandRequestSchema, value);
+    return decodeUnknownStrict(EnvironmentCommandJsonSchema, body);
   } catch {
     throw new InvalidRequestError("Environment command body is invalid");
   }
@@ -76,12 +92,21 @@ const publicSnapshot = (snapshot: EnvironmentSnapshot | undefined): unknown =>
       };
 const jsonError = (cause: unknown): Response => {
   if (cause instanceof UnauthorizedError) {
-    return Response.json({ _tag: cause._tag, reason: cause.message }, { status: 403 });
+    return jsonResponse(
+      EnvironmentFailureSchema,
+      { _tag: cause._tag, reason: cause.message },
+      { status: 403 },
+    );
   }
   if (cause instanceof InvalidRequestError) {
-    return Response.json({ _tag: cause._tag, reason: cause.message }, { status: 400 });
+    return jsonResponse(
+      EnvironmentFailureSchema,
+      { _tag: cause._tag, reason: cause.message },
+      { status: 400 },
+    );
   }
-  return Response.json(
+  return jsonResponse(
+    EnvironmentFailureSchema,
     {
       _tag: "EnvironmentRuntimeFailure",
       reason: "Environment runtime failed",
@@ -192,7 +217,9 @@ export class EnvironmentDurableObject implements DurableObject {
       return runtime.proxy(request, generationId);
     }
     if (this.#activeConnections >= MAX_CONNECTIONS) {
-      return Response.json({ _tag: "EnvironmentConnectionLimit" }, { status: 429 });
+      return jsonResponse(EnvironmentConnectionLimitSchema, { _tag: "EnvironmentConnectionLimit" }, {
+        status: 429,
+      });
     }
     const upstreamResponse = await runtime.proxy(request, generationId);
     const upstream = upstreamResponse.webSocket;
@@ -272,7 +299,7 @@ export class EnvironmentDurableObject implements DurableObject {
         return response;
       }
       if (request.method === "GET") {
-        return Response.json({
+        return jsonResponse(EnvironmentInspectedResponseSchema, {
           _tag: "EnvironmentInspected",
           snapshot: publicSnapshot(await coordinator.inspect()),
         });
@@ -283,7 +310,7 @@ export class EnvironmentDurableObject implements DurableObject {
         const created = await coordinator.create(payload);
         await this.#schedule(created.snapshot);
         const pairingUrl = `${created.pairing.endpoint}#${new URLSearchParams({ token: created.pairing.token }).toString()}`;
-        return Response.json({
+        return jsonResponse(EnvironmentCreatedResponseSchema, {
           _tag: "EnvironmentCreated",
           snapshot: publicSnapshot(created.snapshot),
           pairingUrl,
@@ -294,7 +321,7 @@ export class EnvironmentDurableObject implements DurableObject {
       if (tag === "RecoverEnvironment") {
         const recovered = await coordinator.recover(payload);
         await this.#schedule(recovered);
-        return Response.json({
+        return jsonResponse(EnvironmentRecoveredResponseSchema, {
           _tag: "EnvironmentRecovered",
           snapshot: publicSnapshot(recovered),
         });
@@ -302,7 +329,7 @@ export class EnvironmentDurableObject implements DurableObject {
       if (tag === "DestroyEnvironment") {
         const destroyed = await coordinator.destroy(payload);
         await this.#schedule(destroyed);
-        return Response.json({
+        return jsonResponse(EnvironmentDestroyedResponseSchema, {
           _tag: "EnvironmentDestroyed",
           snapshot: publicSnapshot(destroyed),
         });
@@ -315,7 +342,7 @@ export class EnvironmentDurableObject implements DurableObject {
         }
         const checkpointed = await coordinator.checkpoint(payload);
         await this.#schedule(checkpointed);
-        return Response.json({
+        return jsonResponse(EnvironmentCheckpointedResponseSchema, {
           _tag: "EnvironmentCheckpointed",
           snapshot: publicSnapshot(checkpointed),
         });

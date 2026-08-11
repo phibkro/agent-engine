@@ -65,6 +65,11 @@ const UpdateRefSucceededSchema = Schema.TaggedStruct("UpdateRefSucceeded", {
   sha: CommitShaSchema,
 });
 
+const ProviderFailureJsonSchema = Schema.fromJsonString(ProviderFailureSchema);
+const ReadRefResponseJsonSchema = Schema.fromJsonString(ReadRefResponseSchema);
+const VerifyCandidateSucceededJsonSchema = Schema.fromJsonString(VerifyCandidateSucceededSchema);
+const UpdateRefSucceededJsonSchema = Schema.fromJsonString(UpdateRefSucceededSchema);
+
 export interface GitRefState {
   readonly sha: CommitSha | undefined;
 }
@@ -427,7 +432,12 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     }
   }
 
-  async #call(path: string, payload: string): Promise<unknown> {
+  async #call<S extends Schema.ConstraintDecoder<unknown>>(
+    path: string,
+    payload: string,
+    schema: S,
+    operation: string,
+  ): Promise<S["Type"]> {
     let response: Response;
     try {
       response = await this.#binding.fetch(`https://outbound-git${path}`, {
@@ -439,26 +449,29 @@ class FetcherRepositoryTransport implements RepositoryTransport {
       throw new ProviderUnavailableError("GitHub repository transport");
     }
 
-    let body: unknown;
+    let body: string;
     try {
-      body = await response.json();
+      body = await response.text();
     } catch {
       throw providerResponseFailure("response");
     }
 
     if (!response.ok) {
-      const failure = this.#decode(ProviderFailureSchema, body, "failure");
+      const failure = this.#decode(ProviderFailureJsonSchema, body, "failure");
       return mapProviderFailure(failure.code);
     }
-    return body;
+    return this.#decode(schema, body, operation);
   }
 
   async readRef(ref: string): Promise<GitRefState> {
     const request = decode(ReadRefRequestSchema, { ref });
-    const payload = Schema.encodeSync(Schema.fromJsonString(ReadRefRequestSchema))(request);
-    const response = this.#decode(
-      ReadRefResponseSchema,
-      await this.#call("/read-ref", payload),
+    const payload = Schema.encodeSync(Schema.fromJsonString(ReadRefRequestSchema), {
+      onExcessProperty: "error",
+    })(request);
+    const response = await this.#call(
+      "/read-ref",
+      payload,
+      ReadRefResponseJsonSchema,
       "read-ref",
     );
     return { sha: response.sha };
@@ -470,10 +483,13 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     readonly repository: RepositoryIdentity;
   }): Promise<GitCandidateVerification> {
     const request = decode(VerifyCandidateRequestSchema, input);
-    const payload = Schema.encodeSync(Schema.fromJsonString(VerifyCandidateRequestSchema))(request);
-    const response = this.#decode(
-      VerifyCandidateSucceededSchema,
-      await this.#call("/verify", payload),
+    const payload = Schema.encodeSync(Schema.fromJsonString(VerifyCandidateRequestSchema), {
+      onExcessProperty: "error",
+    })(request);
+    const response = await this.#call(
+      "/verify",
+      payload,
+      VerifyCandidateSucceededJsonSchema,
       "candidate verification",
     );
     return {
@@ -495,10 +511,13 @@ class FetcherRepositoryTransport implements RepositoryTransport {
       nextSha: input.nextSha,
       force: input.force,
     });
-    const payload = Schema.encodeSync(Schema.fromJsonString(UpdateRefRequestSchema))(request);
-    const response = this.#decode(
-      UpdateRefSucceededSchema,
-      await this.#call("/update-ref", payload),
+    const payload = Schema.encodeSync(Schema.fromJsonString(UpdateRefRequestSchema), {
+      onExcessProperty: "error",
+    })(request);
+    const response = await this.#call(
+      "/update-ref",
+      payload,
+      UpdateRefSucceededJsonSchema,
       "ref update",
     );
     return { sha: response.sha };

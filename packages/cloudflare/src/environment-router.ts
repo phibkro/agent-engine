@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import {
   EnvironmentCheckpointedResponseSchema,
   EnvironmentCommandRequestSchema,
@@ -18,6 +18,22 @@ import { InvalidRequestError, ProviderUnavailableError, UnauthorizedError } from
 
 const ENVIRONMENT_PATH = /^\/v1\/environments\/([^/]+)(\/connect(?:\/.*)?)?$/u;
 const EnvironmentCommandJsonSchema = Schema.fromJsonString(EnvironmentCommandRequestSchema);
+const EnvironmentFailureJsonSchema = Schema.fromJsonString(EnvironmentFailureSchema);
+const EnvironmentInspectedResponseJsonSchema = Schema.fromJsonString(
+  EnvironmentInspectedResponseSchema,
+);
+const EnvironmentCreatedResponseJsonSchema = Schema.fromJsonString(
+  EnvironmentCreatedResponseSchema,
+);
+const EnvironmentRecoveredResponseJsonSchema = Schema.fromJsonString(
+  EnvironmentRecoveredResponseSchema,
+);
+const EnvironmentDestroyedResponseJsonSchema = Schema.fromJsonString(
+  EnvironmentDestroyedResponseSchema,
+);
+const EnvironmentCheckpointedResponseJsonSchema = Schema.fromJsonString(
+  EnvironmentCheckpointedResponseSchema,
+);
 const EnvironmentSourceIdentitySchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^\S+$/u)),
   Schema.check(
@@ -33,6 +49,40 @@ type EnvironmentResponseSchema =
   | typeof EnvironmentRecoveredResponseSchema
   | typeof EnvironmentDestroyedResponseSchema
   | typeof EnvironmentCheckpointedResponseSchema;
+type EnvironmentResponseJsonSchema =
+  | typeof EnvironmentInspectedResponseJsonSchema
+  | typeof EnvironmentCreatedResponseJsonSchema
+  | typeof EnvironmentRecoveredResponseJsonSchema
+  | typeof EnvironmentDestroyedResponseJsonSchema
+  | typeof EnvironmentCheckpointedResponseJsonSchema;
+
+const responseJsonSchemaFor = (
+  schema: EnvironmentResponseSchema,
+): EnvironmentResponseJsonSchema => {
+  switch (schema) {
+    case EnvironmentInspectedResponseSchema:
+      return EnvironmentInspectedResponseJsonSchema;
+    case EnvironmentCreatedResponseSchema:
+      return EnvironmentCreatedResponseJsonSchema;
+    case EnvironmentRecoveredResponseSchema:
+      return EnvironmentRecoveredResponseJsonSchema;
+    case EnvironmentDestroyedResponseSchema:
+      return EnvironmentDestroyedResponseJsonSchema;
+    case EnvironmentCheckpointedResponseSchema:
+      return EnvironmentCheckpointedResponseJsonSchema;
+    default:
+      throw new ProviderUnavailableError(
+        "Environment Durable Object",
+        "returned an unsupported response schema",
+      );
+  }
+};
+
+const jsonResponse = <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  value: unknown,
+  init?: ResponseInit,
+): Response => Response.json(decodeUnknownStrict(schema, value), init);
 
 const statusForFailure = (tag: EnvironmentFailure["_tag"]): number => {
   switch (tag) {
@@ -87,7 +137,7 @@ const failureCause = (cause: unknown): EnvironmentFailure => {
 
 const failureResponse = (cause: unknown): Response => {
   const failure = failureCause(cause);
-  return Response.json(Schema.encodeSync(EnvironmentFailureSchema)(failure), {
+  return jsonResponse(EnvironmentFailureSchema, failure, {
     status: statusForFailure(failure._tag),
   });
 };
@@ -120,23 +170,20 @@ const responseSchemaFor = (command: EnvironmentCommandRequest): EnvironmentRespo
   }
 };
 
-const jsonBody = async (response: Response): Promise<unknown> => {
-  try {
-    return await response.json();
-  } catch {
-    throw new ProviderUnavailableError("Environment Durable Object", "returned invalid JSON");
-  }
-};
-
 const responseFor = async (
   response: Response,
   schema: EnvironmentResponseSchema,
 ): Promise<Response> => {
-  const body = await jsonBody(response);
+  let body: string;
+  try {
+    body = await response.text();
+  } catch {
+    throw new ProviderUnavailableError("Environment Durable Object", "returned invalid JSON");
+  }
   if (!response.ok) {
     let failure: EnvironmentFailure;
     try {
-      failure = decodeUnknownStrict(EnvironmentFailureSchema, body);
+      failure = decodeUnknownStrict(EnvironmentFailureJsonSchema, body);
     } catch {
       throw new ProviderUnavailableError(
         "Environment Durable Object",
@@ -144,13 +191,13 @@ const responseFor = async (
       );
     }
     const redacted = redactedFailure(failure._tag);
-    return Response.json(Schema.encodeSync(EnvironmentFailureSchema)(redacted), {
+    return jsonResponse(EnvironmentFailureSchema, redacted, {
       status: statusForFailure(redacted._tag),
     });
   }
   try {
-    const decoded = decodeUnknownStrict(schema, body);
-    return Response.json(Schema.encodeSync(schema)(decoded), { status: response.status });
+    const decoded = decodeUnknownStrict(responseJsonSchemaFor(schema), body);
+    return jsonResponse(schema, decoded, { status: response.status });
   } catch {
     throw new ProviderUnavailableError(
       "Environment Durable Object",
@@ -158,6 +205,7 @@ const responseFor = async (
     );
   }
 };
+
 export class EnvironmentRouter {
   readonly #env: CloudflareRuntimeEnv;
 
@@ -194,7 +242,9 @@ export class EnvironmentRouter {
         if (command.environmentId !== environmentId) {
           throw new InvalidRequestError("Route and command Environment identifiers differ");
         }
-        body = Schema.encodeSync(EnvironmentCommandJsonSchema)(command);
+        body = Schema.encodeSync(EnvironmentCommandJsonSchema, {
+          onExcessProperty: "error",
+        })(command);
         responseSchema = responseSchemaFor(command);
       }
 
@@ -220,10 +270,9 @@ export class EnvironmentRouter {
             .map((limiter) => limiter.limit({ key: `${source}:${environmentId}` })),
         );
         if (decisions.some((decision) => !decision.success)) {
-          return Response.json(
-            Schema.encodeSync(EnvironmentRateLimitedResponseSchema)({
-              _tag: "EnvironmentRateLimited",
-            }),
+          return jsonResponse(
+            EnvironmentRateLimitedResponseSchema,
+            { _tag: "EnvironmentRateLimited" },
             { status: 429 },
           );
         }

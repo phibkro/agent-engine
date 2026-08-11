@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 import {
+  digestCanonical,
+  type CanonicalJsonValue,
   EnvironmentCheckpointRequestSchema,
   EnvironmentCommandIdSchema,
   EnvironmentCreateRequestSchema,
@@ -7,13 +9,12 @@ import {
   EnvironmentPairingSchema,
   EnvironmentRecoverRequestSchema,
   EnvironmentSnapshotSchema,
-  Sha256DigestSchema,
+  RuntimeVersionTupleSchema,
   decodeUnknownStrict,
   type EnvironmentCheckpoint,
   type EnvironmentPairing,
   type EnvironmentSnapshot,
   type RuntimeVersionTuple,
-  type Sha256Digest,
 } from "@work-engine/protocol";
 import { InvalidRequestError } from "./errors.ts";
 import type { PlatformCapabilities } from "./contract.ts";
@@ -66,15 +67,6 @@ const FinalDestroyFailureSchema = Schema.TaggedStruct("EnvironmentDestroyFailed"
   reason: Schema.Literal("Final checkpoint failed"),
   dataLossWarning: Schema.Literal(true),
 });
-
-const digestText = async (
-  value: string,
-  capabilities: Pick<PlatformCapabilities, "sha256">,
-): Promise<Sha256Digest> =>
-  decodeUnknownStrict(
-    Sha256DigestSchema,
-    await capabilities.sha256(new TextEncoder().encode(value)),
-  );
 
 const MILLIS_PER_DAY = 86_400_000;
 const TIMESTAMP_PARTS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
@@ -179,7 +171,11 @@ export class EnvironmentCoordinator {
 
   async create(input: unknown): Promise<EnvironmentCreated> {
     const request = decodeUnknownStrict(EnvironmentCreateRequestSchema, input);
-    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
+    const canonicalRequest = request satisfies CanonicalJsonValue;
+    const requestDigest = await digestCanonical(
+      canonicalRequest,
+      this.#options.capabilities.sha256,
+    );
     const existing = await this.#options.store.load();
     if (existing !== undefined) {
       const receipt = existing.commandReceipts.find(
@@ -341,7 +337,11 @@ export class EnvironmentCoordinator {
     if (current.environmentId !== request.environmentId) {
       throw new InvalidRequestError("Environment identifier does not match this coordinator");
     }
-    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
+    const canonicalRequest = request satisfies CanonicalJsonValue;
+    const requestDigest = await digestCanonical(
+      canonicalRequest,
+      this.#options.capabilities.sha256,
+    );
     const existingReceipt = current.commandReceipts.find(
       (receipt) => receipt.commandId === request.commandId,
     );
@@ -448,7 +448,11 @@ export class EnvironmentCoordinator {
       throw new InvalidRequestError("Environment has no generation to replace");
     }
 
-    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
+    const canonicalRequest = request satisfies CanonicalJsonValue;
+    const requestDigest = await digestCanonical(
+      canonicalRequest,
+      this.#options.capabilities.sha256,
+    );
     if (current.lifecycle !== "Ready" && current.lifecycle !== "Failed") {
       throw new InvalidRequestError("Environment recovery is already in progress");
     }
@@ -542,7 +546,11 @@ export class EnvironmentCoordinator {
   async destroy(input: unknown): Promise<EnvironmentSnapshot> {
     const request = decodeUnknownStrict(EnvironmentDestroyRequestSchema, input);
     const current = await this.#requireEnvironment(request.environmentId);
-    const requestDigest = await digestText(JSON.stringify(request), this.#options.capabilities);
+    const canonicalRequest = request satisfies CanonicalJsonValue;
+    const requestDigest = await digestCanonical(
+      canonicalRequest,
+      this.#options.capabilities.sha256,
+    );
     const existingReceipt = current.commandReceipts.find(
       (receipt) => receipt.commandId === request.commandId,
     );
