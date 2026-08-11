@@ -333,7 +333,13 @@ export type SessionResult = typeof SessionResultSchema.Type;
 export const SpawnCloudTaskRequestSchema = Schema.TaggedStruct("Spawn", {
   sessionId: SessionIdSchema,
   task: CloudTaskSchema,
-});
+}).check(
+  Schema.makeFilter(
+    (request) =>
+      request.sessionId === request.task.sessionId ||
+      "spawn route sessionId must match the CloudTask sessionId",
+  ),
+);
 export type SpawnCloudTaskRequest = typeof SpawnCloudTaskRequestSchema.Type;
 export const CloudTaskSpawnRequestSchema = SpawnCloudTaskRequestSchema;
 export type CloudTaskSpawnRequest = SpawnCloudTaskRequest;

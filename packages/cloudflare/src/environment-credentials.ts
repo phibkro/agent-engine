@@ -1,7 +1,4 @@
-import {
-  EnvironmentCredentialLeaseSchema,
-  decodeUnknownStrict,
-} from "@work-engine/protocol";
+import { EnvironmentCredentialLeaseSchema, decodeUnknownStrict } from "@work-engine/protocol";
 import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
 
 type ProtocolEnvironmentCredentialLease = typeof EnvironmentCredentialLeaseSchema.Type;

@@ -280,7 +280,10 @@ export class CloudflareCloudTaskClient {
       try {
         failure = decode(CloudTaskFailureSchema, body);
       } catch {
-        throw new ProviderUnavailableError("Cloud-task service binding", "invalid failure response");
+        throw new ProviderUnavailableError(
+          "Cloud-task service binding",
+          "invalid failure response",
+        );
       }
       if (failure._tag === "ProviderUnavailable") {
         throw new ProviderUnavailableError("Cloud-task service binding", failure.reason);

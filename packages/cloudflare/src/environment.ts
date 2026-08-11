@@ -57,8 +57,7 @@ export interface EnvironmentCreated {
   readonly snapshot: EnvironmentSnapshot;
   readonly pairing: EnvironmentPairing;
 }
-const FinalDestroyFailureSchema = Schema.Struct({
-  _tag: Schema.Literal("EnvironmentDestroyFailed"),
+const FinalDestroyFailureSchema = Schema.TaggedStruct("EnvironmentDestroyFailed", {
   lifecycle: Schema.Literal("Failed"),
   reason: Schema.Literal("Final checkpoint failed"),
   dataLossWarning: Schema.Literal(true),

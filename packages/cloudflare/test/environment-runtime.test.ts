@@ -17,7 +17,6 @@ describe("FetcherEnvironmentCredentialBroker", () => {
           requests.push({ input, ...(init === undefined ? {} : { init }) });
           return Response.json({
             generationToken: "generation-token",
-            brokerOrigin: "https://broker.example",
             expiresAt: "2026-08-10T01:00:00.000Z",
           });
         },
@@ -33,7 +32,7 @@ describe("FetcherEnvironmentCredentialBroker", () => {
     });
     expect(lease).toEqual({
       generationToken: "generation-token",
-      brokerOrigin: "https://broker.example",
+      brokerOrigin: "https://vault.example",
       expiresAt: "2026-08-10T01:00:00.000Z",
     });
     expect(requests.map((request) => request.init?.method)).toEqual(["POST", "DELETE"]);

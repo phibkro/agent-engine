@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   CacheDigestMismatchError,
   CloudflareProjectMemory,
+  CloudTaskSchema,
+  decode,
   InMemoryCloudTaskDirectory,
   MemoryRevisionSchema,
   ProjectMemoryDurableObject,
   ProjectMemoryState,
+  ProjectMemoryProvenanceSchema,
   SessionState,
   TrustedRepositoryPublisher,
   makeRepositoryGrant,
@@ -19,7 +22,7 @@ const uuid = "00000000-0000-4000-8000-000000000001";
 const digest = (hex: string): string => `sha256:${hex.repeat(64 / hex.length)}`;
 const initialMemoryRevision = MemoryRevisionSchema.make(0);
 const task = (): CloudTask =>
-  ({
+  decode(CloudTaskSchema, {
     _tag: "CloudTask",
     taskId: `tsk_${uuid}`,
     sessionId: `ses_${uuid}`,
@@ -33,7 +36,7 @@ const task = (): CloudTask =>
     requiredCommands: ["bun test"],
     deadline: "2026-08-10T00:00:00.000Z",
     outputLimitBytes: 100_000,
-  }) as unknown as CloudTask;
+  });
 
 const request = (payload: Record<string, unknown>, token = "test-token"): Request =>
   new Request("https://cloud-task/v1/cloud-tasks", {
@@ -152,19 +155,22 @@ describe("CloudTask Send JSON values", () => {
   });
 });
 
+const provenance = () =>
+  decode(ProjectMemoryProvenanceSchema, {
+    _tag: "ProjectMemoryProvenance",
+    source: "worker",
+    observedAt: "2026-08-10T00:00:00.000Z",
+  });
+
 describe("Project Memory authority", () => {
   it("rejects stale acceptance while preserving pinned reads", () => {
     const memory = new ProjectMemoryState(task().projectId);
-    const provenance = {
-      _tag: "ProjectMemoryProvenance",
-      source: "worker",
-      observedAt: "2026-08-10T00:00:00.000Z",
-    };
+    const source = provenance();
     const proposal = memory.proposeMemory(
       task().sessionId,
       initialMemoryRevision,
       "build uses Bun",
-      provenance,
+      source,
     );
     const revision = memory.acceptMemory(proposal.proposalId, initialMemoryRevision);
     expect(memory.readContext(initialMemoryRevision)).toHaveLength(0);
@@ -173,30 +179,26 @@ describe("Project Memory authority", () => {
       task().sessionId,
       initialMemoryRevision,
       "stale claim",
-      provenance,
+      source,
     );
     expect(() => memory.acceptMemory(stale.proposalId, initialMemoryRevision)).toThrow(
       /Expected memory revision/iu,
     );
   });
 
-  it("separates worker proposal authority from coordinator acceptance authority", () => {
+  it("separates worker proposal authority from coordinator acceptance authority", async () => {
     const worker = new CloudflareProjectMemory(undefined, task().projectId, {
       sessionId: task().sessionId,
     });
     const coordinator = new CloudflareProjectMemory(undefined, task().projectId, {
       coordinatorSecret: "coordinator-secret",
     });
-    expect(() =>
+    await expect(
       worker.acceptMemory("mpp_00000000-0000-4000-8000-000000000001", initialMemoryRevision),
-    ).toThrow(/cannot accept Project Memory proposals/iu);
-    expect(() =>
-      coordinator.proposeMemory(initialMemoryRevision, "claim", {
-        _tag: "ProjectMemoryProvenance",
-        source: "worker",
-        observedAt: "2026-08-10T00:00:00.000Z",
-      }),
-    ).toThrow(/cannot accept Project Memory proposals/iu);
+    ).rejects.toThrow(/cannot accept Project Memory proposals/iu);
+    await expect(
+      coordinator.proposeMemory(initialMemoryRevision, "claim", provenance()),
+    ).rejects.toThrow(/cannot accept Project Memory proposals/iu);
   });
   it("does not advance the cached revision after persistence fails", async () => {
     let persisted: unknown;
@@ -259,7 +261,7 @@ describe("Project Memory authority", () => {
       new Request("https://project-memory/read", {
         method: "POST",
         headers: identity,
-        body: JSON.stringify({ atRevision: 1 }),
+        body: JSON.stringify({ atRevision: 1, query: "" }),
       }),
     );
     expect(readAfterFailure.status).toBe(409);
@@ -346,7 +348,7 @@ describe("Dependency cache", () => {
       repository: { owner: "org", name: "repo" },
       baseCommit: task().baseCommit,
       writablePaths: ["packages/**"],
-      expiresAt: "2026-08-11T00:00:00.000Z",
+      expiresAt: "2099-08-11T00:00:00.000Z",
     });
     await expect(publisher.checkout(grant, task().sessionId)).rejects.toMatchObject({
       _tag: "ProviderUnavailable",

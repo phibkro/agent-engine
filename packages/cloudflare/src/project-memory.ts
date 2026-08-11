@@ -57,8 +57,7 @@ const MemoryProposalRecordSchema = Schema.Struct({
 });
 type MemoryProposalRecord = typeof MemoryProposalRecordSchema.Type;
 
-export const ProjectMemorySnapshotSchema = Schema.Struct({
-  _tag: Schema.Literal("ProjectMemorySnapshot"),
+export const ProjectMemorySnapshotSchema = Schema.TaggedStruct("ProjectMemorySnapshot", {
   schemaVersion: SchemaVersionSchema,
   projectId: ProjectIdSchema,
   currentRevision: MemoryRevisionSchema,
@@ -110,7 +109,6 @@ const initialSnapshot = (projectId: string): ProjectMemorySnapshot =>
     proposals: [],
   });
 
-
 const makeFact = (claim: string, provenance: ProjectMemoryProvenance): ProjectMemoryFact =>
   decode(ProjectMemoryFactSchema, {
     _tag: "ProjectMemoryFact",
@@ -151,7 +149,6 @@ const makeRevision = (
     acceptedAt: nowIso(),
     ...(previousRevision === undefined ? {} : { previousRevision }),
   });
-
 
 /** Single authority for accepted Project facts. It intentionally has no session identity in reads. */
 export class ProjectMemoryState {

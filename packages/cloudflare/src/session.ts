@@ -58,8 +58,7 @@ const terminalResultTag = (status: SessionLifecycle): SessionResult["_tag"] | un
   if (status === "completed") return "Completed";
   return undefined;
 };
-const SessionSnapshotBaseSchema = Schema.Struct({
-  _tag: Schema.Literal("SessionSnapshot"),
+const SessionSnapshotBaseSchema = Schema.TaggedStruct("SessionSnapshot", {
   schemaVersion: SchemaVersionSchema,
   task: CloudTaskSchema,
   admission: SessionAdmissionSchema,
@@ -74,6 +73,7 @@ const SessionSnapshotBaseSchema = Schema.Struct({
   predecessorSandboxIds: Schema.Array(NonEmptyStringSchema),
   wipCommit: Schema.optionalKey(CommitShaSchema),
   candidateCommit: Schema.optionalKey(CommitShaSchema),
+  updatedAt: TimestampSchema,
 });
 
 export const SessionSnapshotSchema = SessionSnapshotBaseSchema.check(
@@ -259,6 +259,7 @@ export class SessionState {
       acceptedMessages: {},
       sideEffects: [],
       predecessorSandboxIds: [],
+      updatedAt: nowIso(),
     });
   }
 

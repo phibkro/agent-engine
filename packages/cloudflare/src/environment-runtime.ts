@@ -60,9 +60,7 @@ const requireSafeGitSegment = (value: string, field: string): string => {
   return value;
 };
 
-const parsePairingOutput = (
-  output: string,
-): typeof EnvironmentPairingOutputSchema.Type => {
+const parsePairingOutput = (output: string): typeof EnvironmentPairingOutputSchema.Type => {
   const token = /^Token:\s*(\S+)\s*$/mu.exec(output)?.[1];
   const expiresAt = /^Expires:\s*(\S+)\s*$/mu.exec(output)?.[1];
   return decodeUnknownStrict(EnvironmentPairingOutputSchema, { token, expiresAt });
@@ -187,7 +185,6 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   async isReady(generationId: string): Promise<boolean> {
     const process = await this.#sandbox(generationId).getProcess(T3CODE_PROCESS_ID);
     return process !== null && (await processState(process)).status === "running";
-
   }
   async mintPairing(input: { readonly environmentId: string }): Promise<EnvironmentPairing> {
     const sandbox = this.#activeSandbox;
@@ -252,7 +249,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         try {
           await this.deleteCheckpoint(candidate);
         } catch (cleanupFailure) {
-          throw new AggregateError([cause, cleanupFailure], "Checkpoint cleanup failed");
+          const validationReason =
+            cause instanceof Error ? cause.message : "checkpoint validation failed";
+          throw new Error(`Checkpoint cleanup failed after ${validationReason}`, {
+            cause: cleanupFailure,
+          });
         }
         throw cause;
       }
@@ -434,7 +435,8 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         );
       }
       if (cleanupFailures.length > 0) {
-        throw new AggregateError([cause, ...cleanupFailures], "Sandbox recovery cleanup failed");
+        const cleanupReason = cleanupFailures.map((error) => error.message).join("; ");
+        throw new Error(`Sandbox recovery cleanup failed: ${cleanupReason}`, { cause });
       }
       throw cause;
     }
