@@ -1,8 +1,8 @@
 {
-  "name": "work-engine",
+  "name": "agent-engine",
   "version": "0.0.0",
   "private": true,
-  "description": "A durable Work Engine tracer for governed OMP sessions.",
+  "description": "A portable semantic control plane for durable, governed project work performed by humans, AI agents, and deterministic systems.",
   "workspaces": [
     "apps/*",
     "packages/*"

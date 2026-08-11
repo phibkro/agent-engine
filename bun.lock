@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "work-engine",
+      "name": "agent-engine",
       "dependencies": {
         "@cloudflare/containers": "0.3.7",
         "@effect/platform-bun": "4.0.0-beta.102",

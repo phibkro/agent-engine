@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { BunRuntime } from "@effect/platform-bun";
 import { Effect, Layer, type Exit } from "effect";
 import { executeInvocation, parseInvocation } from "./commands.ts";
 import { makeCloudTaskClient } from "./client.ts";
@@ -94,7 +95,7 @@ export const main = (argv: ReadonlyArray<string> = Bun.argv.slice(2)): Effect.Ef
   );
 
 if (import.meta.main) {
-  await Effect.runPromise(main());
+  BunRuntime.runMain(main(), { disableErrorReporting: true });
 }
 
 export type CliExit = Exit.Exit<number, never>;

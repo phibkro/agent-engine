@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Match, Schema } from "effect";
 import type { ConfigError } from "./config.ts";
 import type { CloudTaskClientError } from "./client.ts";
 import type { ParseFailure, SessionOperation } from "./commands.ts";
@@ -41,30 +41,21 @@ export interface ResultEnvelope {
   readonly failure?: CliFailure;
 }
 
-export const exitCodeFor = (failure: CliFailure): ExitCode => {
-  switch (failure._tag) {
-    case "UsageFailure":
-      return ExitCode.usage;
-    case "CloudTaskUnauthorized":
-      return ExitCode.unauthorized;
-    case "CloudTaskNotFound":
-      return ExitCode.notFound;
-    case "CloudTaskRejected":
-    case "CloudTaskTerminal":
-      return ExitCode.rejected;
-    case "ConfigDecodeFailure":
-    case "ConfigPermissions":
-    case "ConfigIoFailure":
-    case "ConfigMissing":
-    case "McpDecodeFailure":
-    case "McpMethodNotFound":
-      return ExitCode.decode;
-    case "CloudTaskUnavailable":
-      return ExitCode.unavailable;
-    case "UnexpectedFailure":
-      return ExitCode.unavailable;
-  }
-};
+export const exitCodeFor = Match.typeTags<CliFailure, ExitCode>()({
+  UsageFailure: () => ExitCode.usage,
+  CloudTaskUnauthorized: () => ExitCode.unauthorized,
+  CloudTaskNotFound: () => ExitCode.notFound,
+  CloudTaskRejected: () => ExitCode.rejected,
+  CloudTaskTerminal: () => ExitCode.rejected,
+  ConfigDecodeFailure: () => ExitCode.decode,
+  ConfigPermissions: () => ExitCode.decode,
+  ConfigIoFailure: () => ExitCode.decode,
+  ConfigMissing: () => ExitCode.decode,
+  McpDecodeFailure: () => ExitCode.decode,
+  McpMethodNotFound: () => ExitCode.decode,
+  CloudTaskUnavailable: () => ExitCode.unavailable,
+  UnexpectedFailure: () => ExitCode.unavailable,
+});
 
 export const successEnvelope = (operation: SessionOperation, data: unknown): ResultEnvelope => ({
   _tag: "CloudTaskResult",

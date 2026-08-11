@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Match, Schema } from "effect";
 import * as Redacted from "effect/Redacted";
 import {
   AcceptedCursorSchema,
@@ -76,40 +76,26 @@ const responseValue = <S extends Schema.ConstraintDecoder<unknown>>(
   return decodeStrict(schema, value);
 };
 
-const expectedFailureStatus = (tag: CloudTaskFailure["_tag"]): number => {
-  switch (tag) {
-    case "Unauthenticated":
-      return 401;
-    case "Unauthorized":
-      return 403;
-    case "InvalidRequest":
-      return 400;
-    case "SessionNotFound":
-      return 404;
-    case "SessionConflict":
-    case "SessionTerminal":
-      return 409;
-    case "ProviderUnavailable":
-      return 503;
-  }
-};
+const expectedFailureStatus = Match.typeTags<CloudTaskFailure, number>()({
+  Unauthenticated: () => 401,
+  Unauthorized: () => 403,
+  InvalidRequest: () => 400,
+  SessionNotFound: () => 404,
+  SessionConflict: () => 409,
+  SessionTerminal: () => 409,
+  ProviderUnavailable: () => 503,
+});
 
-const cloudTaskFailure = (failure: CloudTaskFailure, sessionId: SessionId): CloudTaskError => {
-  switch (failure._tag) {
-    case "Unauthenticated":
-    case "Unauthorized":
-      return new CloudTaskUnauthorized({ reason: failure.reason });
-    case "InvalidRequest":
-    case "SessionConflict":
-      return rejected(failure.reason);
-    case "SessionNotFound":
-      return new CloudTaskNotFound({ sessionId });
-    case "SessionTerminal":
-      return new CloudTaskTerminal({ sessionId, state: failure.state });
-    case "ProviderUnavailable":
-      return new CloudTaskUnavailable({ reason: failure.reason });
-  }
-};
+const cloudTaskFailure = (failure: CloudTaskFailure, sessionId: SessionId): CloudTaskError =>
+  Match.valueTags(failure, {
+    Unauthenticated: ({ reason }) => new CloudTaskUnauthorized({ reason }),
+    Unauthorized: ({ reason }) => new CloudTaskUnauthorized({ reason }),
+    InvalidRequest: ({ reason }) => rejected(reason),
+    SessionNotFound: () => new CloudTaskNotFound({ sessionId }),
+    SessionConflict: ({ reason }) => rejected(reason),
+    SessionTerminal: ({ state }) => new CloudTaskTerminal({ sessionId, state }),
+    ProviderUnavailable: ({ reason }) => new CloudTaskUnavailable({ reason }),
+  });
 
 const cloudflareAccessReason = "Cloudflare Access rejected the service credentials";
 const invalidFailureEnvelope = "cloud-task endpoint returned an invalid failure envelope";
@@ -139,7 +125,7 @@ const decodeFailureResponse = (
   }
   try {
     const failure = decodeJsonStrict(CloudTaskFailureSchema, text);
-    if (expectedFailureStatus(failure._tag) !== response.status) {
+    if (expectedFailureStatus(failure) !== response.status) {
       return new CloudTaskUnavailable({
         reason: `${operation}: ${invalidFailureEnvelope}`,
       });
