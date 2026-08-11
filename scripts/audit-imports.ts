@@ -62,7 +62,7 @@ const boundaries: readonly Boundary[] = [
 ];
 
 const internalPackage = /^@work-engine\/(protocol|runtime|cloudflare|control-plane|cli)(?:$|\/)/u;
-const effectRuntimeRoots = new Set(["apps/cli/src/main.ts"]);
+const effectRuntimeRoots = new Set(["apps/cli/src/main.ts", "apps/control-plane/src/index.ts"]);
 const ambientPlatformAdapters = new Set([
   "apps/cli/src/platform.ts",
   "packages/cloudflare/src/platform-capabilities.ts",
@@ -87,6 +87,40 @@ const importsIn = (file: string, source: string): readonly string[] => {
 const forbidden = (specifier: string, prefixes: readonly string[]): string | undefined =>
   prefixes.find((prefix) => specifier === prefix || specifier.startsWith(prefix));
 
+const testSource = (file: string): boolean =>
+  file.includes("/test/") ||
+  file.includes("/__tests__/") ||
+  /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file);
+
+const taggedErrorClasses = (
+  sources: ReadonlyArray<{ readonly file: string; readonly source: string }>,
+): ReadonlySet<string> => {
+  const inheritance = new Map<string, string>();
+  for (const { file, source } of sources) {
+    if (testSource(file)) continue;
+    for (const match of source.matchAll(
+      /\bclass\s+([A-Z][A-Za-z0-9]*Error)\s+extends\s+([A-Z][A-Za-z0-9.]*)/gu,
+    )) {
+      const name = match[1];
+      const base = match[2];
+      if (name !== undefined && base !== undefined) inheritance.set(name, base);
+    }
+  }
+
+  const tagged = new Set(["CloudRuntimeError"]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, base] of inheritance) {
+      if (tagged.has(name)) continue;
+      if (base === "Schema.TaggedErrorClass" || tagged.has(base)) {
+        tagged.add(name);
+        changed = true;
+      }
+    }
+  }
+  return tagged;
+};
 const run = async (): Promise<void> => {
   const errors: string[] = [];
   const files = repositoryFiles();
@@ -102,6 +136,7 @@ const run = async (): Promise<void> => {
       ];
     }),
   );
+  const typedErrors = taggedErrorClasses(checkedSources);
   let checkedImports = 0;
   for (const { file, boundary, source } of checkedSources) {
     for (const line of source.split("\n")) {
@@ -121,10 +156,7 @@ const run = async (): Promise<void> => {
         errors.push(`${file} has an expired Effect exception (${removalDate ?? "missing date"})`);
       }
     }
-    const isTestSource =
-      file.includes("/test/") ||
-      file.includes("/__tests__/") ||
-      /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file);
+    const isTestSource = testSource(file);
     if (!isTestSource && /\bas\s+(?:never|any|unknown\s+as)\b/u.test(source)) {
       errors.push(`${file} contains an unsafe production cast; decode or construct the type`);
     }
@@ -151,8 +183,15 @@ const run = async (): Promise<void> => {
     ) {
       errors.push(`${file} accesses ambient platform state outside an approved adapter`);
     }
-    if (!isTestSource && /\bthrow\s+new\s+(?:Aggregate)?Error\s*\(/u.test(source)) {
-      errors.push(`${file} throws an untyped production error; use a tagged domain error`);
+    if (!isTestSource) {
+      for (const match of source.matchAll(/\bthrow\s+new\s+((?:[A-Z][A-Za-z0-9]*)?Error)\s*\(/gu)) {
+        const errorName = match[1];
+        if (errorName !== undefined && !typedErrors.has(errorName)) {
+          errors.push(
+            `${file} throws untyped production error ${errorName}; use a tagged domain error`,
+          );
+        }
+      }
     }
     for (const specifier of importsIn(file, source)) {
       checkedImports += 1;

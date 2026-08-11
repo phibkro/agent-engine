@@ -144,25 +144,3 @@ export const encode = <S extends Schema.ConstraintEncoder<unknown>>(
   schema: S,
   value: S["Type"],
 ): unknown => Schema.encodeSync(schema)(value);
-
-export const record = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError("Expected a record");
-  }
-  return value as Record<string, unknown>;
-};
-
-export const optionalString = (value: unknown): string | undefined =>
-  typeof value === "string" ? value : undefined;
-
-export const requiredString = (value: unknown, field: string): string => {
-  const result = optionalString(value);
-  if (result === undefined || result.length === 0) throw new TypeError(`Missing ${field}`);
-  return result;
-};
-
-export const tagOf = (value: unknown): string | undefined => {
-  if (typeof value !== "object" || value === null) return undefined;
-  const tag = (value as Record<string, unknown>)["_tag"];
-  return typeof tag === "string" ? tag : undefined;
-};
