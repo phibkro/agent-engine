@@ -1,3 +1,4 @@
+import type { Json } from "effect/Schema";
 import { Effect, Schema } from "effect";
 import { CloudTaskSchema, MessageIdSchema, SessionIdSchema } from "@work-engine/protocol";
 import type { CloudTaskClient } from "@work-engine/runtime";
@@ -15,7 +16,7 @@ export type SessionToolName = (typeof SessionToolName)[keyof typeof SessionToolN
 export interface McpTool {
   readonly name: SessionToolName;
   readonly description: string;
-  readonly inputSchema: Record<string, unknown>;
+  readonly inputSchema: Readonly<Record<string, Json>>;
 }
 
 export const SESSION_TOOLS: ReadonlyArray<McpTool> = [
