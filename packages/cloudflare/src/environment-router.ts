@@ -1,29 +1,99 @@
 import { Schema } from "effect";
 import {
+  EnvironmentCheckpointedResponseSchema,
   EnvironmentCommandRequestSchema,
+  EnvironmentCreatedResponseSchema,
+  EnvironmentDestroyedResponseSchema,
+  EnvironmentFailureSchema,
+  EnvironmentInspectedResponseSchema,
+  EnvironmentRateLimitedResponseSchema,
+  EnvironmentRecoveredResponseSchema,
   EnvironmentIdSchema,
   decodeUnknownStrict,
   type EnvironmentCommandRequest,
+  type EnvironmentFailure,
 } from "@work-engine/protocol";
 import type { CloudflareRuntimeEnv } from "./env.ts";
-import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
+import {
+  InvalidRequestError,
+  ProviderUnavailableError,
+  UnauthorizedError,
+} from "./errors.ts";
 
 const ENVIRONMENT_PATH = /^\/v1\/environments\/([^/]+)(\/connect(?:\/.*)?)?$/u;
+const EnvironmentCommandJsonSchema = Schema.fromJsonString(EnvironmentCommandRequestSchema);
+const EnvironmentSourceIdentitySchema = Schema.String.pipe(
+  Schema.check(Schema.isPattern(/^\S+$/u)),
+  Schema.check(
+    Schema.makeFilter(
+      (value) => value.toLowerCase() !== "unknown" || "source identity must be verified",
+    ),
+  ),
+);
+
+type EnvironmentResponseSchema =
+  | typeof EnvironmentInspectedResponseSchema
+  | typeof EnvironmentCreatedResponseSchema
+  | typeof EnvironmentRecoveredResponseSchema
+  | typeof EnvironmentDestroyedResponseSchema
+  | typeof EnvironmentCheckpointedResponseSchema;
+
+const statusForFailure = (tag: EnvironmentFailure["_tag"]): number => {
+  switch (tag) {
+    case "Unauthorized":
+      return 403;
+    case "InvalidRequest":
+      return 400;
+    case "ProviderUnavailable":
+      return 503;
+    case "EnvironmentRuntimeFailure":
+    case "EnvironmentRouterFailure":
+      return 500;
+  }
+};
+
+const redactedReason = (tag: EnvironmentFailure["_tag"]): string => {
+  switch (tag) {
+    case "Unauthorized":
+      return "Environment operation is unauthorized";
+    case "InvalidRequest":
+      return "Environment request is invalid";
+    case "ProviderUnavailable":
+      return "Environment provider is unavailable";
+    case "EnvironmentRuntimeFailure":
+      return "Environment runtime failed";
+    case "EnvironmentRouterFailure":
+      return "Environment routing failed";
+  }
+};
+
+const redactedFailure = (tag: EnvironmentFailure["_tag"]): EnvironmentFailure => {
+  switch (tag) {
+    case "Unauthorized":
+      return { _tag: "Unauthorized", reason: redactedReason(tag) };
+    case "InvalidRequest":
+      return { _tag: "InvalidRequest", reason: redactedReason(tag) };
+    case "ProviderUnavailable":
+      return { _tag: "ProviderUnavailable", reason: redactedReason(tag) };
+    case "EnvironmentRuntimeFailure":
+      return { _tag: "EnvironmentRuntimeFailure", reason: redactedReason(tag) };
+    case "EnvironmentRouterFailure":
+      return { _tag: "EnvironmentRouterFailure", reason: redactedReason(tag) };
+  }
+};
+
+const failureCause = (cause: unknown): EnvironmentFailure => {
+  if (cause instanceof UnauthorizedError) return redactedFailure("Unauthorized");
+  if (cause instanceof InvalidRequestError) return redactedFailure("InvalidRequest");
+  if (cause instanceof ProviderUnavailableError) return redactedFailure("ProviderUnavailable");
+  return redactedFailure("EnvironmentRouterFailure");
+};
 
 const failureResponse = (cause: unknown): Response => {
-  if (cause instanceof UnauthorizedError) {
-    return Response.json({ _tag: cause._tag, reason: cause.message }, { status: 403 });
-  }
-  if (cause instanceof InvalidRequestError) {
-    return Response.json({ _tag: cause._tag, reason: cause.message }, { status: 400 });
-  }
-  return Response.json(
-    {
-      _tag: "EnvironmentRouterFailure",
-      reason: "Environment routing failed",
-    },
-    { status: 500 },
-  );
+  const failure = failureCause(cause);
+  return Response.json(Schema.encodeSync(EnvironmentFailureSchema)(failure), {
+    status: statusForFailure(failure._tag),
+  });
 };
 
 const requireOperator = (request: Request, expected: string | undefined): void => {
@@ -34,16 +104,62 @@ const requireOperator = (request: Request, expected: string | undefined): void =
 };
 
 const commandBody = (body: string): EnvironmentCommandRequest => {
-  let value: unknown;
   try {
-    value = decodeUnknownStrict(Schema.UnknownFromJsonString, body);
-  } catch {
-    throw new InvalidRequestError("Environment command body must be JSON");
-  }
-  try {
-    return decodeUnknownStrict(EnvironmentCommandRequestSchema, value);
+    return decodeUnknownStrict(EnvironmentCommandJsonSchema, body);
   } catch {
     throw new InvalidRequestError("Environment command body is invalid");
+  }
+};
+
+const responseSchemaFor = (command: EnvironmentCommandRequest): EnvironmentResponseSchema => {
+  switch (command._tag) {
+    case "CreateEnvironment":
+      return EnvironmentCreatedResponseSchema;
+    case "RecoverEnvironment":
+      return EnvironmentRecoveredResponseSchema;
+    case "DestroyEnvironment":
+      return EnvironmentDestroyedResponseSchema;
+    case "CheckpointEnvironment":
+      return EnvironmentCheckpointedResponseSchema;
+  }
+};
+
+const jsonBody = async (response: Response): Promise<unknown> => {
+  try {
+    return await response.json();
+  } catch {
+    throw new ProviderUnavailableError("Environment Durable Object", "returned invalid JSON");
+  }
+};
+
+const responseFor = async (
+  response: Response,
+  schema: EnvironmentResponseSchema,
+): Promise<Response> => {
+  const body = await jsonBody(response);
+  if (!response.ok) {
+    let failure: EnvironmentFailure;
+    try {
+      failure = decodeUnknownStrict(EnvironmentFailureSchema, body);
+    } catch {
+      throw new ProviderUnavailableError(
+        "Environment Durable Object",
+        "returned an invalid failure response",
+      );
+    }
+    const redacted = redactedFailure(failure._tag);
+    return Response.json(Schema.encodeSync(EnvironmentFailureSchema)(redacted), {
+      status: statusForFailure(redacted._tag),
+    });
+  }
+  try {
+    const decoded = decodeUnknownStrict(schema, body);
+    return Response.json(Schema.encodeSync(schema)(decoded), { status: response.status });
+  } catch {
+    throw new ProviderUnavailableError(
+      "Environment Durable Object",
+      "returned an invalid success response",
+    );
   }
 };
 export class EnvironmentRouter {
@@ -67,22 +183,35 @@ export class EnvironmentRouter {
       if (!connect) requireOperator(request, this.#env.CLOUD_TASK_AUTH_TOKEN);
 
       const namespace = this.#env.ENVIRONMENT;
-      const secret = this.#env.ENVIRONMENT_ROUTER_SECRET;
-      if (namespace === undefined || secret === undefined) {
-        throw new Error("Environment routing bindings are incomplete");
+      if (namespace === undefined) {
+        throw new ProviderUnavailableError("Environment Durable Object namespace");
       }
+      const secret = this.#env.ENVIRONMENT_ROUTER_SECRET;
+      if (secret === undefined) {
+        throw new ProviderUnavailableError("Environment router secret");
+      }
+
       let body: string | undefined;
+      let responseSchema: EnvironmentResponseSchema = EnvironmentInspectedResponseSchema;
       if (!connect && request.method !== "GET") {
-        const rawBody = await request.text();
-        const command = commandBody(rawBody);
+        const command = commandBody(await request.text());
         if (command.environmentId !== environmentId) {
           throw new InvalidRequestError("Route and command Environment identifiers differ");
         }
-        body = JSON.stringify(command);
+        body = Schema.encodeSync(EnvironmentCommandJsonSchema)(command);
+        responseSchema = responseSchemaFor(command);
       }
 
       if (connect) {
-        const source = request.headers.get("CF-Connecting-IP") ?? "unknown";
+        let source: string;
+        try {
+          source = decodeUnknownStrict(
+            EnvironmentSourceIdentitySchema,
+            request.headers.get("CF-Connecting-IP"),
+          );
+        } catch {
+          throw new InvalidRequestError("Environment connection source identity is required");
+        }
         const limiters = [
           this.#env.ENVIRONMENT_HTTP_RATE,
           ...(request.headers.get("Upgrade")?.toLowerCase() === "websocket"
@@ -95,19 +224,27 @@ export class EnvironmentRouter {
             .map((limiter) => limiter.limit({ key: `${source}:${environmentId}` })),
         );
         if (decisions.some((decision) => !decision.success)) {
-          return Response.json({ _tag: "EnvironmentRateLimited" }, { status: 429 });
+          return Response.json(
+            Schema.encodeSync(EnvironmentRateLimitedResponseSchema)({
+              _tag: "EnvironmentRateLimited",
+            }),
+            { status: 429 },
+          );
         }
       }
 
       const headers = new Headers(request.headers);
+      headers.delete("Authorization");
       headers.set("X-Environment-Internal", secret);
+      if (body !== undefined) headers.set("content-type", "application/json");
       const forwarded = new Request(request, {
         headers,
         ...(body === undefined ? {} : { body }),
         redirect: "manual",
       });
       const object = namespace.get(namespace.idFromName(environmentId));
-      return object.fetch(forwarded);
+      const response = await object.fetch(forwarded);
+      return connect ? response : await responseFor(response, responseSchema);
     } catch (cause) {
       return failureResponse(cause);
     }

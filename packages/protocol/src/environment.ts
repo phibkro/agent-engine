@@ -182,9 +182,16 @@ export const EnvironmentSnapshotSchema = Schema.TaggedStruct("EnvironmentSnapsho
 });
 export type EnvironmentSnapshot = typeof EnvironmentSnapshotSchema.Type;
 
+export const EnvironmentInspectedResponseSchema = Schema.TaggedStruct("EnvironmentInspected", {
+  snapshot: Schema.optionalKey(EnvironmentSnapshotSchema),
+});
+export type EnvironmentInspectedResponse = typeof EnvironmentInspectedResponseSchema.Type;
+
 export const EnvironmentCreatedResponseSchema = Schema.TaggedStruct("EnvironmentCreated", {
   snapshot: EnvironmentSnapshotSchema,
   pairingUrl: NonEmptyStringSchema,
+  expiresAt: TimestampSchema,
+  scopes: EnvironmentPairingScopesSchema,
 });
 export type EnvironmentCreatedResponse = typeof EnvironmentCreatedResponseSchema.Type;
 
@@ -213,3 +220,47 @@ export const EnvironmentCommandResponseSchema = Schema.Union([
   EnvironmentCheckpointedResponseSchema,
 ]);
 export type EnvironmentCommandResponse = typeof EnvironmentCommandResponseSchema.Type;
+
+export const EnvironmentUnauthorizedFailureSchema = Schema.TaggedStruct("Unauthorized", {
+  reason: NonEmptyStringSchema,
+});
+export type EnvironmentUnauthorizedFailure = typeof EnvironmentUnauthorizedFailureSchema.Type;
+
+export const EnvironmentInvalidRequestFailureSchema = Schema.TaggedStruct("InvalidRequest", {
+  reason: NonEmptyStringSchema,
+});
+export type EnvironmentInvalidRequestFailure = typeof EnvironmentInvalidRequestFailureSchema.Type;
+
+export const EnvironmentProviderUnavailableFailureSchema = Schema.TaggedStruct(
+  "ProviderUnavailable",
+  {
+    reason: NonEmptyStringSchema,
+  },
+);
+export type EnvironmentProviderUnavailableFailure =
+  typeof EnvironmentProviderUnavailableFailureSchema.Type;
+
+export const EnvironmentRuntimeFailureSchema = Schema.TaggedStruct("EnvironmentRuntimeFailure", {
+  reason: NonEmptyStringSchema,
+});
+export type EnvironmentRuntimeFailure = typeof EnvironmentRuntimeFailureSchema.Type;
+
+export const EnvironmentRouterFailureSchema = Schema.TaggedStruct("EnvironmentRouterFailure", {
+  reason: NonEmptyStringSchema,
+});
+export type EnvironmentRouterFailure = typeof EnvironmentRouterFailureSchema.Type;
+
+export const EnvironmentFailureSchema = Schema.Union([
+  EnvironmentUnauthorizedFailureSchema,
+  EnvironmentInvalidRequestFailureSchema,
+  EnvironmentProviderUnavailableFailureSchema,
+  EnvironmentRuntimeFailureSchema,
+  EnvironmentRouterFailureSchema,
+]);
+export type EnvironmentFailure = typeof EnvironmentFailureSchema.Type;
+
+export const EnvironmentRateLimitedResponseSchema = Schema.TaggedStruct(
+  "EnvironmentRateLimited",
+  {},
+);
+export type EnvironmentRateLimitedResponse = typeof EnvironmentRateLimitedResponseSchema.Type;

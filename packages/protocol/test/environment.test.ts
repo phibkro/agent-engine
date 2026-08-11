@@ -3,8 +3,11 @@ import {
   EnvironmentCommandRequestSchema,
   EnvironmentCredentialLeaseSchema,
   EnvironmentCreateRequestSchema,
+  EnvironmentFailureSchema,
+  EnvironmentInspectedResponseSchema,
   EnvironmentPairingSchema,
   EnvironmentPairingOutputSchema,
+  EnvironmentRateLimitedResponseSchema,
   SandboxProcessStateSchema,
   EnvironmentSnapshotSchema,
   decodeUnknownStrict,
@@ -138,4 +141,29 @@ test("accepts only bounded lifecycle commands and ordinary T3Code pairing scopes
       ],
     }).scopes,
   ).not.toContain("access:write");
+});
+
+test("keeps public Environment envelopes closed and redacted", () => {
+  expect(
+    decodeUnknownStrict(EnvironmentInspectedResponseSchema, {
+      _tag: "EnvironmentInspected",
+    })._tag,
+  ).toBe("EnvironmentInspected");
+  expect(
+    decodeUnknownStrict(EnvironmentRateLimitedResponseSchema, {
+      _tag: "EnvironmentRateLimited",
+    })._tag,
+  ).toBe("EnvironmentRateLimited");
+  expect(
+    decodeUnknownStrict(EnvironmentFailureSchema, {
+      _tag: "ProviderUnavailable",
+      reason: "Environment provider is unavailable",
+    })._tag,
+  ).toBe("ProviderUnavailable");
+  expect(() =>
+    decodeUnknownStrict(EnvironmentRateLimitedResponseSchema, {
+      _tag: "EnvironmentRateLimited",
+      reason: "must not cross the boundary",
+    }),
+  ).toThrow();
 });

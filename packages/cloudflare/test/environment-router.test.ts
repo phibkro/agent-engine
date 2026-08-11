@@ -1,7 +1,52 @@
 import { describe, expect, it } from "vitest";
 import { EnvironmentRouter, type CloudflareRuntimeEnv } from "../src/index.ts";
 
-const makeEnv = (fetchResponse = Response.json({ ok: true })) => {
+const snapshot = {
+  _tag: "EnvironmentSnapshot",
+  schemaVersion: "work-engine/v2",
+  environmentId: "demo-environment",
+  ownerId: "operator-1",
+  repository: { owner: "example", name: "project" },
+  baseCommit: "0".repeat(40),
+  provider: "codex",
+  lifecycle: "Requested",
+  versions: {
+    imageDigest: `sha256:${"a".repeat(64)}`,
+    t3codeVersion: "0.9.0",
+    sandboxSdkVersion: "1.0.0",
+  },
+  generation: null,
+  retiredGenerationIds: [],
+  acceptedCheckpoint: null,
+  dataLossWarning: false,
+  retainedCheckpoints: [],
+  checkpointFailures: 0,
+  checkpointRetryAt: null,
+  recoveryFailures: 0,
+  recoveryRetryAt: null,
+  recoveryRequest: null,
+  commandReceipts: [],
+  createdAt: "2026-08-10T00:00:00.000Z",
+  lastActivityAt: "2026-08-10T00:00:00.000Z",
+  expiresAt: "2026-08-10T08:00:00.000Z",
+  inactivityDeadline: "2026-08-10T00:30:00.000Z",
+};
+
+const createdResponse = {
+  _tag: "EnvironmentCreated",
+  snapshot,
+  pairingUrl: "https://demo-environment.example.test/connect",
+  expiresAt: "2026-08-10T00:10:00.000Z",
+  scopes: [
+    "orchestration:read",
+    "orchestration:operate",
+    "terminal:operate",
+    "review:write",
+    "relay:read",
+  ],
+};
+
+const makeEnv = (fetchResponse = Response.json(createdResponse)) => {
   const requests: Request[] = [];
   const keys: string[] = [];
   const stub = {
@@ -60,7 +105,9 @@ describe("EnvironmentRouter", () => {
     );
     expect(accepted.status).toBe(200);
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.headers.get("X-Environment-Internal")).toBe("router-secret");
+    expect(requests[0]?.headers.get("Authorization")).toBeNull();
+    expect(requests[0]?.headers.get("content-type")).toBe("application/json");
+    expect(await requests[0]?.text()).toBe(createBody);
 
     const mismatched = await new EnvironmentRouter(env).fetch(
       new Request("https://work.example/v1/environments/other-environment", {
@@ -101,5 +148,63 @@ describe("EnvironmentRouter", () => {
     expect(response.status).toBe(200);
     expect(keys).toEqual(["203.0.113.7:demo-environment"]);
     expect(requests).toHaveLength(1);
+  });
+
+  it("fails closed when the Environment DO success payload is malformed", async () => {
+    const { env, requests } = makeEnv(
+      Response.json({ _tag: "EnvironmentInspected", snapshot: {} }),
+    );
+    const response = await new EnvironmentRouter(env).fetch(
+      new Request("https://work.example/v1/environments/demo-environment", {
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Environment provider is unavailable",
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("fails closed when the Environment DO failure payload is malformed", async () => {
+    const { env, requests } = makeEnv(
+      new Response(
+        JSON.stringify({
+          _tag: "InvalidRequest",
+          reason: "internal details",
+          extra: "must not cross the router",
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+    const response = await new EnvironmentRouter(env).fetch(
+      new Request("https://work.example/v1/environments/demo-environment", {
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Environment provider is unavailable",
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("rejects a connect request without a verified source identity", async () => {
+    const { env, keys, requests } = makeEnv();
+    const response = await new EnvironmentRouter(env).fetch(
+      new Request("https://work.example/v1/environments/demo-environment/connect/api"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      _tag: "InvalidRequest",
+      reason: "Environment request is invalid",
+    });
+    expect(keys).toHaveLength(0);
+    expect(requests).toHaveLength(0);
   });
 });
