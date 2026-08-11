@@ -11,7 +11,7 @@ import {
 import { getSandbox, type Sandbox } from "@cloudflare/sandbox";
 import type { EnvironmentRuntime } from "./environment.ts";
 import type { EnvironmentCredentialBroker } from "./environment-credentials.ts";
-import { InvalidRequestError } from "./errors.ts";
+import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
 
 const T3CODE_PORT = 3773;
 const T3CODE_HOME = "/workspace/environment/t3code";
@@ -38,8 +38,9 @@ const requireSuccessfulExec = async (
 ): Promise<{ readonly stdout: string; readonly stderr: string }> => {
   const result = await sandbox.exec(command);
   if (result.exitCode !== 0) {
-    throw new Error(
-      `Sandbox command failed with exit ${String(result.exitCode)}: ${result.stderr}`,
+    throw new ProviderUnavailableError(
+      "Cloudflare Sandbox",
+      `Command failed with exit ${String(result.exitCode)}: ${result.stderr}`,
     );
   }
   return result;
@@ -101,13 +102,18 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     readonly provider: "claude" | "codex";
   }): Promise<void> {
     const sandbox = this.#activeSandbox;
-    if (sandbox === undefined) throw new Error("Sandbox must start before initialization");
+    if (sandbox === undefined) {
+      throw new InvalidRequestError("Sandbox must start before initialization");
+    }
     const owner = requireSafeGitSegment(input.repository.owner, "repository.owner");
     const name = requireSafeGitSegment(input.repository.name, "repository.name");
     const environmentId = this.#environmentId;
     const generationId = this.#generationId;
     if (environmentId === undefined || generationId === undefined) {
-      throw new Error("Sandbox generation identity is unavailable");
+      throw new ProviderUnavailableError(
+        "Environment runtime",
+        "Sandbox generation identity is unavailable",
+      );
     }
     const lease = await this.#options.credentials.lease({
       environmentId,
@@ -172,9 +178,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
 
   async waitUntilReady(): Promise<void> {
     const sandbox = this.#activeSandbox;
-    if (sandbox === undefined) throw new Error("Sandbox is not active");
+    if (sandbox === undefined) throw new InvalidRequestError("Sandbox is not active");
     const process = await sandbox.getProcess(T3CODE_PROCESS_ID);
-    if (process === null) throw new Error("T3Code process is not running");
+    if (process === null) {
+      throw new ProviderUnavailableError("Cloudflare Sandbox", "T3Code process is not running");
+    }
     await process.waitForPort(T3CODE_PORT, {
       mode: "http",
       path: "/.well-known/t3/environment",
@@ -188,7 +196,7 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
   }
   async mintPairing(input: { readonly environmentId: string }): Promise<EnvironmentPairing> {
     const sandbox = this.#activeSandbox;
-    if (sandbox === undefined) throw new Error("Sandbox is not active");
+    if (sandbox === undefined) throw new InvalidRequestError("Sandbox is not active");
     const output = await requireSuccessfulExec(
       sandbox,
       `t3 pair --base-dir ${T3CODE_HOME} --ttl 10m --label cloudflare`,
@@ -212,7 +220,9 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     snapshot: EnvironmentSnapshot,
     options?: { readonly final?: boolean },
   ): Promise<EnvironmentCheckpoint> {
-    if (snapshot.generation === null) throw new Error("Cannot checkpoint without a generation");
+    if (snapshot.generation === null) {
+      throw new InvalidRequestError("Cannot checkpoint without a generation");
+    }
     const sandbox = this.#sandbox(snapshot.generation.id);
     const process = await sandbox.getProcess(T3CODE_PROCESS_ID);
     if (process !== null && (await processState(process)).status === "running") {
@@ -225,9 +235,16 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         `test -s ${T3CODE_HOME}/userdata/state.sqlite && sqlite3 ${T3CODE_HOME}/userdata/state.sqlite 'PRAGMA integrity_check;' && git -C ${REPOSITORY_DIR} rev-parse HEAD`,
       );
       const lines = checks.stdout.trim().split(/\s+/u);
-      if (lines[0] !== "ok") throw new Error("T3Code SQLite integrity check failed");
+      if (lines[0] !== "ok") {
+        throw new ProviderUnavailableError(
+          "Environment checkpoint",
+          "T3Code SQLite integrity check failed",
+        );
+      }
       const head = lines.at(-1);
-      if (head === undefined) throw new Error("Git HEAD was not reported");
+      if (head === undefined) {
+        throw new ProviderUnavailableError("Environment checkpoint", "Git HEAD was not reported");
+      }
       const backup = await sandbox.createBackup({
         dir: "/workspace/environment",
         name: `${snapshot.environmentId}-g${String(snapshot.generation.ordinal)}`,
@@ -251,9 +268,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         } catch (cleanupFailure) {
           const validationReason =
             cause instanceof Error ? cause.message : "checkpoint validation failed";
-          throw new Error(`Checkpoint cleanup failed after ${validationReason}`, {
-            cause: cleanupFailure,
-          });
+          throw new ProviderUnavailableError(
+            "Environment checkpoint",
+            `Cleanup failed after ${validationReason}`,
+            new AggregateError([cause, cleanupFailure]),
+          );
         }
         throw cause;
       }
@@ -277,7 +296,9 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         id: checkpoint.backup.id,
         dir: checkpoint.backup.dir,
       });
-      if (!restored.success) throw new Error("Checkpoint validation restore failed");
+      if (!restored.success) {
+        throw new ProviderUnavailableError("Environment checkpoint", "Validation restore failed");
+      }
       await this.#validateRestoredState(sandbox, checkpoint);
       await this.#startT3Code(sandbox);
     } finally {
@@ -293,7 +314,10 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
     );
     const lines = checks.stdout.trim().split(/\s+/u);
     if (lines[0] !== "ok" || lines.at(-1) !== checkpoint.head) {
-      throw new Error("Restored Sandbox failed SQLite or Git validation");
+      throw new ProviderUnavailableError(
+        "Environment checkpoint",
+        "Restored Sandbox failed SQLite or Git validation",
+      );
     }
   }
 
@@ -399,7 +423,9 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         id: input.checkpoint.backup.id,
         dir: input.checkpoint.backup.dir,
       });
-      if (!restored.success) throw new Error("Sandbox backup restore failed");
+      if (!restored.success) {
+        throw new ProviderUnavailableError("Cloudflare Sandbox", "Backup restore failed");
+      }
       await this.#validateRestoredState(sandbox, input.checkpoint);
       await this.#configureRecoveredGeneration(sandbox, {
         snapshot: input.snapshot,
@@ -421,7 +447,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         cleanupFailures.push(
           cleanupFailure instanceof Error
             ? cleanupFailure
-            : new Error("Credential revocation failed"),
+            : new ProviderUnavailableError(
+                "Environment credential broker",
+                "Credential revocation failed",
+                cleanupFailure,
+              ),
         );
       }
       try {
@@ -430,7 +460,11 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         cleanupFailures.push(
           cleanupFailure instanceof Error
             ? cleanupFailure
-            : new Error("Sandbox keep-alive cleanup failed"),
+            : new ProviderUnavailableError(
+                "Cloudflare Sandbox",
+                "Sandbox keep-alive cleanup failed",
+                cleanupFailure,
+              ),
         );
       }
       try {
@@ -439,12 +473,20 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         cleanupFailures.push(
           cleanupFailure instanceof Error
             ? cleanupFailure
-            : new Error("Sandbox destruction failed"),
+            : new ProviderUnavailableError(
+                "Cloudflare Sandbox",
+                "Sandbox destruction failed",
+                cleanupFailure,
+              ),
         );
       }
       if (cleanupFailures.length > 0) {
         const cleanupReason = cleanupFailures.map((error) => error.message).join("; ");
-        throw new Error(`Sandbox recovery cleanup failed: ${cleanupReason}`, { cause });
+        throw new ProviderUnavailableError(
+          "Cloudflare Sandbox",
+          `Sandbox recovery cleanup failed: ${cleanupReason}`,
+          new AggregateError([cause, ...cleanupFailures]),
+        );
       }
       throw cause;
     }
@@ -482,7 +524,13 @@ export class CloudflareSandboxEnvironmentRuntime implements EnvironmentRuntime {
         this.deleteCheckpoint(checkpoint).catch((cause: unknown) => failures.push(cause)),
       ),
     );
-    if (failures.length > 0) throw new AggregateError(failures, "Environment cleanup failed");
+    if (failures.length > 0) {
+      throw new ProviderUnavailableError(
+        "Cloudflare Sandbox",
+        "Environment cleanup failed",
+        new AggregateError(failures),
+      );
+    }
   }
 
   async proxy(request: Request, generationId: string): Promise<Response> {

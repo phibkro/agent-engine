@@ -100,14 +100,17 @@ const requiredEffectRules: Readonly<Record<string, readonly string[]>> = {
     "effect/no-raw-json-parse",
   ],
   "control-plane": [
+    "effect/no-ambient-authority",
     "effect/no-cross-runtime",
     "effect/no-premature-execution",
+    "effect/no-native-promise-control-flow",
     "effect/no-raw-json-parse",
     "effect/no-untyped-throw",
   ],
   "terminal-client": [
     "effect/no-cross-runtime",
     "effect/no-premature-execution",
+    "effect/no-native-promise-control-flow",
     "effect/no-raw-json-parse",
     "effect/no-untyped-throw",
   ],
@@ -137,7 +140,7 @@ const expectedScripts: Readonly<Record<string, string>> = {
   "accept:0003:local": "bun acceptance/0003/local.ts",
   build: "bun run --cwd apps/cli build && bun run --cwd apps/control-plane build",
   check:
-    "bun run fmt:check && bun run lint && bun run audit:sources && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run test:acceptance && bun run build",
+    "bun run fmt:check && bun run lint && bun run audit:sources && bun run audit:imports && bun run audit:config && bun run typecheck && bun run test:protocol && bun run test:cloudflare && bun run test:cli && bun run test:acceptance && bun run build",
 };
 
 const run = async (): Promise<void> => {

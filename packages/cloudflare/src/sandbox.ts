@@ -51,11 +51,15 @@ export interface SandboxClock {
 const jsonBody = (value: unknown): string => Schema.encodeSync(Schema.UnknownFromJsonString)(value);
 
 const responseJson = async (response: Response): Promise<unknown> => {
-  const body = await response.text();
   try {
+    const body = await response.text();
     return decodeUnknownStrict(Schema.UnknownFromJsonString, body);
-  } catch {
-    throw new ProviderUnavailableError("Cloudflare Sandbox provider", "invalid JSON response");
+  } catch (cause) {
+    throw new ProviderUnavailableError(
+      "Cloudflare Sandbox provider",
+      "invalid JSON response",
+      cause,
+    );
   }
 };
 
@@ -77,19 +81,25 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     if (this.#binding === undefined) {
       throw new ProviderUnavailableError("Cloudflare Sandbox provider");
     }
-    const response = await this.#binding.fetch(`https://sandbox${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: jsonBody(body),
-    });
+    let response: Response;
+    try {
+      response = await this.#binding.fetch(`https://sandbox${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: jsonBody(body),
+      });
+    } catch (cause) {
+      throw new ProviderUnavailableError("Cloudflare Sandbox provider", "request failed", cause);
+    }
     const responseBody = await responseJson(response);
     if (!response.ok) {
       try {
         decodeUnknownStrict(SandboxProviderFailureSchema, responseBody);
-      } catch {
+      } catch (cause) {
         throw new ProviderUnavailableError(
           "Cloudflare Sandbox provider",
           "invalid failure response",
+          cause,
         );
       }
       throw new ProviderUnavailableError(
@@ -99,8 +109,12 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     }
     try {
       return decodeUnknownStrict(responseSchema, responseBody);
-    } catch {
-      throw new ProviderUnavailableError("Cloudflare Sandbox provider", "invalid success response");
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Cloudflare Sandbox provider",
+        "invalid success response",
+        cause,
+      );
     }
   }
 
@@ -119,8 +133,8 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     let request: typeof SandboxTerminateRequestSchema.Type;
     try {
       request = decodeUnknownStrict(SandboxTerminateRequestSchema, { providerId });
-    } catch {
-      throw new InvalidRequestError("Sandbox provider identity is invalid");
+    } catch (cause) {
+      throw new InvalidRequestError("Sandbox provider identity is invalid", cause);
     }
     await this.#call("/terminate", request, SandboxTerminateResponseSchema);
   }

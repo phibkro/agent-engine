@@ -12,10 +12,13 @@ import {
   CloudTaskSendResponseSchema,
   CloudTaskSpawnRequestSchema,
   CloudTaskSpawnResponseSchema,
+  TerminalSessionStateSchema,
 } from "@work-engine/protocol";
 import type { CloudTaskRequest, CloudTaskResponse } from "@work-engine/protocol";
 import {
   CloudTaskRequestSchema,
+  CloudTaskSchema,
+  SessionIdSchema,
   decode,
   encode,
   type CloudTask,
@@ -33,6 +36,7 @@ import {
   InvalidRequestError,
   ProviderUnavailableError,
   SessionNotFoundError,
+  SessionTerminalError,
   UnauthorizedError,
 } from "./errors.ts";
 import { resolveCatalogProfile } from "./profiles.ts";
@@ -56,46 +60,35 @@ type CloudTaskFailureTag =
   | "SessionTerminal"
   | "ProviderUnavailable";
 
-const CloudTaskFailureSchema = Schema.Struct({
-  _tag: Schema.Literals([
-    "Unauthenticated",
-    "Unauthorized",
-    "InvalidRequest",
-    "SessionNotFound",
-    "SessionConflict",
-    "SessionTerminal",
-    "ProviderUnavailable",
-  ] as const),
-  reason: Schema.NonEmptyString,
-});
+const CloudTaskFailureSchema = Schema.Union([
+  Schema.TaggedStruct("Unauthenticated", { reason: Schema.NonEmptyString }),
+  Schema.TaggedStruct("Unauthorized", { reason: Schema.NonEmptyString }),
+  Schema.TaggedStruct("InvalidRequest", { reason: Schema.NonEmptyString }),
+  Schema.TaggedStruct("SessionNotFound", {
+    reason: Schema.NonEmptyString,
+    sessionId: SessionIdSchema,
+  }),
+  Schema.TaggedStruct("SessionConflict", { reason: Schema.NonEmptyString }),
+  Schema.TaggedStruct("SessionTerminal", {
+    reason: Schema.NonEmptyString,
+    state: TerminalSessionStateSchema,
+  }),
+  Schema.TaggedStruct("ProviderUnavailable", { reason: Schema.NonEmptyString }),
+]);
 type CloudTaskFailure = typeof CloudTaskFailureSchema.Type;
 const CloudTaskRequestFromJsonSchema = Schema.fromJsonString(CloudTaskRequestSchema);
-const CloudTaskSpawnRequestFromJsonSchema = Schema.fromJsonString(
-  CloudTaskSpawnRequestSchema,
-);
+const CloudTaskSpawnRequestFromJsonSchema = Schema.fromJsonString(CloudTaskSpawnRequestSchema);
 const CloudTaskSendRequestFromJsonSchema = Schema.fromJsonString(CloudTaskSendRequestSchema);
-const CloudTaskObserveRequestFromJsonSchema = Schema.fromJsonString(
-  CloudTaskObserveRequestSchema,
-);
-const CloudTaskCancelRequestFromJsonSchema = Schema.fromJsonString(
-  CloudTaskCancelRequestSchema,
-);
-const CloudTaskResultRequestFromJsonSchema = Schema.fromJsonString(
-  CloudTaskResultRequestSchema,
-);
-const CloudTaskSpawnResponseFromJsonSchema = Schema.fromJsonString(
-  CloudTaskSpawnResponseSchema,
-);
+const CloudTaskObserveRequestFromJsonSchema = Schema.fromJsonString(CloudTaskObserveRequestSchema);
+const CloudTaskCancelRequestFromJsonSchema = Schema.fromJsonString(CloudTaskCancelRequestSchema);
+const CloudTaskResultRequestFromJsonSchema = Schema.fromJsonString(CloudTaskResultRequestSchema);
+const CloudTaskSpawnResponseFromJsonSchema = Schema.fromJsonString(CloudTaskSpawnResponseSchema);
 const CloudTaskSendResponseFromJsonSchema = Schema.fromJsonString(CloudTaskSendResponseSchema);
 const CloudTaskObserveResponseFromJsonSchema = Schema.fromJsonString(
   CloudTaskObserveResponseSchema,
 );
-const CloudTaskCancelResponseFromJsonSchema = Schema.fromJsonString(
-  CloudTaskCancelResponseSchema,
-);
-const CloudTaskResultResponseFromJsonSchema = Schema.fromJsonString(
-  CloudTaskResultResponseSchema,
-);
+const CloudTaskCancelResponseFromJsonSchema = Schema.fromJsonString(CloudTaskCancelResponseSchema);
+const CloudTaskResultResponseFromJsonSchema = Schema.fromJsonString(CloudTaskResultResponseSchema);
 const CloudTaskFailureFromJsonSchema = Schema.fromJsonString(CloudTaskFailureSchema);
 
 type CloudTaskRequestOperationSchema =
@@ -123,9 +116,7 @@ type CloudTaskResponseJsonSchema =
   | typeof CloudTaskCancelResponseFromJsonSchema
   | typeof CloudTaskResultResponseFromJsonSchema;
 
-const requestSchemaFor = (
-  payload: CloudTaskRequest,
-): CloudTaskRequestOperationSchema => {
+const requestSchemaFor = (payload: CloudTaskRequest): CloudTaskRequestOperationSchema => {
   switch (payload._tag) {
     case "Spawn":
       return CloudTaskSpawnRequestSchema;
@@ -159,9 +150,7 @@ const requestJsonSchemaFor = (payload: CloudTaskRequest): CloudTaskRequestJsonSc
   }
 };
 
-const responseSchemaFor = (
-  payload: CloudTaskRequest,
-): CloudTaskResponseOperationSchema => {
+const responseSchemaFor = (payload: CloudTaskRequest): CloudTaskResponseOperationSchema => {
   switch (payload._tag) {
     case "Spawn":
       return CloudTaskSpawnResponseSchema;
@@ -198,8 +187,7 @@ const responseJsonSchemaFor = (payload: CloudTaskRequest): CloudTaskResponseJson
 const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   text: string,
-): S["Type"] =>
-  Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(text);
+): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(text);
 
 const encodeCloudTaskRequest = (payload: CloudTaskRequest): string => {
   const schema = requestSchemaFor(payload);
@@ -241,13 +229,30 @@ const failureTag = (cause: unknown): CloudTaskFailureTag => {
 };
 
 const errorResponse = (cause: unknown): Response => {
-  const tag = failureTag(cause);
-  const envelope: CloudTaskFailure = decode(CloudTaskFailureSchema, {
-    _tag: tag,
-    reason: "Cloud-task request failed",
-  });
+  const reason = "Cloud-task request failed";
+  const tagged = failureTag(cause);
+  const envelope: CloudTaskFailure =
+    cause instanceof SessionNotFoundError
+      ? decode(CloudTaskFailureSchema, {
+          _tag: "SessionNotFound",
+          reason,
+          sessionId: cause.details["sessionId"],
+        })
+      : cause instanceof SessionTerminalError
+        ? decode(CloudTaskFailureSchema, {
+            _tag: "SessionTerminal",
+            reason,
+            state: cause.details["state"],
+          })
+        : decode(CloudTaskFailureSchema, {
+            _tag:
+              tagged === "SessionNotFound" || tagged === "SessionTerminal"
+                ? "ProviderUnavailable"
+                : tagged,
+            reason,
+          });
   return responseJson(CloudTaskFailureSchema, envelope, {
-    status: statusForCloudTaskFailure(tag),
+    status: statusForCloudTaskFailure(envelope._tag),
   });
 };
 
@@ -262,17 +267,16 @@ const payloadBody = async (request: Request): Promise<CloudTaskRequest> => {
   let text: string;
   try {
     text = await request.text();
-  } catch {
-    throw new InvalidRequestError("Cloud-task request body must be JSON");
+  } catch (cause) {
+    throw new InvalidRequestError("Cloud-task request body must be JSON", cause);
   }
   try {
     const operation = decodeJson(CloudTaskRequestFromJsonSchema, text);
     return decodeJson(requestJsonSchemaFor(operation), text);
-  } catch {
-    throw new InvalidRequestError("Cloud-task request body must be valid JSON");
+  } catch (cause) {
+    throw new InvalidRequestError("Cloud-task request body must be valid JSON", cause);
   }
 };
-
 
 export class SessionDurableObject implements DurableObject {
   #state: DurableObjectState;
@@ -419,27 +423,37 @@ export class CloudTaskRouter {
       let text: string;
       try {
         text = await response.text();
-      } catch {
+      } catch (cause) {
         throw new ProviderUnavailableError(
           "Cloud-task session service",
           "invalid response body",
+          cause,
         );
       }
       if (!response.ok) {
         let failure: CloudTaskFailure;
         try {
           failure = decodeJson(CloudTaskFailureFromJsonSchema, text);
-        } catch {
+        } catch (cause) {
           throw new ProviderUnavailableError(
             "Cloud-task session service",
             "invalid failure response",
+            cause,
           );
         }
         return responseJson(CloudTaskFailureSchema, failure, { status: response.status });
       }
-      const responseSchema = responseSchemaFor(payload);
-      const decoded = decodeJson(responseJsonSchemaFor(payload), text);
-      return responseJson(responseSchema, decoded);
+      try {
+        const responseSchema = responseSchemaFor(payload);
+        const decoded = decodeJson(responseJsonSchemaFor(payload), text);
+        return responseJson(responseSchema, decoded);
+      } catch (cause) {
+        throw new ProviderUnavailableError(
+          "Cloud-task session service",
+          "invalid success response",
+          cause,
+        );
+      }
     } catch (cause) {
       return errorResponse(cause);
     }
@@ -472,35 +486,44 @@ export class CloudflareCloudTaskClient {
     let text: string;
     try {
       text = await response.text();
-    } catch {
+    } catch (cause) {
       throw new ProviderUnavailableError(
         "Cloud-task service binding",
         "invalid response body",
+        cause,
       );
     }
     if (!response.ok) {
       let failure: CloudTaskFailure;
       try {
         failure = decodeJson(CloudTaskFailureFromJsonSchema, text);
-      } catch {
+      } catch (cause) {
         throw new ProviderUnavailableError(
           "Cloud-task service binding",
           "invalid failure response",
+          cause,
         );
       }
-      if (failure._tag === "ProviderUnavailable") {
-        throw new ProviderUnavailableError("Cloud-task service binding", failure.reason);
+      switch (failure._tag) {
+        case "ProviderUnavailable":
+          throw new ProviderUnavailableError("Cloud-task service binding", failure.reason);
+        case "InvalidRequest":
+          throw new InvalidRequestError(failure.reason);
+        case "SessionNotFound":
+          throw new SessionNotFoundError(failure.sessionId);
+        case "SessionTerminal":
+          throw new SessionTerminalError(failure.state, failure.reason);
+        default:
+          throw new CloudRuntimeError(failure._tag, failure.reason);
       }
-      if (failure._tag === "InvalidRequest") throw new InvalidRequestError(failure.reason);
-      if (failure._tag === "SessionNotFound") throw new SessionNotFoundError("requested");
-      throw new CloudRuntimeError(failure._tag, failure.reason);
     }
     try {
       return decodeJson(responseJsonSchemaFor(payload), text);
-    } catch {
+    } catch (cause) {
       throw new ProviderUnavailableError(
         "Cloud-task service binding",
         "invalid success response",
+        cause,
       );
     }
   }

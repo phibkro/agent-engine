@@ -61,8 +61,8 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
     let endpointUrl: URL;
     try {
       endpointUrl = new URL(endpoint);
-    } catch {
-      throw new InvalidRequestError("Credential broker endpoint is invalid");
+    } catch (cause) {
+      throw new InvalidRequestError("Credential broker endpoint is invalid", cause);
     }
     if (endpointUrl.protocol !== "https:") {
       throw new InvalidRequestError("Credential broker endpoint must use HTTPS");
@@ -81,8 +81,8 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
         EnvironmentCredentialLeaseFromJsonSchema,
         await response.text(),
       );
-    } catch {
-      throw new ProviderUnavailableError("Credential broker", "invalid lease response");
+    } catch (cause) {
+      throw new ProviderUnavailableError("Credential broker", "invalid lease response", cause);
     }
     return { ...payload, brokerOrigin: this.#brokerOrigin };
   }
@@ -97,19 +97,24 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
     input: unknown,
   ): Promise<Response> {
     const body = decodeUnknownStrict(requestSchema, input);
-    const response = await this.#fetcher.fetch(this.#endpoint, {
-      method,
-      headers: {
-        Authorization: `Bearer ${this.#authorization}`,
-        "Content-Type": "application/json",
-      },
-      body: Schema.encodeSync(Schema.UnknownFromJsonString)(body),
-    });
+    let response: Response;
+    try {
+      response = await this.#fetcher.fetch(this.#endpoint, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.#authorization}`,
+          "Content-Type": "application/json",
+        },
+        body: Schema.encodeSync(Schema.UnknownFromJsonString)(body),
+      });
+    } catch (cause) {
+      throw new ProviderUnavailableError("Credential broker", "request failed", cause);
+    }
     if (!response.ok) {
       try {
         decodeUnknownStrict(EnvironmentCredentialFailureFromJsonSchema, await response.text());
-      } catch {
-        throw new ProviderUnavailableError("Credential broker", "invalid failure response");
+      } catch (cause) {
+        throw new ProviderUnavailableError("Credential broker", "invalid failure response", cause);
       }
       throw new ProviderUnavailableError(
         "Credential broker",

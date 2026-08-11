@@ -9,14 +9,13 @@ import {
   EnvironmentPairingSchema,
   EnvironmentRecoverRequestSchema,
   EnvironmentSnapshotSchema,
-  RuntimeVersionTupleSchema,
   decodeUnknownStrict,
   type EnvironmentCheckpoint,
   type EnvironmentPairing,
   type EnvironmentSnapshot,
   type RuntimeVersionTuple,
 } from "@work-engine/protocol";
-import { InvalidRequestError } from "./errors.ts";
+import { InvalidRequestError, ProviderUnavailableError } from "./errors.ts";
 import type { PlatformCapabilities } from "./contract.ts";
 
 export interface EnvironmentStore {
@@ -142,8 +141,8 @@ const plusMilliseconds = (timestamp: string, milliseconds: number): string => {
 const snapshot = (value: unknown): EnvironmentSnapshot => {
   try {
     return decodeUnknownStrict(EnvironmentSnapshotSchema, value);
-  } catch {
-    throw new InvalidRequestError("Persisted Environment snapshot is invalid");
+  } catch (cause) {
+    throw new InvalidRequestError("Persisted Environment snapshot is invalid", cause);
   }
 };
 
@@ -299,17 +298,21 @@ export class EnvironmentCoordinator {
           }),
         );
       } catch (saveFailure) {
-        // eslint-disable-next-line preserve-caught-error -- AggregateError retains every failure.
-        throw new AggregateError(
-          [cause, ...(cleanupFailure === undefined ? [] : [cleanupFailure]), saveFailure],
-          "Environment creation failure could not be fully persisted",
+        throw new ProviderUnavailableError(
+          "Environment state store",
+          "Creation failure could not be fully persisted",
+          new AggregateError([
+            cause,
+            ...(cleanupFailure === undefined ? [] : [cleanupFailure]),
+            saveFailure,
+          ]),
         );
       }
       if (cleanupFailure !== undefined) {
-        // eslint-disable-next-line preserve-caught-error -- AggregateError retains both failures.
-        throw new AggregateError(
-          [cause, cleanupFailure],
-          "Environment creation and cleanup both failed",
+        throw new ProviderUnavailableError(
+          "Environment runtime",
+          "Creation and cleanup both failed",
+          new AggregateError([cause, cleanupFailure]),
         );
       }
       throw cause;
@@ -412,7 +415,11 @@ export class EnvironmentCoordinator {
         if (result.status === "rejected") deletionFailures.push(result.reason);
       }
       if (deletionFailures.length > 0) {
-        throw new AggregateError(deletionFailures, "Superseded checkpoint cleanup failed");
+        throw new ProviderUnavailableError(
+          "Environment checkpoint store",
+          "Superseded checkpoint cleanup failed",
+          new AggregateError(deletionFailures),
+        );
       }
       return ready;
     } catch (cause) {
@@ -490,10 +497,10 @@ export class EnvironmentCoordinator {
             }),
           );
         } catch (cleanupFailure) {
-          // eslint-disable-next-line preserve-caught-error -- AggregateError retains both failures.
-          throw new AggregateError(
-            [superseded, cleanupFailure],
-            "Environment recovery superseded and cleanup failed",
+          throw new ProviderUnavailableError(
+            "Environment runtime",
+            "Superseded recovery cleanup failed",
+            new AggregateError([superseded, cleanupFailure]),
           );
         }
         throw superseded;

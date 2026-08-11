@@ -1,3 +1,4 @@
+import type { TerminalSessionState } from "@work-engine/protocol";
 import type { Json } from "effect/Schema";
 
 export type CloudErrorTag =
@@ -23,8 +24,13 @@ export class CloudRuntimeError extends Error {
   readonly _tag: CloudErrorTag;
   readonly details: Readonly<Record<string, Json>>;
 
-  constructor(tag: CloudErrorTag, message: string, details: Readonly<Record<string, Json>> = {}) {
-    super(message);
+  constructor(
+    tag: CloudErrorTag,
+    message: string,
+    details: Readonly<Record<string, Json>> = {},
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
     this.name = tag;
     this._tag = tag;
     this.details = details;
@@ -44,8 +50,8 @@ export class UnauthorizedError extends CloudRuntimeError {
 }
 
 export class InvalidRequestError extends CloudRuntimeError {
-  constructor(reason: string) {
-    super("InvalidRequest", reason);
+  constructor(reason: string, cause?: unknown) {
+    super("InvalidRequest", reason, {}, cause === undefined ? undefined : { cause });
   }
 }
 
@@ -62,8 +68,8 @@ export class SessionConflictError extends CloudRuntimeError {
 }
 
 export class SessionTerminalError extends CloudRuntimeError {
-  constructor(reason = "Session is terminal") {
-    super("SessionTerminal", reason);
+  constructor(state: TerminalSessionState, reason = "Session is terminal") {
+    super("SessionTerminal", reason, { sessionId: state.sessionId, state });
   }
 }
 
@@ -150,8 +156,17 @@ export class CacheDigestMismatchError extends CloudRuntimeError {
 }
 
 export class ProviderUnavailableError extends CloudRuntimeError {
-  constructor(provider: string, reason = "Required provider binding is unavailable") {
-    super("ProviderUnavailable", `${provider}: ${reason}`, { provider });
+  constructor(
+    provider: string,
+    reason = "Required provider binding is unavailable",
+    cause?: unknown,
+  ) {
+    super(
+      "ProviderUnavailable",
+      `${provider}: ${reason}`,
+      { provider },
+      cause === undefined ? undefined : { cause },
+    );
   }
 }
 

@@ -176,6 +176,14 @@
     {
       "files": ["apps/control-plane/**/*.ts", "apps/control-plane/**/*.tsx"],
       "rules": {
+        "effect/no-ambient-authority": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "web-worker"
+          }
+        ],
         "effect/no-cross-runtime": [
           "error",
           {
@@ -185,6 +193,14 @@
           }
         ],
         "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "web-worker"
+          }
+        ],
+        "effect/no-native-promise-control-flow": [
           "error",
           {
             "technology": "effect-v4",
@@ -236,6 +252,14 @@
           }
         ],
         "effect/no-premature-execution": [
+          "error",
+          {
+            "technology": "effect-v4",
+            "role": "composition-root",
+            "platform": "bun"
+          }
+        ],
+        "effect/no-native-promise-control-flow": [
           "error",
           {
             "technology": "effect-v4",

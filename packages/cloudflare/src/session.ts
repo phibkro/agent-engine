@@ -7,8 +7,10 @@ import {
   SessionCompletedResultSchema,
   SessionStateSchema,
   TimestampSchema,
+  TerminalSessionStateSchema,
   type SessionState as ProtocolSessionState,
   type Timestamp,
+  type TerminalSessionState,
 } from "@work-engine/protocol";
 import {
   CloudTaskSchema,
@@ -310,8 +312,23 @@ export class SessionState {
     };
   }
 
+  #terminalState(reason?: string): TerminalSessionState {
+    return decode(
+      TerminalSessionStateSchema,
+      sessionState(
+        this.sessionId,
+        this.#snapshot.cursor,
+        this.#snapshot.status,
+        { at: this.#snapshot.updatedAt, ...(reason === undefined ? {} : { reason }) },
+        this.#clock,
+      ),
+    );
+  }
+
   start(): void {
-    if (terminal(this.#snapshot.status)) throw new SessionTerminalError();
+    if (terminal(this.#snapshot.status)) {
+      throw new SessionTerminalError(this.#terminalState());
+    }
     if (this.#snapshot.status === "running") return;
     this.#snapshot = { ...this.#snapshot, status: "running" };
     this.#append("running");
@@ -323,8 +340,12 @@ export class SessionState {
     }
     const prior = this.#snapshot.acceptedMessages[messageId];
     if (prior !== undefined) return prior;
-    if (terminal(this.#snapshot.status))
-      throw new SessionTerminalError("send is rejected after terminal completion");
+    if (terminal(this.#snapshot.status)) {
+      throw new SessionTerminalError(
+        this.#terminalState("send is rejected after terminal completion"),
+        "send is rejected after terminal completion",
+      );
+    }
     const status: SessionLifecycle =
       this.#snapshot.status === "admitted" ? "running" : this.#snapshot.status;
     this.#snapshot = {
@@ -351,7 +372,7 @@ export class SessionState {
     if (terminal(this.#snapshot.status)) {
       const existing = this.#snapshot.observations[this.#snapshot.observations.length - 1];
       if (existing !== undefined) return existing;
-      throw new SessionTerminalError();
+      throw new SessionTerminalError(this.#terminalState());
     }
     this.#snapshot = {
       ...this.#snapshot,
@@ -364,7 +385,9 @@ export class SessionState {
       terminalResult: result(this.sessionId, "cancelled", decodedReason, this.#clock),
     };
     const finalObservation = this.#snapshot.observations[this.#snapshot.observations.length - 1];
-    if (finalObservation === undefined) throw new SessionTerminalError();
+    if (finalObservation === undefined) {
+      throw new SessionTerminalError(this.#terminalState());
+    }
     return finalObservation;
   }
 
@@ -372,7 +395,7 @@ export class SessionState {
     if (terminal(this.#snapshot.status)) {
       const existing = this.#snapshot.terminalResult;
       if (existing !== undefined) return existing;
-      throw new SessionTerminalError();
+      throw new SessionTerminalError(this.#terminalState());
     }
     if (reason.length === 0) throw new InvalidRequestError("Failure reason cannot be empty");
     const nextResult = result(this.#snapshot.task.sessionId, "failed", reason, this.#clock);
@@ -386,7 +409,7 @@ export class SessionState {
     if (this.#snapshot.status === "cancelled" || terminal(this.#snapshot.status)) {
       const existing = this.#snapshot.terminalResult;
       if (existing !== undefined) return existing;
-      throw new SessionTerminalError();
+      throw new SessionTerminalError(this.#terminalState());
     }
     const decodedResult = decode(SessionCompletedResultSchema, completedResult);
     if (decodedResult.sessionId !== this.#snapshot.task.sessionId) {

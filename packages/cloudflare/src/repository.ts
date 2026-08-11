@@ -389,10 +389,11 @@ export class CloudflareRepositoryPublisher {
   }
 }
 
-const providerResponseFailure = (operation: string): ProviderUnavailableError =>
+const providerResponseFailure = (operation: string, cause?: unknown): ProviderUnavailableError =>
   new ProviderUnavailableError(
     "GitHub repository transport",
     `Outbound Worker returned an invalid ${operation} response`,
+    cause,
   );
 
 const unhandledProviderFailureCode = (_code: never): never => {
@@ -427,8 +428,8 @@ class FetcherRepositoryTransport implements RepositoryTransport {
   ): S["Type"] {
     try {
       return decode(schema, value);
-    } catch {
-      throw providerResponseFailure(operation);
+    } catch (cause) {
+      throw providerResponseFailure(operation, cause);
     }
   }
 
@@ -445,15 +446,19 @@ class FetcherRepositoryTransport implements RepositoryTransport {
         headers: { "content-type": "application/json" },
         body: payload,
       });
-    } catch {
-      throw new ProviderUnavailableError("GitHub repository transport");
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "GitHub repository transport",
+        "Outbound Worker request failed",
+        cause,
+      );
     }
 
     let body: string;
     try {
       body = await response.text();
-    } catch {
-      throw providerResponseFailure("response");
+    } catch (cause) {
+      throw providerResponseFailure("response", cause);
     }
 
     if (!response.ok) {
@@ -468,12 +473,7 @@ class FetcherRepositoryTransport implements RepositoryTransport {
     const payload = Schema.encodeSync(Schema.fromJsonString(ReadRefRequestSchema), {
       onExcessProperty: "error",
     })(request);
-    const response = await this.#call(
-      "/read-ref",
-      payload,
-      ReadRefResponseJsonSchema,
-      "read-ref",
-    );
+    const response = await this.#call("/read-ref", payload, ReadRefResponseJsonSchema, "read-ref");
     return { sha: response.sha };
   }
 

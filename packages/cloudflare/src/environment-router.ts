@@ -152,8 +152,8 @@ const requireOperator = (request: Request, expected: string | undefined): void =
 const commandBody = (body: string): EnvironmentCommandRequest => {
   try {
     return decodeUnknownStrict(EnvironmentCommandJsonSchema, body);
-  } catch {
-    throw new InvalidRequestError("Environment command body is invalid");
+  } catch (cause) {
+    throw new InvalidRequestError("Environment command body is invalid", cause);
   }
 };
 
@@ -177,17 +177,22 @@ const responseFor = async (
   let body: string;
   try {
     body = await response.text();
-  } catch {
-    throw new ProviderUnavailableError("Environment Durable Object", "returned invalid JSON");
+  } catch (cause) {
+    throw new ProviderUnavailableError(
+      "Environment Durable Object",
+      "returned invalid JSON",
+      cause,
+    );
   }
   if (!response.ok) {
     let failure: EnvironmentFailure;
     try {
       failure = decodeUnknownStrict(EnvironmentFailureJsonSchema, body);
-    } catch {
+    } catch (cause) {
       throw new ProviderUnavailableError(
         "Environment Durable Object",
         "returned an invalid failure response",
+        cause,
       );
     }
     const redacted = redactedFailure(failure._tag);
@@ -198,10 +203,11 @@ const responseFor = async (
   try {
     const decoded = decodeUnknownStrict(responseJsonSchemaFor(schema), body);
     return jsonResponse(schema, decoded, { status: response.status });
-  } catch {
+  } catch (cause) {
     throw new ProviderUnavailableError(
       "Environment Durable Object",
       "returned an invalid success response",
+      cause,
     );
   }
 };
@@ -220,8 +226,8 @@ export class EnvironmentRouter {
       let environmentId: string;
       try {
         environmentId = decodeUnknownStrict(EnvironmentIdSchema, match[1]);
-      } catch {
-        throw new InvalidRequestError("Environment route identifier is invalid");
+      } catch (cause) {
+        throw new InvalidRequestError("Environment route identifier is invalid", cause);
       }
       const connect = match[2] !== undefined;
       if (!connect) requireOperator(request, this.#env.CLOUD_TASK_AUTH_TOKEN);
@@ -238,7 +244,13 @@ export class EnvironmentRouter {
       let body: string | undefined;
       let responseSchema: EnvironmentResponseSchema = EnvironmentInspectedResponseSchema;
       if (!connect && request.method !== "GET") {
-        const command = commandBody(await request.text());
+        let commandText: string;
+        try {
+          commandText = await request.text();
+        } catch (cause) {
+          throw new InvalidRequestError("Environment command body must be JSON", cause);
+        }
+        const command = commandBody(commandText);
         if (command.environmentId !== environmentId) {
           throw new InvalidRequestError("Route and command Environment identifiers differ");
         }
@@ -255,8 +267,11 @@ export class EnvironmentRouter {
             EnvironmentSourceIdentitySchema,
             request.headers.get("CF-Connecting-IP"),
           );
-        } catch {
-          throw new InvalidRequestError("Environment connection source identity is required");
+        } catch (cause) {
+          throw new InvalidRequestError(
+            "Environment connection source identity is required",
+            cause,
+          );
         }
         const limiters = [
           this.#env.ENVIRONMENT_HTTP_RATE,

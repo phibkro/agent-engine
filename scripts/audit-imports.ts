@@ -62,6 +62,11 @@ const boundaries: readonly Boundary[] = [
 ];
 
 const internalPackage = /^@work-engine\/(protocol|runtime|cloudflare|control-plane|cli)(?:$|\/)/u;
+const effectRuntimeRoots = new Set(["apps/cli/src/main.ts"]);
+const ambientPlatformAdapters = new Set([
+  "apps/cli/src/platform.ts",
+  "packages/cloudflare/src/platform-capabilities.ts",
+]);
 
 const boundaryFor = (path: string): Boundary | undefined =>
   boundaries.find((boundary) => path.startsWith(boundary.pathPrefix));
@@ -122,6 +127,32 @@ const run = async (): Promise<void> => {
       /\.(?:spec|test)\.[cm]?[jt]sx?$/u.test(file);
     if (!isTestSource && /\bas\s+(?:never|any|unknown\s+as)\b/u.test(source)) {
       errors.push(`${file} contains an unsafe production cast; decode or construct the type`);
+    }
+    if (
+      !isTestSource &&
+      /\bEffect\.run(?:Promise|PromiseExit|Sync|SyncExit|Fork|Callback)\b/u.test(source) &&
+      !effectRuntimeRoots.has(file)
+    ) {
+      errors.push(`${file} executes Effect outside an approved application composition root`);
+    }
+    if (
+      !isTestSource &&
+      (/\bJSON\.(?:parse|stringify)\s*\(/u.test(source) ||
+        /\b(?:request|response)\.json\s*\(/u.test(source))
+    ) {
+      errors.push(`${file} bypasses an explicit Effect Schema JSON boundary`);
+    }
+    if (
+      !isTestSource &&
+      /\b(?:new\s+Date\s*\(|Date\.now\s*\(|(?:globalThis\.)?crypto\.|Math\.random\s*\(|(?:Bun|process)\.env\b)/u.test(
+        source,
+      ) &&
+      !ambientPlatformAdapters.has(file)
+    ) {
+      errors.push(`${file} accesses ambient platform state outside an approved adapter`);
+    }
+    if (!isTestSource && /\bthrow\s+new\s+(?:Aggregate)?Error\s*\(/u.test(source)) {
+      errors.push(`${file} throws an untyped production error; use a tagged domain error`);
     }
     for (const specifier of importsIn(file, source)) {
       checkedImports += 1;

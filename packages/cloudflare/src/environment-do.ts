@@ -19,7 +19,7 @@ import type { PlatformCapabilities } from "./contract.ts";
 import { CloudflareSandboxEnvironmentRuntime } from "./environment-runtime.ts";
 import { FetcherEnvironmentCredentialBroker } from "./environment-credentials.ts";
 import type { CloudflareRuntimeEnv } from "./env.ts";
-import { InvalidRequestError, UnauthorizedError } from "./errors.ts";
+import { InvalidRequestError, ProviderUnavailableError, UnauthorizedError } from "./errors.ts";
 import { cloudflarePlatformCapabilities } from "./platform-capabilities.ts";
 
 const SNAPSHOT_KEY = "environment";
@@ -36,8 +36,8 @@ const jsonResponse = <S extends Schema.ConstraintDecoder<unknown>>(
 const persistedSnapshot = (value: unknown): EnvironmentSnapshot => {
   try {
     return decodeUnknownStrict(EnvironmentSnapshotSchema, value);
-  } catch {
-    throw new InvalidRequestError("Persisted Environment snapshot is invalid");
+  } catch (cause) {
+    throw new InvalidRequestError("Persisted Environment snapshot is invalid", cause);
   }
 };
 
@@ -62,13 +62,13 @@ const requestPayload = async (request: Request): Promise<EnvironmentCommandReque
   let body: string;
   try {
     body = await request.text();
-  } catch {
-    throw new InvalidRequestError("Environment command body must be JSON");
+  } catch (cause) {
+    throw new InvalidRequestError("Environment command body must be JSON", cause);
   }
   try {
     return decodeUnknownStrict(EnvironmentCommandJsonSchema, body);
-  } catch {
-    throw new InvalidRequestError("Environment command body is invalid");
+  } catch (cause) {
+    throw new InvalidRequestError("Environment command body is invalid", cause);
   }
 };
 
@@ -103,6 +103,13 @@ const jsonError = (cause: unknown): Response => {
       EnvironmentFailureSchema,
       { _tag: cause._tag, reason: cause.message },
       { status: 400 },
+    );
+  }
+  if (cause instanceof ProviderUnavailableError) {
+    return jsonResponse(
+      EnvironmentFailureSchema,
+      { _tag: cause._tag, reason: cause.message },
+      { status: 503 },
     );
   }
   return jsonResponse(
@@ -217,18 +224,27 @@ export class EnvironmentDurableObject implements DurableObject {
       return runtime.proxy(request, generationId);
     }
     if (this.#activeConnections >= MAX_CONNECTIONS) {
-      return jsonResponse(EnvironmentConnectionLimitSchema, { _tag: "EnvironmentConnectionLimit" }, {
-        status: 429,
-      });
+      return jsonResponse(
+        EnvironmentConnectionLimitSchema,
+        { _tag: "EnvironmentConnectionLimit" },
+        {
+          status: 429,
+        },
+      );
     }
     const upstreamResponse = await runtime.proxy(request, generationId);
     const upstream = upstreamResponse.webSocket;
-    if (upstream === null) throw new Error("Sandbox did not accept the WebSocket connection");
+    if (upstream === null) {
+      throw new ProviderUnavailableError(
+        "Cloudflare Sandbox",
+        "did not accept the WebSocket connection",
+      );
+    }
     const sockets = Object.values(new WebSocketPair());
     const client = sockets[0];
     const bridge = sockets[1];
     if (client === undefined || bridge === undefined) {
-      throw new Error("Cloudflare did not create a WebSocket pair");
+      throw new ProviderUnavailableError("Cloudflare Workers", "did not create a WebSocket pair");
     }
     bridge.accept();
     upstream.accept();
@@ -243,7 +259,9 @@ export class EnvironmentDurableObject implements DurableObject {
           const { coordinator } = this.#coordinator();
           let active = await coordinator.recordActivity();
           if (this.#activeConnections === 0 && active.lifecycle === "Ready") {
-            active = await coordinator.checkpoint().catch(() => active);
+            active = await coordinator
+              .checkpoint()
+              .catch((cause: unknown) => this.#rescheduleAfterFailure(coordinator, cause));
           }
           await this.#schedule(active);
         })(),
@@ -349,20 +367,21 @@ export class EnvironmentDurableObject implements DurableObject {
       }
       throw new InvalidRequestError("Unsupported Environment operation");
     } catch (cause) {
-      let rescheduleFailure: Error | undefined;
+      let rescheduleFailure: unknown;
       try {
         const current = await this.#coordinator().coordinator.inspect();
         if (current !== undefined) await this.#schedule(current);
       } catch (cleanupFailure) {
-        rescheduleFailure =
-          cleanupFailure instanceof Error
-            ? cleanupFailure
-            : new Error("Environment rescheduling failed");
+        rescheduleFailure = cleanupFailure;
       }
       return jsonError(
         rescheduleFailure === undefined
           ? cause
-          : new AggregateError([cause, rescheduleFailure], "Environment failure cleanup failed"),
+          : new ProviderUnavailableError(
+              "Environment Durable Object",
+              "Failure cleanup could not be rescheduled",
+              new AggregateError([cause, rescheduleFailure]),
+            ),
       );
     }
   }

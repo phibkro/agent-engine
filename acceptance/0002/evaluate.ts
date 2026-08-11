@@ -35,10 +35,11 @@ const TrialMeasuresSchema = Schema.Struct({
 });
 export type TrialMeasures = typeof TrialMeasuresSchema.Type;
 
-export interface ComparativeTrialInput {
-  readonly manifests: ReadonlyArray<unknown>;
-  readonly records: ReadonlyArray<unknown>;
-}
+export const ComparativeTrialInputSchema = Schema.Struct({
+  manifests: Schema.Array(TrialManifestSchema),
+  records: Schema.Array(TrialRecordSchema),
+});
+export type ComparativeTrialInput = typeof ComparativeTrialInputSchema.Type;
 
 const median = (values: ReadonlyArray<number>): number => {
   if (values.length === 0) return Number.POSITIVE_INFINITY;
@@ -96,10 +97,8 @@ const materiallyLower = (treatment: number, baseline: number): boolean =>
   baseline === 0 ? false : treatment <= baseline * 0.9;
 
 export const evaluateComparativeTrials = (input: ComparativeTrialInput): ProductDecisionReport => {
-  const manifests = input.manifests.map((manifest) =>
-    decodeUnknownStrict(TrialManifestSchema, manifest),
-  );
-  const records = input.records.map((record) => decodeUnknownStrict(TrialRecordSchema, record));
+  const manifests = input.manifests;
+  const records = input.records;
   if (manifests.length === 0 || records.length === 0) {
     throw new Error("comparative evaluation requires manifests and records");
   }

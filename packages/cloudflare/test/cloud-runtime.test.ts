@@ -3,6 +3,7 @@ import { MemoryRevisionSchema, Sha256DigestSchema, TimestampSchema } from "@work
 import {
   CacheDigestMismatchError,
   CloudflareProjectMemory,
+  CloudflareCloudTaskClient,
   CloudTaskSchema,
   decode,
   InMemoryCloudTaskDirectory,
@@ -15,6 +16,8 @@ import {
   refsAreDistinct,
   sessionRefs,
   verifyDependencyCache,
+  ProviderUnavailableError,
+  SessionTerminalError,
 } from "../src/index.ts";
 import type {
   CloudTask,
@@ -128,6 +131,70 @@ describe("authenticated CloudTask routing", () => {
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ _tag: "InvalidRequest" });
+  });
+});
+
+describe("strict provider JSON boundaries", () => {
+  it("rejects malformed CloudTask success envelopes", async () => {
+    const client = new CloudflareCloudTaskClient(
+      {
+        fetch: async () =>
+          Response.json({
+            _tag: "Spawned",
+            admission: { unexpected: true },
+          }),
+      } as unknown as Fetcher,
+      "test-token",
+    );
+    await expect(client.spawn(task().sessionId, task())).rejects.toBeInstanceOf(
+      ProviderUnavailableError,
+    );
+  });
+
+  it("preserves typed terminal state from CloudTask failures", async () => {
+    const state = {
+      _tag: "Failed",
+      sessionId: task().sessionId,
+      cursor: 3,
+      failedAt: now,
+      reason: "worker failed",
+    } as const;
+    const client = new CloudflareCloudTaskClient(
+      {
+        fetch: async () =>
+          Response.json(
+            {
+              _tag: "SessionTerminal",
+              reason: "Session is terminal",
+              state,
+            },
+            { status: 409 },
+          ),
+      } as unknown as Fetcher,
+      "test-token",
+    );
+    const error = await client.result(task().sessionId).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(SessionTerminalError);
+    expect((error as SessionTerminalError).details["state"]).toEqual(state);
+  });
+
+  it("rejects malformed Project Memory success envelopes", async () => {
+    const namespace = {
+      getByName: () => ({
+        fetch: async () =>
+          Response.json({
+            _tag: "ProjectMemoryRead",
+            facts: [],
+            unexpected: true,
+          }),
+      }),
+    } as unknown as DurableObjectNamespace;
+    const memory = new CloudflareProjectMemory(namespace, task().projectId, {
+      sessionId: task().sessionId,
+    });
+    await expect(memory.readContext(initialMemoryRevision)).rejects.toBeInstanceOf(
+      ProviderUnavailableError,
+    );
   });
 });
 describe("CloudTask Send JSON values", () => {
