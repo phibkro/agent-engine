@@ -59,6 +59,17 @@ const decodeJson = <S extends Schema.ConstraintDecoder<unknown>>(
   body: string,
 ): S["Type"] => Schema.decodeUnknownSync(schema, { onExcessProperty: "error" })(body);
 
+const decodeRequestJson = async <S extends Schema.ConstraintDecoder<unknown>>(
+  schema: S,
+  request: Request,
+): Promise<S["Type"]> => {
+  try {
+    return decodeJson(schema, await request.text());
+  } catch (cause) {
+    throw new InvalidRequestError("Project Memory request body must be valid JSON", cause);
+  }
+};
+
 const MemoryRevisionRecordSchema = Schema.Struct({
   revision: MemoryRevisionSchema,
   facts: Schema.Array(ProjectMemoryFactSchema),
@@ -314,13 +325,48 @@ export class DurableObjectProjectMemoryStore implements ProjectMemoryStore {
   }
 
   async load(): Promise<ProjectMemorySnapshot | undefined> {
-    const stored: unknown = await this.#state.storage.get("memory");
-    return stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
+    let stored: unknown;
+    try {
+      stored = await this.#state.storage.get("memory");
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "could not read persisted Project Memory state",
+        cause,
+      );
+    }
+    if (stored === undefined) return undefined;
+    try {
+      return decode(ProjectMemorySnapshotSchema, stored);
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "persisted Project Memory state is invalid",
+        cause,
+      );
+    }
   }
 
   async save(snapshot: ProjectMemorySnapshot): Promise<void> {
-    const decoded = decode(ProjectMemorySnapshotSchema, snapshot);
-    await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, decoded));
+    let decoded: ProjectMemorySnapshot;
+    try {
+      decoded = decode(ProjectMemorySnapshotSchema, snapshot);
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "Project Memory state is invalid",
+        cause,
+      );
+    }
+    try {
+      await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, decoded));
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "could not persist Project Memory state",
+        cause,
+      );
+    }
   }
 
   get projectId(): string {
@@ -346,20 +392,61 @@ export class ProjectMemoryDurableObject implements DurableObject {
   }
 
   async #load(projectId: string): Promise<ProjectMemoryState> {
-    const decodedProjectId = decode(ProjectIdSchema, projectId);
+    let decodedProjectId: typeof ProjectIdSchema.Type;
+    try {
+      decodedProjectId = decode(ProjectIdSchema, projectId);
+    } catch (cause) {
+      throw new InvalidRequestError("Project Memory project identity is invalid", cause);
+    }
     if (this.#memory !== undefined) {
       if (this.#memory.projectId !== decodedProjectId) throw new MemoryUnauthorizedError();
       return this.#memory;
     }
-    const stored: unknown = await this.#state.storage.get("memory");
-    const snapshot = stored === undefined ? undefined : decode(ProjectMemorySnapshotSchema, stored);
-    this.#memory = new ProjectMemoryState(decodedProjectId, this.#capabilities, snapshot);
+    let stored: unknown;
+    try {
+      stored = await this.#state.storage.get("memory");
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "could not read persisted Project Memory state",
+        cause,
+      );
+    }
+    let snapshot: ProjectMemorySnapshot | undefined;
+    if (stored !== undefined) {
+      try {
+        snapshot = decode(ProjectMemorySnapshotSchema, stored);
+      } catch (cause) {
+        throw new ProviderUnavailableError(
+          "Project Memory storage",
+          "persisted Project Memory state is invalid",
+          cause,
+        );
+      }
+    }
+    try {
+      this.#memory = new ProjectMemoryState(decodedProjectId, this.#capabilities, snapshot);
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "persisted Project Memory state is invalid",
+        cause,
+      );
+    }
     return this.#memory;
   }
 
   async #save(memory: ProjectMemoryState): Promise<void> {
-    const snapshot = decode(ProjectMemorySnapshotSchema, memory.snapshot);
-    await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, snapshot));
+    try {
+      const snapshot = decode(ProjectMemorySnapshotSchema, memory.snapshot);
+      await this.#state.storage.put("memory", encode(ProjectMemorySnapshotSchema, snapshot));
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Project Memory storage",
+        "could not persist Project Memory state",
+        cause,
+      );
+    }
     this.#memory = memory;
   }
 
@@ -367,11 +454,16 @@ export class ProjectMemoryDurableObject implements DurableObject {
     try {
       const projectIdHeader = request.headers.get("X-Project-Identity");
       if (projectIdHeader === null) throw new MemoryUnauthorizedError();
-      const projectId = decode(ProjectIdSchema, projectIdHeader);
+      let projectId: typeof ProjectIdSchema.Type;
+      try {
+        projectId = decode(ProjectIdSchema, projectIdHeader);
+      } catch (cause) {
+        throw new InvalidRequestError("Project Memory project identity is invalid", cause);
+      }
       const memory = await this.#load(projectId);
       const url = new URL(request.url);
       if (url.pathname.endsWith("/read")) {
-        const input = decodeJson(ProjectMemoryReadRequestFromJsonSchema, await request.text());
+        const input = await decodeRequestJson(ProjectMemoryReadRequestFromJsonSchema, request);
         const response = decode(ProjectMemoryReadResponseSchema, {
           _tag: "ProjectMemoryRead",
           facts: memory.readContext(input.atRevision, input.query),
@@ -381,10 +473,15 @@ export class ProjectMemoryDurableObject implements DurableObject {
         });
       }
       if (url.pathname.endsWith("/propose")) {
-        const input = decodeJson(ProjectMemoryProposeRequestFromJsonSchema, await request.text());
+        const input = await decodeRequestJson(ProjectMemoryProposeRequestFromJsonSchema, request);
         const sessionHeader = request.headers.get("X-Cloud-Task-Session");
         if (sessionHeader === null) throw new MemoryUnauthorizedError();
-        const sessionId = decode(SessionIdSchema, sessionHeader);
+        let sessionId: typeof SessionIdSchema.Type;
+        try {
+          sessionId = decode(SessionIdSchema, sessionHeader);
+        } catch (cause) {
+          throw new InvalidRequestError("Project Memory session identity is invalid", cause);
+        }
         const nextMemory = new ProjectMemoryState(projectId, this.#capabilities, memory.snapshot);
         const proposal = nextMemory.proposeMemory(
           sessionId,
@@ -399,7 +496,7 @@ export class ProjectMemoryDurableObject implements DurableObject {
         });
       }
       if (url.pathname.endsWith("/accept")) {
-        const input = decodeJson(ProjectMemoryAcceptRequestFromJsonSchema, await request.text());
+        const input = await decodeRequestJson(ProjectMemoryAcceptRequestFromJsonSchema, request);
         const presented = request.headers.get("X-Project-Memory-Coordinator");
         if (
           this.#coordinatorSecret === undefined ||
@@ -431,9 +528,9 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
         ? 404
         : cause instanceof MemoryUnauthorizedError
           ? 403
-          : cause instanceof ProviderUnavailableError
-            ? 503
-            : 400;
+          : cause instanceof InvalidRequestError
+            ? 400
+            : 503;
   const reason = "Project Memory request failed";
   const body =
     cause instanceof MemoryRevisionMismatchError
@@ -460,9 +557,9 @@ const projectMemoryErrorResponse = (cause: unknown): Response => {
               _tag:
                 cause instanceof MemoryUnauthorizedError
                   ? "MemoryUnauthorized"
-                  : cause instanceof ProviderUnavailableError
-                    ? "ProviderUnavailable"
-                    : "InvalidRequest",
+                  : cause instanceof InvalidRequestError
+                    ? "InvalidRequest"
+                    : "ProviderUnavailable",
               reason,
             });
   return new Response(Schema.encodeSync(ProjectMemoryFailureFromJsonSchema)(body), {

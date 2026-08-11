@@ -15,10 +15,10 @@ import {
 } from "./contract.ts";
 import {
   CommitMetadataSchema,
-  PathPatternSchema,
   RepositoryIdentitySchema,
+  RepositoryPathSchema,
   type CommitMetadata,
-  type PathPattern,
+  type RepositoryPath,
 } from "@work-engine/protocol";
 import {
   ProviderUnavailableError,
@@ -51,7 +51,7 @@ const VerifyCandidateRequestSchema = Schema.Struct({
 });
 const VerifyCandidateSucceededSchema = Schema.TaggedStruct("VerifyCandidateSucceeded", {
   descendedFromBase: Schema.Boolean,
-  changedPaths: Schema.Array(PathPatternSchema),
+  changedPaths: Schema.Array(RepositoryPathSchema),
   commitMetadata: CommitMetadataSchema,
 });
 
@@ -76,7 +76,7 @@ export interface GitRefState {
 
 export interface GitCandidateVerification {
   readonly descendedFromBase: boolean;
-  readonly changedPaths: readonly PathPattern[];
+  readonly changedPaths: readonly RepositoryPath[];
   readonly commitMetadata: CommitMetadata;
 }
 
@@ -104,8 +104,8 @@ export interface SessionRefs {
 }
 
 const pathMatches = (path: string, pattern: string): boolean => {
-  const normalizedPath = path.replace(/^\/+/, "");
-  const normalizedPattern = pattern.replace(/^\/+/, "");
+  const normalizedPath = path.replace(/^\/+/u, "");
+  const normalizedPattern = pattern.replace(/^\/+/u, "");
   let source = "^";
   for (let index = 0; index < normalizedPattern.length; index += 1) {
     const character = normalizedPattern[index]!;
@@ -123,7 +123,7 @@ const pathMatches = (path: string, pattern: string): boolean => {
       source += character.replace(/[|\\{}()[\]^$+?.]/gu, "\\$&");
     }
   }
-  return new RegExp(`${source}$`, "u").test(normalizedPath);
+  return new RegExp(`${source}(?![\\s\\S])`, "u").test(normalizedPath);
 };
 
 const allowedPath = (path: string, patterns: readonly string[]): boolean =>
@@ -182,6 +182,32 @@ const scopeOf = (grant: RepositoryGrant): readonly string[] => grant.writablePat
 const repositoryOf = (grant: RepositoryGrant): RepositoryIdentity => grant.repository;
 
 const baseOf = (grant: RepositoryGrant): string => grant.baseCommit;
+const verifiedCandidate = (
+  candidateCommit: string,
+  verification: GitCandidateVerification,
+): GitCandidateVerification => {
+  try {
+    const commitMetadata = decode(CommitMetadataSchema, verification.commitMetadata);
+    if (commitMetadata.sha !== candidateCommit) {
+      throw new ProviderUnavailableError(
+        "GitHub repository transport",
+        "Outbound Worker returned an invalid candidate verification response",
+      );
+    }
+    return {
+      ...verification,
+      changedPaths: verification.changedPaths.map((path) => decode(RepositoryPathSchema, path)),
+      commitMetadata,
+    };
+  } catch (cause) {
+    if (cause instanceof ProviderUnavailableError) throw cause;
+    throw new ProviderUnavailableError(
+      "GitHub repository transport",
+      "Outbound Worker returned an invalid candidate verification response",
+      cause,
+    );
+  }
+};
 
 /** Trusted publisher. All refs are derived from the grant; callers cannot select arbitrary refs. */
 export class TrustedRepositoryPublisher {
@@ -227,11 +253,14 @@ export class TrustedRepositoryPublisher {
     const value = this.#validateGrant(grant, sessionId);
     const commit = decode(CommitShaSchema, baseOrCheckpointCommit ?? baseOf(value));
     const transport = this.#requireTransport();
-    const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(value),
-      candidateCommit: commit,
-      repository: repositoryOf(value),
-    });
+    const verification = verifiedCandidate(
+      commit,
+      await transport.verifyCandidate({
+        baseCommit: baseOf(value),
+        candidateCommit: commit,
+        repository: repositoryOf(value),
+      }),
+    );
     if (!verification.descendedFromBase)
       throw new RepositoryAncestryViolationError(commit, baseOf(value));
     return decode(VerifiedWorkspaceSchema, {
@@ -257,11 +286,14 @@ export class TrustedRepositoryPublisher {
     const existing = this.#checkpoints.get(key);
     if (existing !== undefined) return existing;
     const transport = this.#requireTransport();
-    const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(value),
-      candidateCommit: nextCommit,
-      repository: repositoryOf(value),
-    });
+    const verification = verifiedCandidate(
+      nextCommit,
+      await transport.verifyCandidate({
+        baseCommit: baseOf(value),
+        candidateCommit: nextCommit,
+        repository: repositoryOf(value),
+      }),
+    );
     if (!verification.descendedFromBase)
       throw new RepositoryAncestryViolationError(nextCommit, baseOf(value));
     const outOfScope = verification.changedPaths.filter(
@@ -310,11 +342,14 @@ export class TrustedRepositoryPublisher {
     if (existing !== undefined) return existing;
     const transport = this.#requireTransport();
     const repository = repositoryOf(value);
-    const verification = await transport.verifyCandidate({
-      baseCommit: baseOf(value),
-      candidateCommit: nextCommit,
-      repository,
-    });
+    const verification = verifiedCandidate(
+      nextCommit,
+      await transport.verifyCandidate({
+        baseCommit: baseOf(value),
+        candidateCommit: nextCommit,
+        repository,
+      }),
+    );
     if (!verification.descendedFromBase)
       throw new RepositoryAncestryViolationError(nextCommit, baseOf(value));
     const outOfScope = verification.changedPaths.filter(
@@ -492,11 +527,11 @@ class FetcherRepositoryTransport implements RepositoryTransport {
       VerifyCandidateSucceededJsonSchema,
       "candidate verification",
     );
-    return {
+    return verifiedCandidate(input.candidateCommit, {
       descendedFromBase: response.descendedFromBase,
       changedPaths: response.changedPaths,
       commitMetadata: response.commitMetadata,
-    };
+    });
   }
 
   async updateRef(input: {

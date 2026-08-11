@@ -19,6 +19,7 @@ import {
   ProjectMemoryDurableObject,
   ProjectMemoryState,
   ProjectMemoryProvenanceSchema,
+  SessionDurableObject,
   SessionState,
   TrustedRepositoryPublisher,
   makeRepositoryGrant,
@@ -157,6 +158,142 @@ describe("authenticated CloudTask routing", () => {
     );
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ _tag: "InvalidRequest" });
+  });
+});
+
+describe("Durable Object provider failure boundaries", () => {
+  it("classifies native Session storage failures as redacted provider failures", async () => {
+    const state = {
+      id: { toString: () => task().sessionId },
+      storage: {
+        get: async () => {
+          throw new Error("storage internals must not escape");
+        },
+      },
+    } as unknown as ConstructorParameters<typeof SessionDurableObject>[0];
+    const object = new SessionDurableObject(
+      state,
+      {
+        CLOUD_TASK_ROUTER_SECRET: "internal-secret",
+      } as unknown as ConstructorParameters<typeof SessionDurableObject>[1],
+      capabilities,
+    );
+    const response = await object.fetch(
+      new Request("https://session/v1/session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Cloud-Task-Internal": "internal-secret",
+        },
+        body: JSON.stringify({ _tag: "Result", sessionId: task().sessionId }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Cloud-task request failed",
+    });
+  });
+
+  it("classifies corrupt persisted Session state as a provider failure", async () => {
+    const state = {
+      id: { toString: () => task().sessionId },
+      storage: { get: async () => ({ corrupt: true }) },
+    } as unknown as ConstructorParameters<typeof SessionDurableObject>[0];
+    const object = new SessionDurableObject(
+      state,
+      {
+        CLOUD_TASK_ROUTER_SECRET: "internal-secret",
+      } as unknown as ConstructorParameters<typeof SessionDurableObject>[1],
+      capabilities,
+    );
+    const response = await object.fetch(
+      new Request("https://session/v1/session", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Cloud-Task-Internal": "internal-secret",
+        },
+        body: JSON.stringify({ _tag: "Result", sessionId: task().sessionId }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Cloud-task request failed",
+    });
+  });
+});
+
+describe("Project Memory Durable Object provider failure boundaries", () => {
+  it("classifies native Project Memory storage failures as redacted provider failures", async () => {
+    const state = {
+      storage: {
+        get: async () => {
+          throw new Error("storage internals must not escape");
+        },
+      },
+    } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
+    const object = new ProjectMemoryDurableObject(state, {}, capabilities);
+    const response = await object.fetch(
+      new Request("https://project-memory/read", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Project-Identity": task().projectId,
+        },
+        body: JSON.stringify({ atRevision: 0, query: "" }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Project Memory request failed",
+    });
+  });
+
+  it("classifies corrupt persisted Project Memory state as a provider failure", async () => {
+    const state = {
+      storage: { get: async () => ({ corrupt: true }) },
+    } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
+    const object = new ProjectMemoryDurableObject(state, {}, capabilities);
+    const response = await object.fetch(
+      new Request("https://project-memory/read", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Project-Identity": task().projectId,
+        },
+        body: JSON.stringify({ atRevision: 0, query: "" }),
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      _tag: "ProviderUnavailable",
+      reason: "Project Memory request failed",
+    });
+  });
+
+  it("keeps malformed Project Memory request bodies as invalid requests", async () => {
+    const state = {
+      storage: { get: async () => undefined },
+    } as unknown as ConstructorParameters<typeof ProjectMemoryDurableObject>[0];
+    const object = new ProjectMemoryDurableObject(state, {}, capabilities);
+    const response = await object.fetch(
+      new Request("https://project-memory/read", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "X-Project-Identity": task().projectId,
+        },
+        body: "{not-json",
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      _tag: "InvalidRequest",
+      reason: "Project Memory request failed",
+    });
   });
 });
 

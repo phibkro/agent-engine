@@ -188,7 +188,7 @@ const statusForCloudTaskFailure = (tag: CloudTaskFailureTag): number => {
 };
 
 const failureTag = (cause: unknown): CloudTaskFailureTag => {
-  if (!(cause instanceof CloudRuntimeError)) return "InvalidRequest";
+  if (!(cause instanceof CloudRuntimeError)) return "ProviderUnavailable";
   switch (cause._tag) {
     case "Unauthenticated":
     case "Unauthorized":
@@ -276,18 +276,43 @@ export class SessionDurableObject implements DurableObject {
     }
   }
   async #load(task?: CloudTask): Promise<SessionState> {
-    const stored: unknown = await this.#state.storage.get("session");
+    let stored: unknown;
+    try {
+      stored = await this.#state.storage.get("session");
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Cloud-task session storage",
+        "could not read persisted Session state",
+        cause,
+      );
+    }
     if (stored !== undefined) {
-      const existing = decodeSessionSnapshot(stored);
-      return new SessionState(existing.task, this.#capabilities, existing);
+      try {
+        const existing = decodeSessionSnapshot(stored);
+        return new SessionState(existing.task, this.#capabilities, existing);
+      } catch (cause) {
+        throw new ProviderUnavailableError(
+          "Cloud-task session storage",
+          "persisted Session state is invalid",
+          cause,
+        );
+      }
     }
     if (task === undefined) throw new SessionNotFoundError(this.#state.id.toString());
     return new SessionState(task, this.#capabilities);
   }
 
   async #save(session: SessionState): Promise<void> {
-    const snapshot = decode(SessionSnapshotSchema, session.snapshot);
-    await this.#state.storage.put("session", encode(SessionSnapshotSchema, snapshot));
+    try {
+      const snapshot = decode(SessionSnapshotSchema, session.snapshot);
+      await this.#state.storage.put("session", encode(SessionSnapshotSchema, snapshot));
+    } catch (cause) {
+      throw new ProviderUnavailableError(
+        "Cloud-task session storage",
+        "could not persist Session state",
+        cause,
+      );
+    }
   }
 
   async fetch(request: Request): Promise<Response> {

@@ -94,12 +94,24 @@ export const ProfileSchema = Schema.TaggedStruct("Profile", {
 export type Profile = typeof ProfileSchema.Type;
 
 export const PathPatternSchema = Schema.String.check(
-  Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+$/),
+  Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+(?![\s\S])/u),
   Schema.makeFilter(
     (path) => !path.includes(String.fromCharCode(0)) || "path contains a null byte",
   ),
 );
 export type PathPattern = typeof PathPatternSchema.Type;
+
+export const RepositoryPathSchema = Schema.String.check(
+  Schema.isPattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$)).+(?![\s\S])/u),
+  Schema.makeFilter(
+    (path) =>
+      !/[\u0000-\u001f\u007f]/u.test(path) || "path contains a control character",
+  ),
+  Schema.makeFilter(
+    (path) => !/[*?\[\]{}]/u.test(path) || "path contains a glob metacharacter",
+  ),
+);
+export type RepositoryPath = typeof RepositoryPathSchema.Type;
 
 export const RepositoryIdentitySchema = Schema.Struct({
   owner: NonEmptyStringSchema,
@@ -109,7 +121,7 @@ export type RepositoryIdentity = typeof RepositoryIdentitySchema.Type;
 
 export const RepositoryCandidateVerificationSchema = Schema.Struct({
   descendedFromBase: Schema.Boolean,
-  changedPaths: Schema.Array(PathPatternSchema),
+  changedPaths: Schema.Array(RepositoryPathSchema),
   commitMetadata: JsonRecordSchema,
 });
 export type RepositoryCandidateVerification = typeof RepositoryCandidateVerificationSchema.Type;
@@ -285,7 +297,7 @@ export const SessionCompletedResultSchema = Schema.TaggedStruct("CompletedResult
   candidateCommit: CommitShaSchema,
   candidateBranch: NonEmptyStringSchema,
   candidateUrl: NonEmptyStringSchema,
-  changedPaths: Schema.Array(PathPatternSchema),
+  changedPaths: Schema.Array(RepositoryPathSchema),
   commitMetadata: CommitMetadataSchema,
   commands: Schema.Array(CommandObservationSchema),
   artifacts: Schema.Array(ArtifactDigestSchema),

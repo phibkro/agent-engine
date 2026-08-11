@@ -61,6 +61,21 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
         commitMetadata: { sha: candidateCommit, message: "candidate", unexpected: true },
       },
     ],
+    [
+      "mismatched commit metadata identity",
+      {
+        ...validVerification,
+        commitMetadata: { sha: baseCommit, message: "candidate", author: "operator" },
+      },
+    ],
+    [
+      "glob-bearing changed path",
+      { ...validVerification, changedPaths: ["packages/**"] },
+    ],
+    [
+      "trailing-newline changed path",
+      { ...validVerification, changedPaths: ["packages/cloud-runtime/src/repository.ts\n"] },
+    ],
   ])("rejects %s before publishing a candidate receipt", async (_label, verification) => {
     const { publisher, paths } = publisherFor({
       "/verify": verification,
@@ -72,6 +87,21 @@ describe("CloudflareRepositoryPublisher provider boundaries", () => {
       publisher.publishCandidate(grant, sessionId, candidateCommit),
     ).rejects.toBeInstanceOf(ProviderUnavailableError);
     expect(paths).toEqual(["/verify"]);
+  });
+
+  it("rejects trailing-newline aliases in grant patterns", () => {
+    expect(() =>
+      makeRepositoryGrant({
+        grantId: "grt_00000000-0000-4000-8000-000000000001",
+        sessionId,
+        projectId,
+        repository: { owner: "example", name: "project" },
+        baseCommit,
+        writablePaths: ["packages/**\n"],
+        issuedAt: now,
+        expiresAt: "2026-08-11T00:00:00.000Z",
+      }),
+    ).toThrow();
   });
 
   it("maps a non-2xx provider conflict envelope to a typed repository conflict", async () => {

@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   CloudTaskFailureSchema,
   CloudTaskSchema,
+  PathPatternSchema,
   ProjectMemoryRevisionSchema,
   ProjectMemoryFailureSchema,
   ProjectMemoryAcceptRequestSchema,
@@ -10,6 +11,7 @@ import {
   ProjectMemoryProposalModel,
   ProjectMemoryProposalSchema,
   RepositoryGrantSchema,
+  RepositoryPathSchema,
   SessionResultSchema,
   TrialManifestSchema,
   decodeUnknownStrict,
@@ -73,6 +75,15 @@ test("rejects malformed identifiers and SHA-256 digests", () => {
   expect(() =>
     decodeUnknownStrict(CloudTaskSchema, { ...task, profileDigest: "sha256:bad" }),
   ).toThrow();
+});
+
+test("rejects glob and control characters in provider changed paths", () => {
+  expect(decodeUnknownStrict(PathPatternSchema, "src/**")).toBe("src/**");
+  expect(() => decodeUnknownStrict(PathPatternSchema, "src/**\n")).toThrow();
+  expect(decodeUnknownStrict(RepositoryPathSchema, "src/index.ts")).toBe("src/index.ts");
+  for (const path of ["src/**", "src/*.ts", "src/[a].ts", "src/{a,b}.ts", "src/\u0000.ts"]) {
+    expect(() => decodeUnknownStrict(RepositoryPathSchema, path)).toThrow();
+  }
 });
 
 test("rejects impossible UTC timestamps", () => {
