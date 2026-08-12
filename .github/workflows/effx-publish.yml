@@ -23,6 +23,10 @@ jobs:
           ref: 0e41f6b05b08f7ecfd91c7e55e77e98d8b650b02
           path: .effx-tool
           persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
       - name: Download unprivileged analysis artifact
         env:
           GH_TOKEN: ${{ github.token }}
