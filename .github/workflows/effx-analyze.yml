@@ -1,0 +1,75 @@
+name: effx analyze
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pull request without credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out immutable effx tool revision
+        uses: actions/checkout@v4
+        with:
+          repository: phibkro/oxlint-effect-plugin
+          ref: 0e41f6b05b08f7ecfd91c7e55e77e98d8b650b02
+          path: .effx-tool
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - name: Install the reviewed effx tool
+        working-directory: .effx-tool
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build
+      - name: Create repository-independent EffectTS configuration
+        run: |
+          cat > .effx-oxlintrc.json <<'JSON'
+          {
+            "jsPlugins": [{ "name": "effect", "specifier": "./.effx-tool/dist/index.js" }],
+            "ignorePatterns": [".effx-tool/**", "node_modules/**", "dist/**", "build/**", "coverage/**", ".git/**"],
+            "rules": {
+              "effect/no-ambient-console": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-ambient-authority": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-cross-runtime": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-premature-execution": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-native-promise-control-flow": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-raw-json-parse": ["error", { "role": "effect-library", "platform": "portable", "boundaries": ["external-data"] }],
+              "effect/no-untyped-throw": ["error", { "role": "effect-library", "platform": "portable" }],
+              "effect/no-opaque-instance-fields": ["error", { "role": "effect-library", "platform": "portable" }]
+            }
+          }
+          JSON
+      - name: Run Oxlint with structured output
+        run: |
+          set +e
+          .effx-tool/node_modules/.bin/oxlint --config .effx-oxlintrc.json --format json . > effx-oxlint.json
+          status=$?
+          set -e
+          test -s effx-oxlint.json
+          test "$status" -le 1
+      - name: Translate diagnostics
+        run: bun .effx-tool/dist/cli.js translate < effx-oxlint.json > effx-diagnostics.json
+      - name: Build immutable publication input
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bun .effx-tool/scripts/build-github-input.ts effx-diagnostics.json > effx-input.json
+      - name: Upload decoded analysis result
+        uses: actions/upload-artifact@v4
+        with:
+          name: effx-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: effx-input.json
+          if-no-files-found: error
+          retention-days: 7
