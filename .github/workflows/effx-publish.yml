@@ -20,7 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: phibkro/oxlint-effect-plugin
-          ref: 0e41f6bb73c3e9aba2df75e32ff77da214452497
+          ref: 0e41f6b05b08f7ecfd91c7e55e77e98d8b650b02
           path: .effx-tool
           persist-credentials: false
       - name: Download unprivileged analysis artifact
