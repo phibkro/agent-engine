@@ -58,14 +58,14 @@ jobs:
           test -s effx-oxlint.json
           test "$status" -le 1
       - name: Translate diagnostics
-        run: .effx-tool/dist/cli.js translate < effx-oxlint.json > effx-diagnostics.json
+        run: bun .effx-tool/dist/cli.js translate < effx-oxlint.json > effx-diagnostics.json
       - name: Build immutable publication input
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: bun run .effx-tool/scripts/build-github-input.ts effx-diagnostics.json > effx-input.json
+        run: bun .effx-tool/scripts/build-github-input.ts effx-diagnostics.json > effx-input.json
       - name: Upload decoded analysis result
         uses: actions/upload-artifact@v4
         with:
