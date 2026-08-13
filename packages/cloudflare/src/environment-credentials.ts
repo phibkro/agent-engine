@@ -123,7 +123,7 @@ export class FetcherEnvironmentCredentialBroker implements EnvironmentCredential
           Authorization: `Bearer ${this.#authorization}`,
           "Content-Type": "application/json",
         },
-        body: Schema.encodeSync(Schema.UnknownFromJsonString)(body),
+        body: Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(body),
       });
     } catch (cause) {
       throw new ProviderUnavailableError("Credential broker", "request failed", cause);

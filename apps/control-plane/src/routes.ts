@@ -72,17 +72,17 @@ export const ControlPlaneRouters = Context.Service<ControlPlaneRouters>(
   "work-engine/control-plane/Routers",
 );
 
-export class ControlPlaneConfigurationError extends Schema.TaggedErrorClass<ControlPlaneConfigurationError>()(
+export class ControlPlaneConfigurationError extends Schema.TaggedError<ControlPlaneConfigurationError>()(
   "ControlPlaneConfigurationError",
   {},
 ) {}
 
-export class ControlPlaneRoutingError extends Schema.TaggedErrorClass<ControlPlaneRoutingError>()(
+export class ControlPlaneRoutingError extends Schema.TaggedError<ControlPlaneRoutingError>()(
   "ControlPlaneRoutingError",
   {},
 ) {}
 
-export class ControlPlaneNotFoundError extends Schema.TaggedErrorClass<ControlPlaneNotFoundError>()(
+export class ControlPlaneNotFoundError extends Schema.TaggedError<ControlPlaneNotFoundError>()(
   "ControlPlaneNotFoundError",
   {},
 ) {}

@@ -77,27 +77,27 @@ export type {
 
 const ErrorReasonSchema = Schema.NonEmptyString;
 
-export class CloudTaskNotFound extends Schema.TaggedErrorClass<CloudTaskNotFound>()(
+export class CloudTaskNotFound extends Schema.TaggedError<CloudTaskNotFound>()(
   "CloudTaskNotFound",
   { sessionId: SessionIdSchema },
 ) {}
 
-export class CloudTaskUnauthorized extends Schema.TaggedErrorClass<CloudTaskUnauthorized>()(
+export class CloudTaskUnauthorized extends Schema.TaggedError<CloudTaskUnauthorized>()(
   "CloudTaskUnauthorized",
   { reason: ErrorReasonSchema },
 ) {}
 
-export class CloudTaskRejected extends Schema.TaggedErrorClass<CloudTaskRejected>()(
+export class CloudTaskRejected extends Schema.TaggedError<CloudTaskRejected>()(
   "CloudTaskRejected",
   { reason: ErrorReasonSchema },
 ) {}
 
-export class CloudTaskTerminal extends Schema.TaggedErrorClass<CloudTaskTerminal>()(
+export class CloudTaskTerminal extends Schema.TaggedError<CloudTaskTerminal>()(
   "CloudTaskTerminal",
   { sessionId: SessionIdSchema, state: TerminalSessionStateSchema },
 ) {}
 
-export class CloudTaskUnavailable extends Schema.TaggedErrorClass<CloudTaskUnavailable>()(
+export class CloudTaskUnavailable extends Schema.TaggedError<CloudTaskUnavailable>()(
   "CloudTaskUnavailable",
   { reason: ErrorReasonSchema },
 ) {}
@@ -111,27 +111,27 @@ export const CloudTaskErrorSchema = Schema.Union([
 ]);
 export type CloudTaskError = typeof CloudTaskErrorSchema.Type;
 
-export class MemoryRevisionUnavailable extends Schema.TaggedErrorClass<MemoryRevisionUnavailable>()(
+export class MemoryRevisionUnavailable extends Schema.TaggedError<MemoryRevisionUnavailable>()(
   "MemoryRevisionUnavailable",
   { expectedRevision: MemoryRevisionSchema },
 ) {}
 
-export class MemoryRevisionStale extends Schema.TaggedErrorClass<MemoryRevisionStale>()(
+export class MemoryRevisionStale extends Schema.TaggedError<MemoryRevisionStale>()(
   "MemoryRevisionStale",
   { expectedRevision: MemoryRevisionSchema, observedRevision: MemoryRevisionSchema },
 ) {}
 
-export class MemoryProposalNotFound extends Schema.TaggedErrorClass<MemoryProposalNotFound>()(
+export class MemoryProposalNotFound extends Schema.TaggedError<MemoryProposalNotFound>()(
   "MemoryProposalNotFound",
   { proposalId: MemoryProposalIdSchema },
 ) {}
 
-export class MemoryUnauthorized extends Schema.TaggedErrorClass<MemoryUnauthorized>()(
+export class MemoryUnauthorized extends Schema.TaggedError<MemoryUnauthorized>()(
   "MemoryUnauthorized",
   { reason: ErrorReasonSchema },
 ) {}
 
-export class MemoryUnavailable extends Schema.TaggedErrorClass<MemoryUnavailable>()(
+export class MemoryUnavailable extends Schema.TaggedError<MemoryUnavailable>()(
   "MemoryUnavailable",
   { reason: ErrorReasonSchema },
 ) {}
@@ -145,32 +145,32 @@ export const ProjectMemoryErrorSchema = Schema.Union([
 ]);
 export type ProjectMemoryError = typeof ProjectMemoryErrorSchema.Type;
 
-export class RepositoryGrantInvalid extends Schema.TaggedErrorClass<RepositoryGrantInvalid>()(
+export class RepositoryGrantInvalid extends Schema.TaggedError<RepositoryGrantInvalid>()(
   "RepositoryGrantInvalid",
   { grantId: GrantIdSchema, reason: ErrorReasonSchema },
 ) {}
 
-export class RepositoryGrantExpired extends Schema.TaggedErrorClass<RepositoryGrantExpired>()(
+export class RepositoryGrantExpired extends Schema.TaggedError<RepositoryGrantExpired>()(
   "RepositoryGrantExpired",
   { grantId: GrantIdSchema },
 ) {}
 
-export class RepositoryCommitInvalid extends Schema.TaggedErrorClass<RepositoryCommitInvalid>()(
+export class RepositoryCommitInvalid extends Schema.TaggedError<RepositoryCommitInvalid>()(
   "RepositoryCommitInvalid",
   { reason: ErrorReasonSchema },
 ) {}
 
-export class RepositoryScopeViolation extends Schema.TaggedErrorClass<RepositoryScopeViolation>()(
+export class RepositoryScopeViolation extends Schema.TaggedError<RepositoryScopeViolation>()(
   "RepositoryScopeViolation",
   { path: ErrorReasonSchema },
 ) {}
 
-export class RepositoryRefConflict extends Schema.TaggedErrorClass<RepositoryRefConflict>()(
+export class RepositoryRefConflict extends Schema.TaggedError<RepositoryRefConflict>()(
   "RepositoryRefConflict",
   { reason: ErrorReasonSchema },
 ) {}
 
-export class RepositoryUnavailable extends Schema.TaggedErrorClass<RepositoryUnavailable>()(
+export class RepositoryUnavailable extends Schema.TaggedError<RepositoryUnavailable>()(
   "RepositoryUnavailable",
   { reason: ErrorReasonSchema },
 ) {}
@@ -185,22 +185,22 @@ export const RepositoryPublisherErrorSchema = Schema.Union([
 ]);
 export type RepositoryPublisherError = typeof RepositoryPublisherErrorSchema.Type;
 
-export class DependencyCacheKeyMismatch extends Schema.TaggedErrorClass<DependencyCacheKeyMismatch>()(
+export class DependencyCacheKeyMismatch extends Schema.TaggedError<DependencyCacheKeyMismatch>()(
   "DependencyCacheKeyMismatch",
   { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
 ) {}
 
-export class DependencyCachePayloadMismatch extends Schema.TaggedErrorClass<DependencyCachePayloadMismatch>()(
+export class DependencyCachePayloadMismatch extends Schema.TaggedError<DependencyCachePayloadMismatch>()(
   "DependencyCachePayloadMismatch",
   { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
 ) {}
 
-export class DependencyCacheMissing extends Schema.TaggedErrorClass<DependencyCacheMissing>()(
+export class DependencyCacheMissing extends Schema.TaggedError<DependencyCacheMissing>()(
   "DependencyCacheMissing",
   { cacheKey: Schema.NonEmptyString },
 ) {}
 
-export class DependencyCacheUnavailable extends Schema.TaggedErrorClass<DependencyCacheUnavailable>()(
+export class DependencyCacheUnavailable extends Schema.TaggedError<DependencyCacheUnavailable>()(
   "DependencyCacheUnavailable",
   { reason: ErrorReasonSchema },
 ) {}
@@ -213,17 +213,17 @@ export const DependencyCacheErrorSchema = Schema.Union([
 ]);
 export type DependencyCacheError = typeof DependencyCacheErrorSchema.Type;
 
-export class ProfileNotFound extends Schema.TaggedErrorClass<ProfileNotFound>()("ProfileNotFound", {
+export class ProfileNotFound extends Schema.TaggedError<ProfileNotFound>()("ProfileNotFound", {
   profileId: ProfileIdSchema,
   profileRevision: ProfileRevisionSchema,
 }) {}
 
-export class ProfileDigestMismatch extends Schema.TaggedErrorClass<ProfileDigestMismatch>()(
+export class ProfileDigestMismatch extends Schema.TaggedError<ProfileDigestMismatch>()(
   "ProfileDigestMismatch",
   { expected: Sha256DigestSchema, observed: Sha256DigestSchema },
 ) {}
 
-export class ProfileRegistryUnavailable extends Schema.TaggedErrorClass<ProfileRegistryUnavailable>()(
+export class ProfileRegistryUnavailable extends Schema.TaggedError<ProfileRegistryUnavailable>()(
   "ProfileRegistryUnavailable",
   { reason: ErrorReasonSchema },
 ) {}

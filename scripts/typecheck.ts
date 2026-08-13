@@ -21,7 +21,7 @@ const compilerRelativePath = relative(compilerRoot, compilerPath);
 if (
   compilerPath.length === 0 ||
   compilerRelativePath.startsWith("..") ||
-  basename(compilerPath) !== "tsc-next" ||
+  basename(compilerPath) !== "tsc" ||
   !compilerRelativePath.includes("@effect")
 ) {
   fail([`effect-tsgo returned an unexpected compiler path: ${compilerPath}`]);

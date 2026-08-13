@@ -48,12 +48,13 @@ export interface SandboxClock {
   now(): Timestamp;
 }
 
-const jsonBody = (value: unknown): string => Schema.encodeSync(Schema.UnknownFromJsonString)(value);
+const jsonBody = (value: unknown): string =>
+  Schema.encodeSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 const responseJson = async (response: Response): Promise<unknown> => {
   try {
     const body = await response.text();
-    return decodeUnknownStrict(Schema.UnknownFromJsonString, body);
+    return decodeUnknownStrict(Schema.fromJsonString(Schema.Unknown), body);
   } catch (cause) {
     throw new ProviderUnavailableError(
       "Cloudflare Sandbox provider",

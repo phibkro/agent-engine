@@ -113,7 +113,7 @@ const taggedErrorClasses = (
     changed = false;
     for (const [name, base] of inheritance) {
       if (tagged.has(name)) continue;
-      if (base === "Schema.TaggedErrorClass" || tagged.has(base)) {
+      if (base === "Schema.TaggedError" || tagged.has(base)) {
         tagged.add(name);
         changed = true;
       }
