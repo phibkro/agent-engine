@@ -134,7 +134,9 @@ describe("0002 CLI public interface", () => {
     expect(headers.get("Authorization")).toBe("Bearer cloud-task-token");
     expect(headers.get("Content-Type")).toBe("application/json");
     expect(
-      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(String(requests[0]?.init.body)),
+      Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
+        String(requests[0]?.init.body),
+      ),
     ).toEqual({
       _tag: "Send",
       sessionId,
@@ -470,7 +472,7 @@ describe("0002 CLI public interface", () => {
 
     expect(messages).toEqual([{ nested: [true, null, 42] }, { nested: [true, null, 42] }]);
     expect(
-      output.map((line) => Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(line)),
+      output.map((line) => Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(line)),
     ).toEqual([
       { jsonrpc: "2.0", id: 1, result: 1 },
       {
@@ -518,7 +520,7 @@ describe("0002 CLI public interface", () => {
     const envelope = failureEnvelope("result", failure);
     expect(envelope.failure).toEqual(failure);
     expect(
-      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(renderJson(envelope)),
+      Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(renderJson(envelope)),
     ).toMatchObject({
       ok: false,
       failure: { _tag: "CloudTaskUnauthorized", reason: "Access denied" },

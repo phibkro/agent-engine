@@ -13,7 +13,9 @@ describe("CloudflareSandboxProvider", () => {
     let requestBody: unknown;
     const fetcher: SandboxFetcher = {
       fetch: async (_input, init) => {
-        requestBody = Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(String(init?.body));
+        requestBody = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
+          String(init?.body),
+        );
         return Response.json({
           providerId: "sandbox-1",
           workspaceRoot: "/workspace",

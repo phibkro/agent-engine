@@ -33,10 +33,10 @@
   "technologies": [
     {
       "id": "typescript",
-      "version": "7.1.0-dev.20260722.1",
+      "version": "7.1.0-dev.20260808.1",
       "disposition": "selected",
-      "reason": "Strict portable domain and protocol types; exact compiler gitHead required by @effect/tsgo 0.24.3.",
-      "reference": "https://www.npmjs.com/package/typescript/v/7.1.0-dev.20260722.1"
+      "reason": "Strict portable domain and protocol types; exact compiler gitHead required by @effect/tsgo 0.36.4.",
+      "reference": "https://www.npmjs.com/package/typescript/v/7.1.0-dev.20260808.1"
     },
     {
       "id": "bun",
@@ -55,21 +55,21 @@
     },
     {
       "id": "effect",
-      "version": "4.0.0-beta.102",
+      "version": "4.0.0-rc.108",
       "disposition": "selected",
       "reason": "Typed application effects, services, resources, failure, concurrency, and Schema boundaries.",
       "reference": "https://effect-ts.github.io/effect/"
     },
     {
       "id": "effect-platform-bun",
-      "version": "4.0.0-beta.102",
+      "version": "4.0.0-rc.108",
       "disposition": "selected",
       "reason": "Bun CLI and local tooling integration; excluded from Worker closures.",
       "reference": "https://effect-ts.github.io/effect/platform-bun/"
     },
     {
       "id": "effect-tsgo",
-      "version": "0.24.3",
+      "version": "0.36.4",
       "disposition": "selected",
       "reason": "Effect-specific typed diagnostics and language-service checks.",
       "reference": "https://github.com/Effect-TS/tsgo"
@@ -98,7 +98,7 @@
     },
     {
       "id": "alchemy",
-      "version": "2.0.0-beta.70",
+      "version": "2.0.0-beta.72",
       "disposition": "selected",
       "reason": "Singular typed Cloudflare infrastructure graph in TypeScript and Effect.",
       "reference": "https://alchemy.run/cloudflare/"

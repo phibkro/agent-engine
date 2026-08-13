@@ -197,7 +197,7 @@ const errorResponse = (code: number, message: string): JsonRpcResponse =>
 
 export const runMcp = (client: CloudTaskClient, stdio: McpStdio): Effect.Effect<void, McpError> => {
   const processLine = (line: string): Effect.Effect<void, McpError> =>
-    Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(line).pipe(
+    Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(line).pipe(
       Effect.result,
       Effect.flatMap((parsed) => {
         if (parsed._tag === "Failure") {

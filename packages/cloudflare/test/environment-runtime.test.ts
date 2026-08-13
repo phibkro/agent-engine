@@ -51,7 +51,9 @@ describe("FetcherEnvironmentCredentialBroker", () => {
       Authorization: "Bearer broker-secret",
     });
     expect(
-      Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(String(requests[0]?.init?.body)),
+      Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(
+        String(requests[0]?.init?.body),
+      ),
     ).toEqual(leaseInput);
   });
 
